@@ -36,16 +36,29 @@ from app.services.taxes_and_totals import ItemRow, TaxRow, calculate_taxes_and_t
 ZERO = Decimal("0")
 
 
-async def _load_tax_rows(db: AsyncSession, payload: PurchaseInvoiceCreate) -> list[TaxRowIn]:
-    if payload.taxes or not payload.tax_template_id:
+async def _load_tax_rows(
+    db: AsyncSession, payload: PurchaseInvoiceCreate, supplier
+) -> list[TaxRowIn]:
+    """Inline taxes win; then an explicit template; then the template resolved
+    from the supplier's tax category / company default (erpnext get_party_details)."""
+    if payload.taxes:
         return payload.taxes
-    template = await db.scalar(
-        select(TaxTemplate)
-        .options(selectinload(TaxTemplate.details))
-        .where(TaxTemplate.id == payload.tax_template_id)
-    )
-    if template is None or template.kind != "purchase":
-        raise NotFoundError("Purchase tax template not found")
+    if payload.tax_template_id:
+        template = await db.scalar(
+            select(TaxTemplate)
+            .options(selectinload(TaxTemplate.details))
+            .where(TaxTemplate.id == payload.tax_template_id)
+        )
+        if template is None or template.kind != "purchase":
+            raise NotFoundError("Purchase tax template not found")
+    else:
+        from app.services.accounts_masters import resolve_tax_template
+
+        template = await resolve_tax_template(
+            db, supplier.company_id, "purchase", supplier.tax_category_id
+        )
+        if template is None:
+            return []
     return [
         TaxRowIn(
             charge_type=d.charge_type,
@@ -74,7 +87,7 @@ async def create_purchase_invoice(
         raise ValidationError("return_against_id is required for a return (debit note)",
                               field="return_against_id")
 
-    tax_rows_in = await _load_tax_rows(db, payload)
+    tax_rows_in = await _load_tax_rows(db, payload, supplier)
     engine_items = [ItemRow(qty=item.qty, rate=item.rate) for item in payload.items]
     engine_taxes = [
         TaxRow(

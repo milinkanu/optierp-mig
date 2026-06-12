@@ -32,5 +32,8 @@ class Supplier(Base, DocumentMixin, CompanyScopedMixin):
     payment_terms_template_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("payment_terms_templates.id", use_alter=True, name="fk_supplier_ptt")
     )
+    tax_category_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tax_categories.id", use_alter=True, name="fk_supplier_tax_category")
+    )
     disabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
     notes: Mapped[str | None] = mapped_column(Text)

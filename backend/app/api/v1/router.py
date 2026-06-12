@@ -4,9 +4,11 @@ from fastapi import APIRouter
 
 from app.api.v1 import auth
 from app.api.v1.accounts import (
+    budgets,
     journal_entries,
     masters as accounts_masters,
     payment_entries,
+    payment_reconciliation,
     purchase_invoices,
     reports as accounts_reports,
     sales_invoices,
@@ -41,6 +43,8 @@ api_v1_router.include_router(journal_entries.router)
 api_v1_router.include_router(sales_invoices.router)
 api_v1_router.include_router(purchase_invoices.router)
 api_v1_router.include_router(payment_entries.router)
+api_v1_router.include_router(payment_reconciliation.router)
+api_v1_router.include_router(budgets.router)
 api_v1_router.include_router(accounts_reports.router)
 
 # Module 03+ — registered as each module is migrated

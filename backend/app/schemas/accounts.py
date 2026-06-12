@@ -18,6 +18,7 @@ class CustomerCreate(BaseModel):
     default_currency: str | None = None
     receivable_account_id: uuid.UUID | None = None
     credit_limit: Decimal | None = None
+    tax_category_id: uuid.UUID | None = None
 
 
 class CustomerResponse(DocumentMeta):
@@ -27,6 +28,7 @@ class CustomerResponse(DocumentMeta):
     default_currency: str | None
     receivable_account_id: uuid.UUID | None
     credit_limit: Decimal | None
+    tax_category_id: uuid.UUID | None
     disabled: bool
     company_id: uuid.UUID
 
@@ -37,6 +39,7 @@ class SupplierCreate(BaseModel):
     tax_id: str | None = None
     default_currency: str | None = None
     payable_account_id: uuid.UUID | None = None
+    tax_category_id: uuid.UUID | None = None
 
 
 class SupplierResponse(DocumentMeta):
@@ -45,6 +48,7 @@ class SupplierResponse(DocumentMeta):
     tax_id: str | None
     default_currency: str | None
     payable_account_id: uuid.UUID | None
+    tax_category_id: uuid.UUID | None
     disabled: bool
     company_id: uuid.UUID
 
@@ -76,6 +80,20 @@ class AccountResponse(DocumentMeta):
     company_id: uuid.UUID
 
 
+# --- Tax categories ------------------------------------------------------------------
+
+
+class TaxCategoryCreate(BaseModel):
+    title: str = Field(min_length=1, max_length=140)
+    disabled: bool = False
+
+
+class TaxCategoryResponse(DocumentMeta):
+    title: str
+    disabled: bool
+    company_id: uuid.UUID
+
+
 # --- Tax templates -------------------------------------------------------------------
 
 
@@ -95,6 +113,7 @@ class TaxTemplateCreate(BaseModel):
     title: str = Field(min_length=1, max_length=140)
     kind: str = Field(pattern="^(sales|purchase)$")
     is_default: bool = False
+    tax_category_id: uuid.UUID | None = None
     details: list[TaxRowIn] = Field(default_factory=list)
 
 
@@ -116,6 +135,7 @@ class TaxTemplateResponse(DocumentMeta):
     kind: str
     is_default: bool
     disabled: bool
+    tax_category_id: uuid.UUID | None
     company_id: uuid.UUID
     details: list[TaxTemplateDetailResponse]
 
@@ -173,6 +193,7 @@ class JournalEntryResponse(DocumentMeta):
     voucher_type: str
     total_debit: Decimal
     total_credit: Decimal
+    clearance_date: date | None
     remarks: str | None
     workflow_state: str | None
     company_id: uuid.UUID
@@ -464,3 +485,103 @@ class CashFlowRow(BaseModel):
     section: str
     label: str
     amount: Decimal
+
+
+# --- Budget ----------------------------------------------------------------------------------
+
+
+class BudgetAccountIn(BaseModel):
+    account_id: uuid.UUID
+    budget_amount: Decimal = Field(gt=0)
+
+
+class BudgetCreate(BaseModel):
+    fiscal_year_id: uuid.UUID
+    cost_center_id: uuid.UUID | None = None  # None = company-wide budget
+    action_if_annual_budget_exceeded: str = Field(default="Warn", pattern="^(Stop|Warn|Ignore)$")
+    accounts: list[BudgetAccountIn] = Field(min_length=1)
+
+
+class BudgetAccountResponse(DocumentMeta):
+    account_id: uuid.UUID
+    budget_amount: Decimal
+
+
+class BudgetResponse(DocumentMeta):
+    fiscal_year_id: uuid.UUID
+    cost_center_id: uuid.UUID | None
+    action_if_annual_budget_exceeded: str
+    company_id: uuid.UUID
+    accounts: list[BudgetAccountResponse]
+
+
+# --- Payment Reconciliation --------------------------------------------------------------------
+
+
+class UnreconciledInvoiceRow(BaseModel):
+    invoice_type: str  # Sales Invoice | Purchase Invoice
+    invoice_id: uuid.UUID
+    name: str
+    posting_date: date
+    grand_total: Decimal
+    outstanding_amount: Decimal
+
+
+class UnreconciledPaymentRow(BaseModel):
+    payment_entry_id: uuid.UUID
+    name: str
+    posting_date: date
+    paid_amount: Decimal
+    unallocated_amount: Decimal
+
+
+class UnreconciledResponse(BaseModel):
+    invoices: list[UnreconciledInvoiceRow]
+    payments: list[UnreconciledPaymentRow]
+
+
+class ReconcileAllocationIn(BaseModel):
+    payment_entry_id: uuid.UUID
+    invoice_type: str = Field(pattern="^(Sales Invoice|Purchase Invoice)$")
+    invoice_id: uuid.UUID
+    allocated_amount: Decimal = Field(gt=0)
+
+
+class PaymentReconciliationIn(BaseModel):
+    party_type: str = Field(pattern="^(Customer|Supplier)$")
+    party_id: uuid.UUID
+    allocations: list[ReconcileAllocationIn] = Field(min_length=1)
+
+
+class ReconciledInvoiceRow(BaseModel):
+    invoice_id: uuid.UUID
+    name: str
+    outstanding_amount: Decimal
+    status: str
+
+
+class PaymentReconciliationResponse(BaseModel):
+    allocations_applied: int
+    invoices: list[ReconciledInvoiceRow]
+
+
+# --- Bank Reconciliation Statement ---------------------------------------------------------------
+
+
+class BankReconUnclearedRow(BaseModel):
+    voucher_type: str  # Payment Entry | Journal Entry
+    voucher_id: uuid.UUID
+    voucher_no: str
+    posting_date: date
+    reference_no: str | None
+    # signed against the bank account: positive = debit (inflow) not yet cleared
+    amount: Decimal
+
+
+class BankReconciliationReport(BaseModel):
+    gl_account_id: uuid.UUID
+    as_of: date
+    balance_per_books: Decimal
+    uncleared_amount: Decimal
+    balance_per_bank: Decimal
+    uncleared_entries: list[BankReconUnclearedRow]

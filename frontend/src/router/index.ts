@@ -40,7 +40,69 @@ const routes: RouteRecordRaw[] = [
         name: "settings",
         component: () => import("@/views/core/SettingsView.vue"),
       },
-      // Module 02+ routes (accounts/, stock/, ...) register here per module
+      // Module 02 — Accounts
+      {
+        path: "sales-invoices",
+        name: "sales-invoices",
+        component: () => import("@/views/accounts/InvoiceListView.vue"),
+        props: { kind: "sales" },
+      },
+      {
+        path: "sales-invoices/new",
+        name: "sales-invoice-new",
+        component: () => import("@/views/accounts/InvoiceFormView.vue"),
+        props: { kind: "sales" },
+      },
+      {
+        path: "sales-invoices/:id",
+        name: "sales-invoice-detail",
+        component: () => import("@/views/accounts/InvoiceFormView.vue"),
+        props: (route) => ({ kind: "sales", id: route.params.id as string }),
+      },
+      {
+        path: "purchase-invoices",
+        name: "purchase-invoices",
+        component: () => import("@/views/accounts/InvoiceListView.vue"),
+        props: { kind: "purchase" },
+      },
+      {
+        path: "purchase-invoices/new",
+        name: "purchase-invoice-new",
+        component: () => import("@/views/accounts/InvoiceFormView.vue"),
+        props: { kind: "purchase" },
+      },
+      {
+        path: "purchase-invoices/:id",
+        name: "purchase-invoice-detail",
+        component: () => import("@/views/accounts/InvoiceFormView.vue"),
+        props: (route) => ({ kind: "purchase", id: route.params.id as string }),
+      },
+      {
+        path: "journal-entries",
+        name: "journal-entries",
+        component: () => import("@/views/accounts/JournalEntryView.vue"),
+      },
+      {
+        path: "payment-entries",
+        name: "payment-entries",
+        component: () => import("@/views/accounts/PaymentEntryView.vue"),
+      },
+      {
+        path: "payment-reconciliation",
+        name: "payment-reconciliation",
+        component: () => import("@/views/accounts/PaymentReconciliationView.vue"),
+      },
+      {
+        path: "budgets",
+        name: "budgets",
+        component: () => import("@/views/accounts/BudgetView.vue"),
+      },
+      {
+        path: "reports",
+        name: "reports",
+        component: () => import("@/views/accounts/ReportsView.vue"),
+      },
+      // Module 03+ routes (stock/, buying/, ...) register here per module
     ],
   },
   { path: "/:pathMatch(.*)*", redirect: "/" },

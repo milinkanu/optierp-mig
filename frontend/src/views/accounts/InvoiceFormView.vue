@@ -104,9 +104,9 @@ onMounted(async () => {
           <button v-if="doc.docstatus === 0" class="btn-primary" @click="action('submit')">Submit</button>
           <button v-if="doc.docstatus === 1" class="btn-secondary" @click="action('cancel')">Cancel</button>
           <a
-            v-if="kind === 'sales' && doc.docstatus === 1"
+            v-if="doc.docstatus === 1"
             class="btn-secondary"
-            :href="`/api/v1/sales-invoices/${doc.id}/pdf`"
+            :href="`/api/v1${endpoint}/${doc.id}/pdf`"
             target="_blank"
           >PDF</a>
         </div>

@@ -158,6 +158,18 @@ class TaxRowMixin:
         return mapped_column(UUID(as_uuid=True), ForeignKey("cost_centers.id"))
 
 
+class TaxCategory(Base, DocumentMixin, CompanyScopedMixin):
+    """Source: erpnext/accounts/doctype/tax_category — groups parties so the
+    right tax template resolves per invoice (e.g. In-State / Out-of-State /
+    Reverse Charge). Linked from tax templates and from Customer/Supplier."""
+
+    __tablename__ = "tax_categories"
+    __table_args__ = (UniqueConstraint("company_id", "title", name="uq_tax_category"),)
+
+    title: Mapped[str] = mapped_column(String(140), nullable=False)
+    disabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+
+
 class TaxTemplate(Base, DocumentMixin, CompanyScopedMixin):
     """Sales/Purchase Taxes and Charges Template (kind discriminator)."""
 
@@ -168,6 +180,9 @@ class TaxTemplate(Base, DocumentMixin, CompanyScopedMixin):
     kind: Mapped[str] = mapped_column(String(10), nullable=False)  # sales | purchase
     is_default: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
     disabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+    tax_category_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tax_categories.id")
+    )
 
     details: Mapped[list["TaxTemplateDetail"]] = relationship(
         back_populates="template", cascade="all, delete-orphan", order_by="TaxTemplateDetail.idx"

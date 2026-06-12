@@ -36,19 +36,29 @@ from app.services.taxes_and_totals import ItemRow, TaxRow, calculate_taxes_and_t
 ZERO = Decimal("0")
 
 
-async def _load_tax_rows(db: AsyncSession, payload: SalesInvoiceCreate) -> list:
-    """Inline taxes win; otherwise expand the referenced tax template."""
-    if payload.taxes or not payload.tax_template_id:
+async def _load_tax_rows(db: AsyncSession, payload: SalesInvoiceCreate, customer) -> list:
+    """Inline taxes win; then an explicit template; then the template resolved
+    from the customer's tax category / company default (erpnext get_party_details)."""
+    if payload.taxes:
         return payload.taxes
     from app.models.accounts import TaxTemplate
 
-    template = await db.scalar(
-        select(TaxTemplate)
-        .options(selectinload(TaxTemplate.details))
-        .where(TaxTemplate.id == payload.tax_template_id)
-    )
-    if template is None or template.kind != "sales":
-        raise NotFoundError("Sales tax template not found")
+    if payload.tax_template_id:
+        template = await db.scalar(
+            select(TaxTemplate)
+            .options(selectinload(TaxTemplate.details))
+            .where(TaxTemplate.id == payload.tax_template_id)
+        )
+        if template is None or template.kind != "sales":
+            raise NotFoundError("Sales tax template not found")
+    else:
+        from app.services.accounts_masters import resolve_tax_template
+
+        template = await resolve_tax_template(
+            db, customer.company_id, "sales", customer.tax_category_id
+        )
+        if template is None:
+            return []
     from app.schemas.accounts import TaxRowIn
 
     return [
@@ -77,7 +87,7 @@ async def create_sales_invoice(
         raise ValidationError("return_against_id is required for a return (credit note)",
                               field="return_against_id")
 
-    tax_rows_in = await _load_tax_rows(db, payload)
+    tax_rows_in = await _load_tax_rows(db, payload, customer)
 
     # run the calculation engine
     engine_items = [ItemRow(qty=item.qty, rate=item.rate) for item in payload.items]

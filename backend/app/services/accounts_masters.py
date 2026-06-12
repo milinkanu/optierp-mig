@@ -1,5 +1,5 @@
 """Module 02 masters service: accounts CRUD, customers/suppliers (stubs),
-tax templates."""
+fiscal years, tax categories, tax templates."""
 
 import re
 import uuid
@@ -10,10 +10,23 @@ from sqlalchemy.orm import selectinload
 
 from app.core.exceptions import DuplicateError, NotFoundError, ValidationError
 from app.core.security import CurrentUser
-from app.models.accounts import ROOT_TYPE_REPORT, Account, TaxTemplate, TaxTemplateDetail
+from app.models.accounts import (
+    ROOT_TYPE_REPORT,
+    Account,
+    FiscalYear,
+    TaxCategory,
+    TaxTemplate,
+    TaxTemplateDetail,
+)
 from app.models.buying import Supplier
 from app.models.selling import Customer
-from app.schemas.accounts import AccountCreate, CustomerCreate, SupplierCreate, TaxTemplateCreate
+from app.schemas.accounts import (
+    AccountCreate,
+    CustomerCreate,
+    SupplierCreate,
+    TaxCategoryCreate,
+    TaxTemplateCreate,
+)
 from app.services.audit import log_audit
 from app.services.pagination import paginate
 
@@ -125,6 +138,79 @@ async def list_suppliers(
     return await paginate(db, stmt, page, page_size)
 
 
+# --- Fiscal years ------------------------------------------------------------------------
+
+
+async def list_fiscal_years(db: AsyncSession, company_id: uuid.UUID | None) -> list[FiscalYear]:
+    if company_id is None:
+        raise ValidationError("An active company is required")
+    stmt = (
+        select(FiscalYear)
+        .where(FiscalYear.company_id == company_id)
+        .order_by(FiscalYear.year_start_date.desc())
+    )
+    return list((await db.execute(stmt)).scalars().all())
+
+
+# --- Tax categories ------------------------------------------------------------------------
+
+
+async def create_tax_category(
+    db: AsyncSession, payload: TaxCategoryCreate, user: CurrentUser
+) -> TaxCategory:
+    if user.company_id is None:
+        raise ValidationError("An active company is required")
+    if await db.scalar(
+        select(TaxCategory).where(
+            TaxCategory.company_id == user.company_id, TaxCategory.title == payload.title
+        )
+    ):
+        raise DuplicateError("Tax category already exists", field="title")
+    category = TaxCategory(company_id=user.company_id, owner=user.id, **payload.model_dump())
+    db.add(category)
+    await db.commit()
+    await db.refresh(category)
+    return category
+
+
+async def list_tax_categories(
+    db: AsyncSession, company_id: uuid.UUID | None
+) -> list[TaxCategory]:
+    stmt = (
+        select(TaxCategory)
+        .where(TaxCategory.company_id == company_id, TaxCategory.disabled.is_(False))
+        .order_by(TaxCategory.title)
+    )
+    return list((await db.execute(stmt)).scalars().all())
+
+
+async def resolve_tax_template(
+    db: AsyncSession,
+    company_id: uuid.UUID,
+    kind: str,
+    tax_category_id: uuid.UUID | None,
+) -> TaxTemplate | None:
+    """Pick the tax template for an invoice (erpnext get_party_details):
+    a template tagged with the party's tax category wins; otherwise the
+    company default template (untagged) applies; otherwise no taxes."""
+    base = (
+        select(TaxTemplate)
+        .options(selectinload(TaxTemplate.details))
+        .where(
+            TaxTemplate.company_id == company_id,
+            TaxTemplate.kind == kind,
+            TaxTemplate.disabled.is_(False),
+        )
+    )
+    if tax_category_id is not None:
+        template = await db.scalar(base.where(TaxTemplate.tax_category_id == tax_category_id))
+        if template is not None:
+            return template
+    return await db.scalar(
+        base.where(TaxTemplate.is_default.is_(True), TaxTemplate.tax_category_id.is_(None))
+    )
+
+
 # --- Tax templates ---------------------------------------------------------------------
 
 
@@ -142,12 +228,18 @@ async def create_tax_template(
     ):
         raise DuplicateError("Tax template already exists", field="title")
 
+    if payload.tax_category_id is not None:
+        category = await db.get(TaxCategory, payload.tax_category_id)
+        if category is None or category.company_id != user.company_id:
+            raise NotFoundError("Tax category not found")
+
     template = TaxTemplate(
         id=uuid.uuid4(),
         company_id=user.company_id,
         title=payload.title,
         kind=payload.kind,
         is_default=payload.is_default,
+        tax_category_id=payload.tax_category_id,
         owner=user.id,
     )
     db.add(template)

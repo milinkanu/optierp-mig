@@ -1,12 +1,19 @@
 <script setup lang="ts">
-// Financial reports: Trial Balance / P&L / Balance Sheet / AR / AP.
+// Financial reports: Trial Balance / P&L / Balance Sheet / AR / AP / Bank Reconciliation.
 
-import { onMounted, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { api } from "@/api/client";
-import type { ErrorEnvelope, ListResponse } from "@/types/core";
-import type { AgingRow, FiscalYearInfo, StatementRow, TrialBalanceRow } from "@/types/accounts";
+import { useAccountsStore } from "@/stores/accounts";
+import type { AccountNode, ErrorEnvelope, ListResponse } from "@/types/core";
+import type {
+  AgingRow,
+  BankReconciliationReport,
+  FiscalYearInfo,
+  StatementRow,
+  TrialBalanceRow,
+} from "@/types/accounts";
 
-type Tab = "trial-balance" | "profit-loss" | "balance-sheet" | "receivable" | "payable";
+type Tab = "trial-balance" | "profit-loss" | "balance-sheet" | "receivable" | "payable" | "bank-recon";
 const tab = ref<Tab>("trial-balance");
 
 const today = new Date().toISOString().slice(0, 10);
@@ -17,6 +24,15 @@ const asOf = ref(today);
 
 const fiscalYears = ref<FiscalYearInfo[]>([]);
 const fiscalYearId = ref("");
+
+const store = useAccountsStore();
+const bankAccountId = ref("");
+const bankAccounts = computed(() =>
+  store.leafAccounts.filter(
+    (a: AccountNode) => a.account_type === "Bank" || a.account_type === "Cash",
+  ),
+);
+const bankRecon = ref<BankReconciliationReport | null>(null);
 
 const tbRows = ref<TrialBalanceRow[]>([]);
 const pl = ref<{ income: StatementRow[]; expenses: StatementRow[]; net_profit: string } | null>(null);
@@ -47,6 +63,13 @@ async function run(): Promise<void> {
       ).data;
     } else if (tab.value === "balance-sheet") {
       bs.value = (await api.get("/reports/balance-sheet", { params: { as_of: asOf.value } })).data;
+    } else if (tab.value === "bank-recon") {
+      if (!bankAccountId.value) return;
+      bankRecon.value = (
+        await api.get<BankReconciliationReport>("/reports/bank-reconciliation", {
+          params: { gl_account_id: bankAccountId.value, as_of: asOf.value },
+        })
+      ).data;
     } else {
       const endpoint = tab.value === "receivable" ? "accounts-receivable" : "accounts-payable";
       aging.value = (
@@ -66,13 +89,13 @@ function switchTab(t: Tab): void {
 }
 
 onMounted(async () => {
-  // fiscal years come via the settings store of Module 02's backend; reuse companies COA call later
   try {
     const resp = await api.get<ListResponse<FiscalYearInfo>>("/fiscal-years", { params: {} });
     fiscalYears.value = resp.data.items;
   } catch {
     fiscalYears.value = [];
   }
+  await store.fetchAccounts();
   void run();
 });
 
@@ -82,6 +105,7 @@ const tabs: Array<{ key: Tab; label: string }> = [
   { key: "balance-sheet", label: "Balance Sheet" },
   { key: "receivable", label: "Receivable" },
   { key: "payable", label: "Payable" },
+  { key: "bank-recon", label: "Bank Reconciliation" },
 ];
 </script>
 
@@ -114,6 +138,16 @@ const tabs: Array<{ key: Tab; label: string }> = [
       <template v-else-if="tab === 'profit-loss'">
         <div><label class="form-label">From</label><input v-model="fromDate" type="date" class="form-input" /></div>
         <div><label class="form-label">To</label><input v-model="toDate" type="date" class="form-input" /></div>
+      </template>
+      <template v-else-if="tab === 'bank-recon'">
+        <div>
+          <label class="form-label">Bank/Cash Account</label>
+          <select v-model="bankAccountId" class="form-input w-56">
+            <option value="" disabled>Select…</option>
+            <option v-for="a in bankAccounts" :key="a.id" :value="a.id">{{ a.account_name }}</option>
+          </select>
+        </div>
+        <div><label class="form-label">As of</label><input v-model="asOf" type="date" class="form-input" /></div>
       </template>
       <template v-else>
         <div><label class="form-label">As of</label><input v-model="asOf" type="date" class="form-input" /></div>
@@ -188,6 +222,43 @@ const tabs: Array<{ key: Tab; label: string }> = [
           <span>Equity: <strong>{{ bs.total_equity }}</strong></span>
           <span>Provisional P&amp;L: <strong>{{ bs.provisional_profit_loss }}</strong></span>
         </div>
+      </div>
+    </div>
+
+    <!-- Bank Reconciliation -->
+    <div v-else-if="tab === 'bank-recon'">
+      <div v-if="bankRecon" class="mb-4 rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+        <div class="flex justify-end gap-8 text-sm">
+          <span>Balance per books: <strong>{{ bankRecon.balance_per_books }}</strong></span>
+          <span>Uncleared: <strong>{{ bankRecon.uncleared_amount }}</strong></span>
+          <span>Balance per bank: <strong>{{ bankRecon.balance_per_bank }}</strong></span>
+        </div>
+      </div>
+      <div class="overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm">
+        <table class="min-w-full text-sm">
+          <thead class="bg-gray-50 text-left text-xs uppercase text-gray-500">
+            <tr>
+              <th class="px-4 py-2">Voucher</th><th class="px-4 py-2">Type</th>
+              <th class="px-4 py-2">Date</th><th class="px-4 py-2">Reference</th>
+              <th class="px-4 py-2 text-right">Amount</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="row in bankRecon?.uncleared_entries ?? []" :key="row.voucher_id"
+                class="border-t border-gray-100">
+              <td class="px-4 py-1.5">{{ row.voucher_no }}</td>
+              <td class="px-4 py-1.5">{{ row.voucher_type }}</td>
+              <td class="px-4 py-1.5">{{ row.posting_date }}</td>
+              <td class="px-4 py-1.5">{{ row.reference_no ?? "—" }}</td>
+              <td class="px-4 py-1.5 text-right">{{ row.amount }}</td>
+            </tr>
+            <tr v-if="!bankRecon || !bankRecon.uncleared_entries.length">
+              <td colspan="5" class="px-4 py-8 text-center text-gray-400">
+                {{ bankRecon ? "Everything is cleared. 🎉" : "Pick a bank account and run." }}
+              </td>
+            </tr>
+          </tbody>
+        </table>
       </div>
     </div>
 

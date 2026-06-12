@@ -10,10 +10,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.exceptions import ValidationError
 from app.core.permissions import require_permission
 from app.core.security import CurrentUser, get_tenant_db
-from app.schemas.accounts import AgingRow, CashFlowRow, TrialBalanceRow
+from app.schemas.accounts import (
+    AgingRow,
+    BankReconciliationReport,
+    CashFlowRow,
+    PeriodClosingCreate,
+    PeriodClosingResponse,
+    TrialBalanceRow,
+)
 from app.services import financial_reports as reports
 from app.services import period_closing
-from app.schemas.accounts import PeriodClosingCreate, PeriodClosingResponse
 
 router = APIRouter(prefix="/reports", tags=["accounts: reports"])
 
@@ -131,6 +137,25 @@ async def cash_flow(
     to_date: date,
 ) -> list[CashFlowRow]:
     return await reports.cash_flow(db, _company(current_user), from_date=from_date, to_date=to_date)
+
+
+@router.get(
+    "/bank-reconciliation",
+    response_model=BankReconciliationReport,
+    summary="Bank Reconciliation Statement",
+    description="Balance per books vs. per bank for a Bank/Cash GL account: lists "
+    "submitted payments and journal entries not yet cleared by the bank "
+    "(no clearance_date as of the date).",
+)
+async def bank_reconciliation(
+    current_user: Annotated[CurrentUser, Depends(require_permission("Payment Entry", "report"))],
+    db: Annotated[AsyncSession, Depends(get_tenant_db)],
+    gl_account_id: uuid.UUID,
+    as_of: date | None = None,
+) -> BankReconciliationReport:
+    return await reports.bank_reconciliation(
+        db, _company(current_user), gl_account_id=gl_account_id, as_of=as_of or date.today()
+    )
 
 
 @router.post(

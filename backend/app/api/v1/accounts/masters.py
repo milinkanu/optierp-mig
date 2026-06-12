@@ -1,4 +1,5 @@
-"""Module 02 master endpoints: accounts, customers, suppliers, tax templates."""
+"""Module 02 master endpoints: accounts, customers, suppliers, fiscal years,
+tax categories, tax templates."""
 
 import uuid
 from typing import Annotated
@@ -15,10 +16,13 @@ from app.schemas.accounts import (
     CustomerResponse,
     SupplierCreate,
     SupplierResponse,
+    TaxCategoryCreate,
+    TaxCategoryResponse,
     TaxTemplateCreate,
     TaxTemplateResponse,
 )
 from app.schemas.common import ListResponse
+from app.schemas.core import FiscalYearResponse
 from app.services import accounts_masters as masters
 
 router = APIRouter(tags=["accounts: masters"])
@@ -121,23 +125,41 @@ async def list_fiscal_years(
     current_user: Annotated[CurrentUser, Depends(require_permission("Account", "read"))],
     db: Annotated[AsyncSession, Depends(get_tenant_db)],
 ) -> ListResponse[FiscalYearResponse]:
-    from sqlalchemy import select
-
-    from app.models.accounts import FiscalYear
-
-    rows = (
-        (
-            await db.execute(
-                select(FiscalYear)
-                .where(FiscalYear.company_id == current_user.company_id)
-                .order_by(FiscalYear.year_start_date.desc())
-            )
-        )
-        .scalars()
-        .all()
-    )
+    rows = await masters.list_fiscal_years(db, current_user.company_id)
     items = [FiscalYearResponse.model_validate(r) for r in rows]
     return ListResponse(items=items, total=len(items), page=1, page_size=len(items) or 1)
+
+
+@router.post(
+    "/tax-categories",
+    response_model=TaxCategoryResponse,
+    status_code=201,
+    summary="Create a tax category",
+    description="Groups parties for tax template resolution (e.g. In-State, "
+    "Out-of-State, Reverse Charge). Example: `{'title': 'In-State'}`",
+)
+async def create_tax_category(
+    payload: TaxCategoryCreate,
+    current_user: Annotated[CurrentUser, Depends(require_permission("Tax Category", "create"))],
+    db: Annotated[AsyncSession, Depends(get_tenant_db)],
+) -> TaxCategoryResponse:
+    return TaxCategoryResponse.model_validate(
+        await masters.create_tax_category(db, payload, current_user)
+    )
+
+
+@router.get(
+    "/tax-categories",
+    response_model=list[TaxCategoryResponse],
+    summary="List tax categories",
+    description="Active tax categories of the current company.",
+)
+async def list_tax_categories(
+    current_user: Annotated[CurrentUser, Depends(require_permission("Tax Category", "read"))],
+    db: Annotated[AsyncSession, Depends(get_tenant_db)],
+) -> list[TaxCategoryResponse]:
+    categories = await masters.list_tax_categories(db, current_user.company_id)
+    return [TaxCategoryResponse.model_validate(c) for c in categories]
 
 
 @router.post(

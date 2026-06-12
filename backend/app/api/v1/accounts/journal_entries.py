@@ -1,9 +1,11 @@
 """Journal Entry endpoints — Module 02."""
 
 import uuid
+from datetime import date
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.permissions import require_permission
@@ -13,6 +15,10 @@ from app.schemas.common import ListResponse
 from app.services import journal_entry as service
 
 router = APIRouter(prefix="/journal-entries", tags=["accounts: journal entries"])
+
+
+class ClearanceUpdate(BaseModel):
+    clearance_date: date
 
 
 @router.post(
@@ -100,4 +106,21 @@ async def cancel(
 ) -> JournalEntryResponse:
     return JournalEntryResponse.model_validate(
         await service.cancel_journal_entry(db, entry_id, current_user)
+    )
+
+
+@router.patch(
+    "/{entry_id}/clearance",
+    response_model=JournalEntryResponse,
+    summary="Set the bank clearance date",
+    description="Marks the date the bank cleared this entry (bank reconciliation).",
+)
+async def set_clearance(
+    entry_id: uuid.UUID,
+    payload: ClearanceUpdate,
+    current_user: Annotated[CurrentUser, Depends(require_permission("Journal Entry", "write"))],
+    db: Annotated[AsyncSession, Depends(get_tenant_db)],
+) -> JournalEntryResponse:
+    return JournalEntryResponse.model_validate(
+        await service.set_clearance_date(db, entry_id, payload.clearance_date, current_user)
     )

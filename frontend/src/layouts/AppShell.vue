@@ -7,12 +7,20 @@ const route = useRoute();
 const router = useRouter();
 const auth = useAuthStore();
 
-// Module 02+ add their entries here as they are migrated
+// Module 03+ add their entries here as they are migrated
 const navigation = [
   { name: "Dashboard", route: "dashboard", icon: "▦" },
   { name: "Companies", route: "companies", icon: "🏢" },
   { name: "Users", route: "users", icon: "👤" },
   { name: "Roles", route: "roles", icon: "🛡" },
+  // Module 02 — Accounts
+  { name: "Sales Invoices", route: "sales-invoices", icon: "🧾" },
+  { name: "Purchase Invoices", route: "purchase-invoices", icon: "📥" },
+  { name: "Journal Entries", route: "journal-entries", icon: "📒" },
+  { name: "Payments", route: "payment-entries", icon: "💸" },
+  { name: "Reconciliation", route: "payment-reconciliation", icon: "🔗" },
+  { name: "Budgets", route: "budgets", icon: "🎯" },
+  { name: "Reports", route: "reports", icon: "📊" },
   { name: "Settings", route: "settings", icon: "⚙" },
 ];
 

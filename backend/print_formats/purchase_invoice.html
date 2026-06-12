@@ -1,0 +1,104 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  /* MANUAL_REVIEW: WeasyPrint assumed as the PDF engine (vs. wkhtmltopdf). */
+  @page { size: A4; margin: 18mm 15mm; }
+  body { font-family: "Helvetica Neue", Arial, sans-serif; font-size: 11px; color: #1a1a1a; }
+  .header { display: flex; justify-content: space-between; border-bottom: 2px solid {{ brand.primary_color | default('#4F46E5') }}; padding-bottom: 8px; }
+  .product { font-size: 18px; font-weight: 700; color: {{ brand.primary_color | default('#4F46E5') }}; }
+  h1 { font-size: 15px; margin: 14px 0 2px; }
+  .muted { color: #666; }
+  table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+  th { background: #f3f4f6; text-align: left; padding: 6px 8px; font-size: 10px; text-transform: uppercase; letter-spacing: .04em; }
+  td { padding: 6px 8px; border-bottom: 1px solid #e5e7eb; }
+  .num { text-align: right; white-space: nowrap; }
+  .totals { width: 45%; margin-left: auto; margin-top: 10px; }
+  .totals td { border: none; padding: 3px 8px; }
+  .grand { font-weight: 700; border-top: 1.5px solid #1a1a1a !important; font-size: 12px; }
+  .status { display: inline-block; padding: 2px 10px; border-radius: 10px; font-size: 10px; font-weight: 600;
+            background: #eef2ff; color: {{ brand.primary_color | default('#4F46E5') }}; }
+  .footer { position: fixed; bottom: -8mm; left: 0; right: 0; font-size: 9px; color: #999; text-align: center; }
+</style>
+</head>
+<body>
+  <div class="header">
+    <div>
+      <div class="product">{{ company.company_name }}</div>
+      {% if company.tax_id %}<div class="muted">Tax ID: {{ company.tax_id }}</div>{% endif %}
+    </div>
+    <div style="text-align:right">
+      <h1 style="margin:0">PURCHASE INVOICE</h1>
+      <div class="muted">{{ invoice.name }}</div>
+      <span class="status">{{ invoice.status }}</span>
+    </div>
+  </div>
+
+  <table style="margin-top:14px">
+    <tr>
+      <td style="border:none; padding-left:0">
+        <strong>Supplier</strong><br>
+        {{ supplier.supplier_name }}<br>
+        {% if supplier.tax_id %}Tax ID: {{ supplier.tax_id }}{% endif %}
+      </td>
+      <td style="border:none; text-align:right">
+        <strong>Posting Date:</strong> {{ invoice.posting_date }}<br>
+        {% if invoice.bill_no %}<strong>Supplier Invoice:</strong> {{ invoice.bill_no }}
+          {% if invoice.bill_date %}({{ invoice.bill_date }}){% endif %}<br>{% endif %}
+        {% if invoice.due_date %}<strong>Due Date:</strong> {{ invoice.due_date }}<br>{% endif %}
+        <strong>Currency:</strong> {{ invoice.currency }}
+      </td>
+    </tr>
+  </table>
+
+  <table>
+    <thead>
+      <tr>
+        <th style="width:4%">#</th>
+        <th>Item</th>
+        <th class="num" style="width:10%">Qty</th>
+        <th class="num" style="width:14%">Rate</th>
+        <th class="num" style="width:16%">Amount</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for item in invoice["items"] %}
+      <tr>
+        <td>{{ item.idx }}</td>
+        <td>
+          <strong>{{ item.item_name }}</strong>
+          {% if item.description %}<br><span class="muted">{{ item.description }}</span>{% endif %}
+        </td>
+        <td class="num">{{ item.qty }} {{ item.uom or '' }}</td>
+        <td class="num">{{ "%.2f" | format(item.rate) }}</td>
+        <td class="num">{{ "%.2f" | format(item.amount) }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <table class="totals">
+    <tr><td>Net Total</td><td class="num">{{ "%.2f" | format(invoice.net_total) }}</td></tr>
+    {% for tax in invoice.taxes %}
+    <tr>
+      <td>{{ tax.description or tax.charge_type }} {% if tax.rate %}({{ tax.rate }}%){% endif %}</td>
+      <td class="num">{{ "%.2f" | format(tax.tax_amount) }}</td>
+    </tr>
+    {% endfor %}
+    {% if invoice.discount_amount %}
+    <tr><td>Discount</td><td class="num">-{{ "%.2f" | format(invoice.discount_amount) }}</td></tr>
+    {% endif %}
+    {% if invoice.rounding_adjustment %}
+    <tr><td>Rounding</td><td class="num">{{ "%.2f" | format(invoice.rounding_adjustment) }}</td></tr>
+    {% endif %}
+    <tr class="grand"><td class="grand">Total ({{ invoice.currency }})</td>
+        <td class="num grand">{{ "%.2f" | format(invoice.rounded_total) }}</td></tr>
+    <tr><td>Outstanding</td><td class="num">{{ "%.2f" | format(invoice.outstanding_amount) }}</td></tr>
+  </table>
+
+  {% if invoice.remarks %}<p class="muted"><strong>Remarks:</strong> {{ invoice.remarks }}</p>{% endif %}
+
+  <div class="footer">{{ brand.product_name | default(company.company_name) }} — generated {{ generated_on }}</div>
+</body>
+</html>

@@ -158,3 +158,55 @@ export interface FiscalYearInfo extends DocumentMeta {
   year_start_date: string;
   year_end_date: string;
 }
+
+export interface BudgetAccountRow extends DocumentMeta {
+  account_id: string;
+  budget_amount: string;
+}
+
+export interface Budget extends DocumentMeta {
+  fiscal_year_id: string;
+  cost_center_id: string | null;
+  action_if_annual_budget_exceeded: string;
+  accounts: BudgetAccountRow[];
+}
+
+export interface UnreconciledInvoiceRow {
+  invoice_type: string;
+  invoice_id: string;
+  name: string;
+  posting_date: string;
+  grand_total: string;
+  outstanding_amount: string;
+}
+
+export interface UnreconciledPaymentRow {
+  payment_entry_id: string;
+  name: string;
+  posting_date: string;
+  paid_amount: string;
+  unallocated_amount: string;
+}
+
+export interface UnreconciledResponse {
+  invoices: UnreconciledInvoiceRow[];
+  payments: UnreconciledPaymentRow[];
+}
+
+export interface BankReconUnclearedRow {
+  voucher_type: string;
+  voucher_id: string;
+  voucher_no: string;
+  posting_date: string;
+  reference_no: string | null;
+  amount: string;
+}
+
+export interface BankReconciliationReport {
+  gl_account_id: string;
+  as_of: string;
+  balance_per_books: string;
+  uncleared_amount: string;
+  balance_per_bank: string;
+  uncleared_entries: BankReconUnclearedRow[];
+}

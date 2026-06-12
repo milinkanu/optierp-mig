@@ -195,3 +195,15 @@ async def cancel_journal_entry(
     )
     await db.commit()
     return await get_journal_entry(db, entry.id, user.company_id)
+
+
+async def set_clearance_date(
+    db: AsyncSession, entry_id: uuid.UUID, clearance_date, user: CurrentUser
+) -> JournalEntry:
+    """Bank reconciliation: mark when the bank cleared this entry."""
+    entry = await get_journal_entry(db, entry_id, user.company_id)
+    require_submitted(entry.docstatus)
+    entry.clearance_date = clearance_date
+    entry.modified_by = user.id
+    await db.commit()
+    return await get_journal_entry(db, entry.id, user.company_id)
