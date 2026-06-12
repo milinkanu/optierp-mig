@@ -1,0 +1,134 @@
+"""Sales Invoice endpoints — Module 02."""
+
+import uuid
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, Query, Response
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.pdf import html_to_pdf, render_print_format
+from app.core.permissions import require_permission
+from app.core.security import CurrentUser, get_tenant_db
+from app.schemas.accounts import InvoiceListItem, SalesInvoiceCreate, SalesInvoiceResponse
+from app.schemas.common import ListResponse
+from app.services import sales_invoice as service
+from app.services.accounts_common import get_company, get_customer
+
+router = APIRouter(prefix="/sales-invoices", tags=["accounts: sales invoices"])
+
+
+@router.post(
+    "",
+    response_model=SalesInvoiceResponse,
+    status_code=201,
+    summary="Create a Sales Invoice (draft)",
+    description="Totals and taxes are computed server-side by the taxes_and_totals "
+    "engine. Example: `{'customer_id': '...', 'posting_date': '2026-06-12', 'items': "
+    "[{'item_name': 'Consulting', 'qty': 10, 'rate': 150}], 'taxes': [{'charge_type': "
+    "'On Net Total', 'rate': 18, 'account_head_id': '<GST account>'}]}`",
+)
+async def create(
+    payload: SalesInvoiceCreate,
+    current_user: Annotated[CurrentUser, Depends(require_permission("Sales Invoice", "create"))],
+    db: Annotated[AsyncSession, Depends(get_tenant_db)],
+) -> SalesInvoiceResponse:
+    return SalesInvoiceResponse.model_validate(
+        await service.create_sales_invoice(db, payload, current_user)
+    )
+
+
+@router.get(
+    "",
+    response_model=ListResponse[InvoiceListItem],
+    summary="List Sales Invoices",
+    description="Paginated, newest first; filter by status (Unpaid/Paid/Overdue/...).",
+)
+async def list_invoices(
+    current_user: Annotated[CurrentUser, Depends(require_permission("Sales Invoice", "read"))],
+    db: Annotated[AsyncSession, Depends(get_tenant_db)],
+    page: Annotated[int, Query(ge=1)] = 1,
+    page_size: Annotated[int, Query(ge=1, le=200)] = 20,
+    status: str | None = None,
+) -> ListResponse[InvoiceListItem]:
+    invoices, total = await service.list_sales_invoices(
+        db, current_user.company_id, page, page_size, status
+    )
+    return ListResponse(
+        items=[InvoiceListItem.model_validate(i) for i in invoices],
+        total=total, page=page, page_size=page_size,
+    )
+
+
+@router.get(
+    "/{invoice_id}",
+    response_model=SalesInvoiceResponse,
+    summary="Get a Sales Invoice",
+    description="Full invoice with items and tax rows.",
+)
+async def get_invoice(
+    invoice_id: uuid.UUID,
+    current_user: Annotated[CurrentUser, Depends(require_permission("Sales Invoice", "read"))],
+    db: Annotated[AsyncSession, Depends(get_tenant_db)],
+) -> SalesInvoiceResponse:
+    return SalesInvoiceResponse.model_validate(
+        await service.get_sales_invoice(db, invoice_id, current_user.company_id)
+    )
+
+
+@router.post(
+    "/{invoice_id}/submit",
+    response_model=SalesInvoiceResponse,
+    summary="Submit a Sales Invoice",
+    description="Posts GL (Dr receivable / Cr income + taxes), sets the outstanding "
+    "amount and status. Credit notes reduce the original invoice's outstanding.",
+)
+async def submit(
+    invoice_id: uuid.UUID,
+    current_user: Annotated[CurrentUser, Depends(require_permission("Sales Invoice", "submit"))],
+    db: Annotated[AsyncSession, Depends(get_tenant_db)],
+) -> SalesInvoiceResponse:
+    return SalesInvoiceResponse.model_validate(
+        await service.submit_sales_invoice(db, invoice_id, current_user)
+    )
+
+
+@router.get(
+    "/{invoice_id}/pdf",
+    summary="Download the invoice as PDF",
+    description="Renders the Jinja2 print format and converts it with WeasyPrint. "
+    "Returns 501 if the PDF engine is not installed (`pip install .[pdf]`).",
+)
+async def download_pdf(
+    invoice_id: uuid.UUID,
+    current_user: Annotated[CurrentUser, Depends(require_permission("Sales Invoice", "print"))],
+    db: Annotated[AsyncSession, Depends(get_tenant_db)],
+) -> Response:
+    invoice = await service.get_sales_invoice(db, invoice_id, current_user.company_id)
+    company = await get_company(db, invoice.company_id)
+    customer = await get_customer(db, invoice.customer_id, invoice.company_id)
+    html = render_print_format(
+        "sales_invoice.html",
+        {"invoice": invoice, "company": company, "customer": customer, "brand": {}},
+    )
+    pdf = html_to_pdf(html)
+    return Response(
+        content=pdf,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="{invoice.name}.pdf"'},
+    )
+
+
+@router.post(
+    "/{invoice_id}/cancel",
+    response_model=SalesInvoiceResponse,
+    summary="Cancel a Sales Invoice",
+    description="Reverses the GL entries. Blocked while payments are allocated against it.",
+)
+async def cancel(
+    invoice_id: uuid.UUID,
+    current_user: Annotated[CurrentUser, Depends(require_permission("Sales Invoice", "cancel"))],
+    db: Annotated[AsyncSession, Depends(get_tenant_db)],
+) -> SalesInvoiceResponse:
+    return SalesInvoiceResponse.model_validate(
+        await service.cancel_sales_invoice(db, invoice_id, current_user)
+    )

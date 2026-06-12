@@ -1,0 +1,18 @@
+[
+  {"name": "System Manager", "description": "Full administrative access (superuser)", "is_system": true},
+  {"name": "Accounts Manager", "description": "Manage accounting masters and transactions", "is_system": true},
+  {"name": "Accounts User", "description": "Create accounting transactions", "is_system": true},
+  {"name": "Stock Manager", "description": "Manage inventory masters and transactions", "is_system": true},
+  {"name": "Stock User", "description": "Create stock transactions", "is_system": true},
+  {"name": "Purchase Manager", "description": "Manage procurement", "is_system": true},
+  {"name": "Purchase User", "description": "Create purchase documents", "is_system": true},
+  {"name": "Sales Manager", "description": "Manage sales", "is_system": true},
+  {"name": "Sales User", "description": "Create sales documents", "is_system": true},
+  {"name": "HR Manager", "description": "Manage HR and payroll", "is_system": true},
+  {"name": "HR User", "description": "Create HR documents", "is_system": true},
+  {"name": "Projects Manager", "description": "Manage projects and tasks", "is_system": true},
+  {"name": "Manufacturing Manager", "description": "Manage BOMs and work orders", "is_system": true},
+  {"name": "Quality Manager", "description": "Manage quality inspections and goals", "is_system": true},
+  {"name": "Support Team", "description": "Handle support issues and SLAs", "is_system": true},
+  {"name": "Employee", "description": "Self-service access", "is_system": true}
+]

@@ -1,0 +1,156 @@
+"""Idempotent bootstrap seeding: masters, roles, default permissions, admin user.
+
+Usage:
+    python -m scripts.seed --admin-email admin@example.com --admin-password <pw>
+
+(or set ADMIN_EMAIL / ADMIN_PASSWORD environment variables)
+"""
+
+import argparse
+import asyncio
+import json
+import os
+import sys
+from pathlib import Path
+
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from app.core.database import async_session_factory  # noqa: E402
+from app.core.security import hash_password  # noqa: E402
+from app.models.core import (  # noqa: E402
+    Country,
+    Currency,
+    Role,
+    RolePermission,
+    UOM,
+    User,
+    UserRole,
+)
+
+SEED_DIR = Path(__file__).resolve().parent.parent / "data" / "seeds"
+
+# Default permission matrix: (role, doctype, allowed actions).
+# Extended by later modules as their doctypes are migrated.
+_ACCOUNTS_TXN_ALL = ["read", "write", "create", "submit", "cancel", "amend", "print", "email", "report"]
+_ACCOUNTS_TXN_USER = ["read", "write", "create", "submit", "print", "email", "report"]
+
+DEFAULT_PERMISSIONS: list[tuple[str, str, list[str]]] = [
+    # Module 01 — Core / Setup
+    ("Accounts Manager", "Company", ["read"]),
+    ("Accounts Manager", "Account", ["read", "write", "create", "report"]),
+    ("Accounts Manager", "Currency", ["read"]),
+    ("Accounts Manager", "Currency Exchange", ["read", "write", "create"]),
+    ("Accounts User", "Company", ["read"]),
+    ("Accounts User", "Account", ["read", "report"]),
+    ("Accounts User", "Currency", ["read"]),
+    ("Accounts User", "Currency Exchange", ["read"]),
+    ("Stock Manager", "UOM", ["read", "write", "create"]),
+    ("Stock User", "UOM", ["read"]),
+    ("Employee", "Company", ["read"]),
+    # Module 02 — Accounts
+    ("Accounts Manager", "Customer", ["read", "write", "create", "report"]),
+    ("Accounts Manager", "Supplier", ["read", "write", "create", "report"]),
+    ("Accounts Manager", "Tax Template", ["read", "write", "create"]),
+    ("Accounts Manager", "Journal Entry", _ACCOUNTS_TXN_ALL),
+    ("Accounts Manager", "Sales Invoice", _ACCOUNTS_TXN_ALL),
+    ("Accounts Manager", "Purchase Invoice", _ACCOUNTS_TXN_ALL),
+    ("Accounts Manager", "Payment Entry", _ACCOUNTS_TXN_ALL),
+    ("Accounts Manager", "Period Closing Voucher", ["read", "create", "submit"]),
+    ("Accounts Manager", "GL Entry", ["read", "report"]),
+    ("Accounts User", "Customer", ["read"]),
+    ("Accounts User", "Supplier", ["read"]),
+    ("Accounts User", "Tax Template", ["read"]),
+    ("Accounts User", "Journal Entry", _ACCOUNTS_TXN_USER),
+    ("Accounts User", "Sales Invoice", _ACCOUNTS_TXN_USER),
+    ("Accounts User", "Purchase Invoice", _ACCOUNTS_TXN_USER),
+    ("Accounts User", "Payment Entry", _ACCOUNTS_TXN_USER),
+    ("Accounts User", "GL Entry", ["read", "report"]),
+    ("Sales User", "Customer", ["read", "write", "create"]),
+    ("Sales User", "Sales Invoice", ["read", "create", "print", "report"]),
+    ("Purchase User", "Supplier", ["read", "write", "create"]),
+    ("Purchase User", "Purchase Invoice", ["read", "create", "print", "report"]),
+]
+
+
+def _load(name: str) -> list[dict]:
+    return json.loads((SEED_DIR / name).read_text(encoding="utf-8"))
+
+
+async def seed_masters(db: AsyncSession) -> None:
+    existing_currencies = set((await db.execute(select(Currency.code))).scalars().all())
+    for row in _load("currencies.json"):
+        if row["code"] not in existing_currencies:
+            db.add(Currency(**row))
+
+    existing_countries = set((await db.execute(select(Country.code))).scalars().all())
+    for row in _load("countries.json"):
+        if row["code"] not in existing_countries:
+            db.add(Country(**row))
+
+    existing_uoms = set((await db.execute(select(UOM.uom_name))).scalars().all())
+    for row in _load("uoms.json"):
+        if row["uom_name"] not in existing_uoms:
+            db.add(UOM(**row))
+
+    existing_roles = set((await db.execute(select(Role.name))).scalars().all())
+    for row in _load("roles.json"):
+        if row["name"] not in existing_roles:
+            db.add(Role(**row))
+    await db.flush()
+
+
+async def seed_permissions(db: AsyncSession) -> None:
+    for role, doctype, actions in DEFAULT_PERMISSIONS:
+        perm = await db.scalar(
+            select(RolePermission).where(
+                RolePermission.role == role,
+                RolePermission.doctype == doctype,
+                RolePermission.company_id.is_(None),
+            )
+        )
+        if perm is None:
+            perm = RolePermission(role=role, doctype=doctype)
+            db.add(perm)
+        for action in actions:
+            setattr(perm, f"can_{action}", True)
+    await db.flush()
+
+
+async def seed_admin(db: AsyncSession, email: str, password: str) -> None:
+    user = await db.scalar(select(User).where(User.email == email.lower()))
+    if user is None:
+        user = User(
+            email=email.lower(),
+            first_name="Administrator",
+            hashed_password=hash_password(password),
+        )
+        db.add(user)
+        await db.flush()
+        db.add(UserRole(user_id=user.id, role="System Manager", company_id=None))
+        print(f"Created admin user {email}")
+    else:
+        print(f"Admin user {email} already exists — skipped")
+
+
+async def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--admin-email", default=os.environ.get("ADMIN_EMAIL"))
+    parser.add_argument("--admin-password", default=os.environ.get("ADMIN_PASSWORD"))
+    args = parser.parse_args()
+
+    async with async_session_factory() as db:
+        await seed_masters(db)
+        await seed_permissions(db)
+        if args.admin_email and args.admin_password:
+            await seed_admin(db, args.admin_email, args.admin_password)
+        else:
+            print("No --admin-email/--admin-password given — skipping admin creation")
+        await db.commit()
+    print("Seeding complete.")
+
+
+if __name__ == "__main__":
+    asyncio.run(main())

@@ -1,0 +1,47 @@
+[project]
+name = "optireach-erp-backend"
+version = "0.1.0"
+description = "OptiReach ERP - FastAPI backend (ERPNext business logic re-architected, no Frappe dependency)"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "sqlalchemy[asyncio]>=2.0.36",
+    "asyncpg>=0.30",
+    "alembic>=1.14",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+    "email-validator>=2.2",
+    "PyJWT>=2.10",
+    "bcrypt>=4.2",
+    "structlog>=24.4",
+    "jinja2>=3.1",
+    "apscheduler>=3.10",
+    "redis>=5.2",
+    "aiosmtplib>=3.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "httpx>=0.28",
+    "ruff>=0.8",
+]
+# MANUAL_REVIEW: PDF engine — WeasyPrint assumed (vs. wkhtmltopdf). Pulled in from Module 02 onwards.
+pdf = ["weasyprint>=63"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py312"
+
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["app*"]

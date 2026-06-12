@@ -1,0 +1,10 @@
+{
+  "product_name": "OptiReach ERP",
+  "tagline": "Run your business, your way",
+  "logo_url": "/brand/logo.svg",
+  "favicon_url": "/brand/favicon.svg",
+  "primary_color": "#4F46E5",
+  "secondary_color": "#7C3AED",
+  "support_email": "support@optireach.example",
+  "docs_url": "https://docs.optireach.example"
+}

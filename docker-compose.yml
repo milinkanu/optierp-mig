@@ -1,0 +1,54 @@
+# Local development stack: PostgreSQL + Redis + backend + frontend (Section 9, rule 11)
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./infra/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  backend:
+    build: ./backend
+    environment:
+      SECRET_KEY: "local-dev-secret-key-change-in-production-0001"
+      DATABASE_URL: "postgresql+asyncpg://erp_app:erp_app_dev_pw@postgres:5432/erp"
+      MIGRATIONS_DATABASE_URL: "postgresql+asyncpg://erp_owner:erp_owner_dev_pw@postgres:5432/erp"
+      REDIS_URL: "redis://redis:6379/0"
+      ALLOWED_ORIGINS: "http://localhost:5173,http://localhost:8080"
+      REFRESH_COOKIE_SECURE: "false"
+      ENVIRONMENT: "development"
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    command: >
+      sh -c "alembic upgrade head &&
+             python -m scripts.seed --admin-email $${ADMIN_EMAIL:-admin@example.com} --admin-password $${ADMIN_PASSWORD:-ChangeMe!123} &&
+             uvicorn app.main:app --host 0.0.0.0 --port 8000"
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "8080:80"
+    depends_on:
+      - backend
+
+volumes:
+  pgdata:
