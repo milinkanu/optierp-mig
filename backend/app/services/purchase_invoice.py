@@ -36,6 +36,76 @@ from app.services.taxes_and_totals import ItemRow, TaxRow, calculate_taxes_and_t
 ZERO = Decimal("0")
 
 
+async def _validate_cycle_links(
+    db: AsyncSession,
+    supplier,
+    company_id: uuid.UUID,
+    currency: str,
+    rows: list,  # objects with qty/amount-or-rate + link ids (payload or ORM rows)
+    sign: Decimal,
+) -> None:
+    """PO/PR rows referenced by invoice lines must belong to the same supplier,
+    be submitted, and keep their billed trackers within [0, cap]. Signed deltas
+    cover invoices AND debit notes; aggregation covers duplicate rows. Runs at
+    create AND again at submit."""
+    from app.services.cycle_links import PO_BILLING, PR_BILLING, aggregate, validate_link_deltas
+
+    def amount_of(row) -> Decimal:
+        amount = getattr(row, "amount", None)
+        return Decimal(amount) if amount is not None else Decimal(row.qty) * Decimal(row.rate)
+
+    await validate_link_deltas(
+        db, PR_BILLING, company_id=company_id, party_id=supplier.id,
+        deltas=aggregate([
+            (row.purchase_receipt_item_id, sign * Decimal(row.qty)) for row in rows
+        ]),
+    )
+    await validate_link_deltas(
+        db, PO_BILLING, company_id=company_id, party_id=supplier.id, currency=currency,
+        deltas=aggregate([
+            (row.purchase_order_item_id, sign * amount_of(row)) for row in rows
+        ]),
+    )
+
+
+async def _apply_cycle_links(db: AsyncSession, invoice: PurchaseInvoice, sign: int) -> None:
+    """Accrue (+1 on submit) or release (-1 on cancel) billed trackers on
+    linked PO/PR rows. Bounds come from _validate_cycle_links; rows are
+    already signed for returns, so cancel restores exactly what submit did.
+    Non-stock (service) PO rows also accrue received_qty here — there is no
+    receipt for services, so without this the PO could never complete."""
+    from app.models.buying import PurchaseOrderItem
+    from app.models.stock import Item, PurchaseReceiptItem
+    from app.services.purchase_order import get_purchase_order, set_purchase_order_status
+    from app.services.purchase_receipt import get_purchase_receipt, set_receipt_status
+
+    touched_po: set[uuid.UUID] = set()
+    touched_pr: set[uuid.UUID] = set()
+    for item in invoice.items:
+        if item.purchase_order_item_id is not None:
+            po_item = await db.get(PurchaseOrderItem, item.purchase_order_item_id)
+            if po_item is not None:
+                po_item.billed_amt = po_item.billed_amt + sign * item.amount
+                if po_item.item_id is not None:
+                    item_master = await db.get(Item, po_item.item_id)
+                    if item_master is not None and not item_master.is_stock_item:
+                        po_item.received_qty = min(
+                            po_item.qty, max(ZERO, po_item.received_qty + sign * item.qty)
+                        )
+                touched_po.add(po_item.order_id)
+        if item.purchase_receipt_item_id is not None:
+            pr_item = await db.get(PurchaseReceiptItem, item.purchase_receipt_item_id)
+            if pr_item is not None:
+                pr_item.billed_qty = pr_item.billed_qty + sign * item.qty
+                touched_pr.add(pr_item.receipt_id)
+    for po_id in touched_po:
+        po = await get_purchase_order(db, po_id, invoice.company_id)
+        set_purchase_order_status(po)
+    for pr_id in touched_pr:
+        pr = await get_purchase_receipt(db, pr_id, invoice.company_id)
+        set_receipt_status(pr)
+
+
 async def _load_tax_rows(
     db: AsyncSession, payload: PurchaseInvoiceCreate, supplier
 ) -> list[TaxRowIn]:
@@ -87,6 +157,10 @@ async def create_purchase_invoice(
         raise ValidationError("return_against_id is required for a return (debit note)",
                               field="return_against_id")
 
+    await _validate_cycle_links(
+        db, supplier, company.id, currency, payload.items,
+        sign=Decimal("-1") if payload.is_return else Decimal("1"),
+    )
     tax_rows_in = await _load_tax_rows(db, payload, supplier)
     engine_items = [ItemRow(qty=item.qty, rate=item.rate) for item in payload.items]
     engine_taxes = [
@@ -150,7 +224,27 @@ async def create_purchase_invoice(
 
     default_expense = company.default_expense_account_id
     for idx, (item_in, engine_item) in enumerate(zip(payload.items, engine_items), start=1):
-        expense_account_id = item_in.account_id or default_expense
+        from app.models.stock import Item
+
+        item_master = (
+            await db.get(Item, item_in.item_id) if item_in.item_id is not None else None
+        )
+        expense_account_id = item_in.account_id
+        if expense_account_id is None and company.enable_perpetual_inventory and (
+            item_in.purchase_receipt_item_id is not None
+            # bill-before-receipt on a PO for a stock item: the receipt will
+            # debit inventory later — expensing here would double-count cost
+            or (
+                item_in.purchase_order_item_id is not None
+                and item_master is not None
+                and item_master.is_stock_item
+            )
+        ):
+            # the invoice clears Stock Received But Not Billed, not expense
+            expense_account_id = company.stock_received_but_not_billed_account_id
+        if expense_account_id is None and item_master is not None:
+            expense_account_id = item_master.expense_account_id
+        expense_account_id = expense_account_id or default_expense
         if expense_account_id is None:
             raise ValidationError(
                 f"Item row {idx}: no expense account given and the company has no default",
@@ -173,6 +267,9 @@ async def create_purchase_invoice(
                 base_net_amount=engine_item.base_net_amount * sign,
                 cost_center_id=item_in.cost_center_id,
                 expense_account_id=expense_account_id,
+                item_id=item_in.item_id,
+                purchase_order_item_id=item_in.purchase_order_item_id,
+                purchase_receipt_item_id=item_in.purchase_receipt_item_id,
             )
         )
     for idx, (tax_in, engine_tax) in enumerate(zip(tax_rows_in, engine_taxes), start=1):
@@ -219,7 +316,7 @@ async def get_purchase_invoice(
 
 async def list_purchase_invoices(
     db: AsyncSession, company_id: uuid.UUID | None, page: int = 1, page_size: int = 20,
-    status: str | None = None,
+    status: str | None = None, supplier_id: uuid.UUID | None = None,
 ) -> tuple[list[PurchaseInvoice], int]:
     stmt = (
         select(PurchaseInvoice)
@@ -228,12 +325,19 @@ async def list_purchase_invoices(
     )
     if status:
         stmt = stmt.where(PurchaseInvoice.status == status)
+    if supplier_id is not None:
+        stmt = stmt.where(PurchaseInvoice.supplier_id == supplier_id)
     return await paginate(db, stmt, page, page_size)
 
 
-def _build_gl_rows(invoice: PurchaseInvoice, supplier_name: str) -> list[gl.GLRow]:
+def _build_gl_rows(
+    invoice: PurchaseInvoice,
+    supplier_name: str,
+    srbnb_split: dict[uuid.UUID, tuple[Decimal, uuid.UUID | None]] | None = None,
+) -> list[gl.GLRow]:
     rows: list[gl.GLRow] = []
     payable_amount = base_payable_total(invoice)
+    srbnb_split = srbnb_split or {}
 
     # Cr payable (party row)
     rows.append(
@@ -247,8 +351,34 @@ def _build_gl_rows(invoice: PurchaseInvoice, supplier_name: str) -> list[gl.GLRo
             against_voucher_id=invoice.id,
         )
     )
-    # Dr expense per item
+    # Dr expense per item. Receipt-linked rows clear SRBNB at the RECEIPT's
+    # valuation; any rate/discount difference posts to the expense account so
+    # SRBNB nets to exactly zero once a receipt is fully billed.
     for item in invoice.items:
+        split = srbnb_split.get(item.id)
+        if split is not None:
+            srbnb_amount, diff_account_id = split
+            diff = item.base_net_amount - srbnb_amount
+            rows.append(
+                gl.GLRow(
+                    account_id=item.expense_account_id,
+                    debit=srbnb_amount if srbnb_amount > ZERO else ZERO,
+                    credit=-srbnb_amount if srbnb_amount < ZERO else ZERO,
+                    cost_center_id=item.cost_center_id,
+                    against=supplier_name,
+                )
+            )
+            if diff != ZERO:
+                rows.append(
+                    gl.GLRow(
+                        account_id=diff_account_id,
+                        debit=diff if diff > ZERO else ZERO,
+                        credit=-diff if diff < ZERO else ZERO,
+                        cost_center_id=item.cost_center_id,
+                        against=supplier_name,
+                    )
+                )
+            continue
         rows.append(
             gl.GLRow(
                 account_id=item.expense_account_id,
@@ -285,7 +415,35 @@ async def submit_purchase_invoice(
     company = await get_company(db, invoice.company_id)
     supplier = await get_supplier(db, invoice.supplier_id, invoice.company_id)
 
-    rows = _build_gl_rows(invoice, supplier.supplier_name)
+    # receipt-linked rows whose expense head is SRBNB clear it at the receipt's
+    # valuation (qty * receipt base rate); the difference goes to expense
+    srbnb_split: dict[uuid.UUID, tuple[Decimal, uuid.UUID | None]] = {}
+    if company.enable_perpetual_inventory and company.stock_received_but_not_billed_account_id:
+        from app.models.stock import Item, PurchaseReceiptItem
+
+        for item in invoice.items:
+            if (
+                item.purchase_receipt_item_id is None
+                or item.expense_account_id != company.stock_received_but_not_billed_account_id
+            ):
+                continue
+            pr_item = await db.get(PurchaseReceiptItem, item.purchase_receipt_item_id)
+            if pr_item is None:
+                continue
+            srbnb_amount = item.qty * pr_item.base_rate
+            diff_account_id = company.default_expense_account_id
+            if item.item_id is not None:
+                item_master = await db.get(Item, item.item_id)
+                if item_master is not None and item_master.expense_account_id is not None:
+                    diff_account_id = item_master.expense_account_id
+            if srbnb_amount != item.base_net_amount and diff_account_id is None:
+                raise ValidationError(
+                    "Invoice rate differs from the receipt valuation and the company "
+                    "has no default expense account for the difference"
+                )
+            srbnb_split[item.id] = (srbnb_amount, diff_account_id)
+
+    rows = _build_gl_rows(invoice, supplier.supplier_name, srbnb_split)
 
     base_rounding = invoice.rounding_adjustment * invoice.conversion_rate
     if base_rounding != ZERO:
@@ -312,8 +470,13 @@ async def submit_purchase_invoice(
         remarks=invoice.remarks,
     )
 
+    # rows are already signed (returns carry negative qty/amount)
+    await _validate_cycle_links(
+        db, supplier, invoice.company_id, invoice.currency, invoice.items, sign=Decimal("1")
+    )
     invoice.docstatus = DOCSTATUS_SUBMITTED
     invoice.outstanding_amount = base_payable_total(invoice)
+    await _apply_cycle_links(db, invoice, sign=1)
 
     if invoice.is_return and invoice.return_against_id:
         original = await get_purchase_invoice(db, invoice.return_against_id, invoice.company_id)
@@ -346,6 +509,7 @@ async def cancel_purchase_invoice(
     await gl.make_reverse_gl_entries(
         db, voucher_type="Purchase Invoice", voucher_id=invoice.id, user_id=user.id
     )
+    await _apply_cycle_links(db, invoice, sign=-1)
     if invoice.is_return and invoice.return_against_id:
         original = await get_purchase_invoice(db, invoice.return_against_id, invoice.company_id)
         original.outstanding_amount -= base_payable_total(invoice)

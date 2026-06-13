@@ -15,7 +15,7 @@ from sqlalchemy.orm import selectinload
 from app.core.exceptions import NotFoundError, ValidationError
 from app.core.naming import get_next_name
 from app.core.security import CurrentUser
-from app.models.accounts import Account, SalesInvoice, SalesInvoiceItem, SalesInvoiceTax
+from app.models.accounts import SalesInvoice, SalesInvoiceItem, SalesInvoiceTax
 from app.models.base import DOCSTATUS_CANCELLED, DOCSTATUS_SUBMITTED
 from app.schemas.accounts import SalesInvoiceCreate
 from app.services import gl
@@ -34,6 +34,70 @@ from app.services.pagination import paginate
 from app.services.taxes_and_totals import ItemRow, TaxRow, calculate_taxes_and_totals
 
 ZERO = Decimal("0")
+
+
+async def _validate_cycle_links(
+    db: AsyncSession,
+    customer,
+    company_id: uuid.UUID,
+    currency: str,
+    rows: list,  # objects with qty/amount-or-rate + link ids (payload or ORM rows)
+    sign: Decimal,
+) -> None:
+    """SO/DN rows referenced by invoice lines must belong to the same customer,
+    be submitted, and keep their billed trackers within [0, cap]. Signed deltas
+    make this one check cover invoices AND credit notes; aggregation makes
+    duplicate rows against the same source line count cumulatively. Runs at
+    create AND again at submit (against the then-current state)."""
+    from app.services.cycle_links import DN_BILLING, SO_BILLING, aggregate, validate_link_deltas
+
+    def amount_of(row) -> Decimal:
+        amount = getattr(row, "amount", None)
+        return Decimal(amount) if amount is not None else Decimal(row.qty) * Decimal(row.rate)
+
+    await validate_link_deltas(
+        db, DN_BILLING, company_id=company_id, party_id=customer.id,
+        deltas=aggregate([
+            (row.delivery_note_item_id, sign * Decimal(row.qty)) for row in rows
+        ]),
+    )
+    await validate_link_deltas(
+        db, SO_BILLING, company_id=company_id, party_id=customer.id, currency=currency,
+        deltas=aggregate([
+            (row.sales_order_item_id, sign * amount_of(row)) for row in rows
+        ]),
+    )
+
+
+async def _apply_cycle_links(db: AsyncSession, invoice: SalesInvoice, sign: int) -> None:
+    """Accrue (+1 on submit) or release (-1 on cancel) billed trackers on
+    linked SO/DN rows. Bounds are enforced by _validate_cycle_links, so the
+    arithmetic stays exact and cancel restores precisely what submit applied
+    (row amounts are already signed for returns)."""
+    from app.models.selling import SalesOrderItem
+    from app.models.stock import DeliveryNoteItem
+    from app.services.delivery_note import get_delivery_note, set_delivery_note_status
+    from app.services.sales_order import get_sales_order, set_sales_order_status
+
+    touched_so: set[uuid.UUID] = set()
+    touched_dn: set[uuid.UUID] = set()
+    for item in invoice.items:
+        if item.sales_order_item_id is not None:
+            so_item = await db.get(SalesOrderItem, item.sales_order_item_id)
+            if so_item is not None:
+                so_item.billed_amt = so_item.billed_amt + sign * item.amount
+                touched_so.add(so_item.order_id)
+        if item.delivery_note_item_id is not None:
+            dn_item = await db.get(DeliveryNoteItem, item.delivery_note_item_id)
+            if dn_item is not None:
+                dn_item.billed_qty = dn_item.billed_qty + sign * item.qty
+                touched_dn.add(dn_item.delivery_note_id)
+    for so_id in touched_so:
+        so = await get_sales_order(db, so_id, invoice.company_id)
+        set_sales_order_status(so)
+    for dn_id in touched_dn:
+        dn = await get_delivery_note(db, dn_id, invoice.company_id)
+        set_delivery_note_status(dn)
 
 
 async def _load_tax_rows(db: AsyncSession, payload: SalesInvoiceCreate, customer) -> list:
@@ -87,6 +151,10 @@ async def create_sales_invoice(
         raise ValidationError("return_against_id is required for a return (credit note)",
                               field="return_against_id")
 
+    await _validate_cycle_links(
+        db, customer, company.id, currency, payload.items,
+        sign=Decimal("-1") if payload.is_return else Decimal("1"),
+    )
     tax_rows_in = await _load_tax_rows(db, payload, customer)
 
     # run the calculation engine
@@ -147,7 +215,14 @@ async def create_sales_invoice(
 
     default_income = company.default_income_account_id
     for idx, (item_in, engine_item) in enumerate(zip(payload.items, engine_items), start=1):
-        income_account_id = item_in.account_id or default_income
+        income_account_id = item_in.account_id
+        if income_account_id is None and item_in.item_id is not None:
+            from app.models.stock import Item
+
+            item_master = await db.get(Item, item_in.item_id)
+            if item_master is not None:
+                income_account_id = item_master.income_account_id
+        income_account_id = income_account_id or default_income
         if income_account_id is None:
             raise ValidationError(
                 f"Item row {idx}: no income account given and the company has no default",
@@ -170,6 +245,9 @@ async def create_sales_invoice(
                 base_net_amount=engine_item.base_net_amount * sign,
                 cost_center_id=item_in.cost_center_id,
                 income_account_id=income_account_id,
+                item_id=item_in.item_id,
+                sales_order_item_id=item_in.sales_order_item_id,
+                delivery_note_item_id=item_in.delivery_note_item_id,
             )
         )
     for idx, (tax_in, engine_tax) in enumerate(zip(tax_rows_in, engine_taxes), start=1):
@@ -214,7 +292,7 @@ async def get_sales_invoice(
 
 async def list_sales_invoices(
     db: AsyncSession, company_id: uuid.UUID | None, page: int = 1, page_size: int = 20,
-    status: str | None = None,
+    status: str | None = None, customer_id: uuid.UUID | None = None,
 ) -> tuple[list[SalesInvoice], int]:
     stmt = (
         select(SalesInvoice)
@@ -223,13 +301,14 @@ async def list_sales_invoices(
     )
     if status:
         stmt = stmt.where(SalesInvoice.status == status)
+    if customer_id is not None:
+        stmt = stmt.where(SalesInvoice.customer_id == customer_id)
     return await paginate(db, stmt, page, page_size)
 
 
 def _build_gl_rows(invoice: SalesInvoice, customer_name: str) -> list[gl.GLRow]:
     rows: list[gl.GLRow] = []
     receivable_amount = base_payable_total(invoice)
-    income_names: list[str] = []
 
     # Dr receivable (party row); against_voucher self-links for AR tracking
     rows.append(
@@ -306,8 +385,13 @@ async def submit_sales_invoice(
         remarks=invoice.remarks,
     )
 
+    # rows are already signed (returns carry negative qty/amount)
+    await _validate_cycle_links(
+        db, customer, invoice.company_id, invoice.currency, invoice.items, sign=Decimal("1")
+    )
     invoice.docstatus = DOCSTATUS_SUBMITTED
     invoice.outstanding_amount = base_payable_total(invoice)
+    await _apply_cycle_links(db, invoice, sign=1)
 
     # a credit note (return) reduces the original invoice's outstanding
     if invoice.is_return and invoice.return_against_id:
@@ -341,6 +425,7 @@ async def cancel_sales_invoice(
     await gl.make_reverse_gl_entries(
         db, voucher_type="Sales Invoice", voucher_id=invoice.id, user_id=user.id
     )
+    await _apply_cycle_links(db, invoice, sign=-1)
     if invoice.is_return and invoice.return_against_id:
         original = await get_sales_invoice(db, invoice.return_against_id, invoice.company_id)
         original.outstanding_amount -= base_payable_total(invoice)

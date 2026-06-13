@@ -222,6 +222,12 @@ class InvoiceItemIn(BaseModel):
     cost_center_id: uuid.UUID | None = None
     # sales: income account; purchase: expense account (falls back to company default)
     account_id: uuid.UUID | None = None
+    # Module 03-05 cycle links (all optional; free-text items still work)
+    item_id: uuid.UUID | None = None
+    sales_order_item_id: uuid.UUID | None = None  # sales invoices only
+    delivery_note_item_id: uuid.UUID | None = None  # sales invoices only
+    purchase_order_item_id: uuid.UUID | None = None  # purchase invoices only
+    purchase_receipt_item_id: uuid.UUID | None = None  # purchase invoices only
 
 
 class InvoiceCreateBase(BaseModel):
@@ -263,6 +269,11 @@ class InvoiceItemResponse(DocumentMeta):
     net_amount: Decimal
     base_net_amount: Decimal
     cost_center_id: uuid.UUID | None
+    item_id: uuid.UUID | None = None
+    sales_order_item_id: uuid.UUID | None = None
+    delivery_note_item_id: uuid.UUID | None = None
+    purchase_order_item_id: uuid.UUID | None = None
+    purchase_receipt_item_id: uuid.UUID | None = None
 
 
 class InvoiceTaxResponse(DocumentMeta):
@@ -307,12 +318,14 @@ class InvoiceResponseBase(DocumentMeta):
 
 class SalesInvoiceResponse(InvoiceResponseBase):
     customer_id: uuid.UUID
+    customer_name: str | None = None
     debit_to_id: uuid.UUID
     return_against_id: uuid.UUID | None
 
 
 class PurchaseInvoiceResponse(InvoiceResponseBase):
     supplier_id: uuid.UUID
+    supplier_name: str | None = None
     credit_to_id: uuid.UUID
     return_against_id: uuid.UUID | None
     bill_no: str | None
@@ -323,6 +336,11 @@ class InvoiceListItem(ORMModel):
     id: uuid.UUID
     name: str
     posting_date: date
+    due_date: date | None = None
+    currency: str | None = None
+    # one of the two is set, depending on the list (sales vs purchase)
+    customer_name: str | None = None
+    supplier_name: str | None = None
     grand_total: Decimal
     outstanding_amount: Decimal
     status: str
@@ -400,7 +418,11 @@ class PaymentEntryListItem(ORMModel):
     name: str
     posting_date: date
     payment_type: str
+    party_type: str | None = None
+    party_id: uuid.UUID | None = None
     paid_amount: Decimal
+    unallocated_amount: Decimal | None = None
+    reference_no: str | None = None
     status: str
     docstatus: int
 

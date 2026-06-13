@@ -3,15 +3,19 @@
 
 import { computed, onMounted, ref } from "vue";
 import DataTable, { type Column } from "@/components/shared/DataTable.vue";
+import PaginationFooter from "@/components/shared/PaginationFooter.vue";
 import StatusBadge from "@/components/shared/StatusBadge.vue";
 import { useList } from "@/composables/useList";
 import { useAccountsStore } from "@/stores/accounts";
+import { useCompanyCurrency } from "@/composables/useCompanyCurrency";
 import { api } from "@/api/client";
+import { formatCurrency, formatDate, formatNumber } from "@/utils/format";
 import type { ErrorEnvelope } from "@/types/core";
 import type { JournalEntryListItem, JournalEntryRowIn } from "@/types/accounts";
 
 const store = useAccountsStore();
-const { items, total, loading, fetchList } = useList<JournalEntryListItem>("/journal-entries");
+const companyCurrency = useCompanyCurrency();
+const { items, total, page, pageSize, loading, fetchList, goToPage } = useList<JournalEntryListItem>("/journal-entries");
 
 const showForm = ref(false);
 const postingDate = ref(new Date().toISOString().slice(0, 10));
@@ -25,7 +29,9 @@ const saving = ref(false);
 
 const totalDebit = computed(() => rows.value.reduce((s, r) => s + (Number(r.debit) || 0), 0));
 const totalCredit = computed(() => rows.value.reduce((s, r) => s + (Number(r.credit) || 0), 0));
-const balanced = computed(() => totalDebit.value === totalCredit.value && totalDebit.value > 0);
+const balanced = computed(
+  () => Math.abs(totalDebit.value - totalCredit.value) < 0.005 && totalDebit.value > 0,
+);
 
 const columns: Column[] = [
   { key: "name", label: "Entry" },
@@ -109,7 +115,7 @@ onMounted(async () => {
           Add Row
         </button>
         <div class="text-sm" :class="balanced ? 'text-green-600' : 'text-red-600'">
-          Dr {{ totalDebit.toFixed(2) }} / Cr {{ totalCredit.toFixed(2) }}
+          Dr {{ formatNumber(totalDebit) }} / Cr {{ formatNumber(totalCredit) }}
           {{ balanced ? "✓ balanced" : "— must balance" }}
         </div>
       </div>
@@ -122,6 +128,15 @@ onMounted(async () => {
     </form>
 
     <DataTable :columns="columns" :rows="items" :loading="loading">
+      <template #cell-name="{ row }">
+        <span class="font-medium text-gray-900">{{ row.name }}</span>
+      </template>
+      <template #cell-posting_date="{ value }">
+        {{ formatDate(String(value)) }}
+      </template>
+      <template #cell-total_debit="{ value }">
+        {{ formatCurrency(String(value), companyCurrency) }}
+      </template>
       <template #cell-docstatus="{ value, row }">
         <div class="flex items-center gap-2">
           <StatusBadge :status="Number(value)" />
@@ -133,5 +148,6 @@ onMounted(async () => {
         </div>
       </template>
     </DataTable>
+    <PaginationFooter :page="page" :page-size="pageSize" :total="total" @go-to="goToPage" />
   </div>
 </template>

@@ -245,7 +245,12 @@ async def make_reverse_gl_entries(
     voucher_id: uuid.UUID,
     user_id: uuid.UUID | None = None,
 ) -> int:
-    """Cancel a voucher by writing mirror-image entries (debit <-> credit)."""
+    """Cancel a voucher by writing mirror-image entries (debit <-> credit).
+
+    Blocked when the original posting date falls in a frozen period or a
+    closed fiscal year — otherwise cancellation would silently rewrite
+    finalised books (ERPNext blocks this the same way).
+    """
     originals = (
         (
             await db.execute(
@@ -261,6 +266,15 @@ async def make_reverse_gl_entries(
     )
     if not originals:
         return 0
+    company_id = originals[0].company_id
+    posting_date = min(e.posting_date for e in originals)
+    frozen_upto = await get_frozen_upto(db, company_id)
+    if frozen_upto and posting_date <= frozen_upto:
+        raise ValidationError(
+            f"Cannot cancel: posting date {posting_date} is in a frozen period "
+            f"(frozen upto {frozen_upto})"
+        )
+    await get_fiscal_year(db, company_id, posting_date)  # raises if closed/missing
     for entry in originals:
         db.add(
             GLEntry(

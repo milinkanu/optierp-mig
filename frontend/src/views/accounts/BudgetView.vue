@@ -4,6 +4,7 @@
 import { computed, onMounted, ref } from "vue";
 import StatusBadge from "@/components/shared/StatusBadge.vue";
 import { useAccountsStore } from "@/stores/accounts";
+import { formatCurrency } from "@/utils/format";
 import { api } from "@/api/client";
 import type { AccountNode, ErrorEnvelope, ListResponse } from "@/types/core";
 import type { Budget, FiscalYearInfo } from "@/types/accounts";
@@ -169,7 +170,7 @@ onMounted(async () => {
             <td class="px-4 py-2">{{ budget.action_if_annual_budget_exceeded }}</td>
             <td class="px-4 py-2">
               <div v-for="row in budget.accounts" :key="row.id" class="text-xs text-gray-600">
-                {{ accountLabel(row.account_id) }}: {{ row.budget_amount }}
+                {{ accountLabel(row.account_id) }}: {{ formatCurrency(row.budget_amount) }}
               </div>
             </td>
             <td class="px-4 py-2"><StatusBadge :status="docstatusLabel(budget.docstatus)" /></td>

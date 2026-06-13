@@ -30,8 +30,10 @@ async def client():
     from app.models.core import Currency, Role, User, UserRole
 
     async with engine.begin() as conn:
+        # schema-level drop: drop_all can't order DROPs across FK cycles
+        await conn.execute(text("DROP SCHEMA public CASCADE"))
+        await conn.execute(text("CREATE SCHEMA public"))
         await conn.execute(text("CREATE EXTENSION IF NOT EXISTS ltree"))
-        await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
 
     async with async_session_factory() as db:
@@ -92,7 +94,9 @@ async def test_company_creation_seeds_coa_and_defaults(client: AsyncClient):
     accounts = resp.json()
     assert len(accounts) > 50
     roots = [a for a in accounts if a["parent_account_id"] is None]
-    assert {a["root_type"] for a in roots} == {"Asset", "Liability", "Equity", "Income", "Expense"}
+    # in_standard mirrors erpnext's India chart: 4 roots, equity accounts
+    # nest under "Source of Funds (Liabilities)" (no root-level Equity)
+    assert {a["root_type"] for a in roots} == {"Asset", "Liability", "Income", "Expense"}
 
     # Indian fiscal year (April-March) auto-created
     from app.core.database import async_session_factory

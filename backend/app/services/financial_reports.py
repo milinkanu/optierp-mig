@@ -9,7 +9,7 @@ import uuid
 from datetime import date
 from decimal import Decimal
 
-from sqlalchemy import Select, func, select, text
+from sqlalchemy import Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import NotFoundError, ValidationError

@@ -4,6 +4,7 @@
 
 import { computed, onMounted, ref, watch } from "vue";
 import { useAccountsStore } from "@/stores/accounts";
+import { formatCurrency, formatDate } from "@/utils/format";
 import { api } from "@/api/client";
 import type { ErrorEnvelope } from "@/types/core";
 import type { UnreconciledResponse } from "@/types/accounts";
@@ -35,7 +36,6 @@ async function fetchUnreconciled(): Promise<void> {
   data.value = null;
   paymentEntryId.value = "";
   allocations.value = {};
-  successMessage.value = "";
   if (!partyId.value) return;
   loading.value = true;
   error.value = null;
@@ -55,8 +55,12 @@ async function fetchUnreconciled(): Promise<void> {
 watch([partyType], () => {
   partyId.value = "";
   data.value = null;
+  successMessage.value = "";
 });
-watch([partyId], () => void fetchUnreconciled());
+watch([partyId], () => {
+  successMessage.value = "";
+  void fetchUnreconciled();
+});
 
 async function reconcile(): Promise<void> {
   if (!selectedPayment.value) return;
@@ -132,8 +136,8 @@ onMounted(async () => {
         >
           <input v-model="paymentEntryId" type="radio" :value="p.payment_entry_id" />
           <span class="flex-1">{{ p.name }}</span>
-          <span class="text-gray-500">{{ p.posting_date }}</span>
-          <span class="font-medium">{{ p.unallocated_amount }}</span>
+          <span class="text-gray-500">{{ formatDate(p.posting_date) }}</span>
+          <span class="font-medium">{{ formatCurrency(p.unallocated_amount) }}</span>
         </label>
         <p v-if="!data.payments.length" class="py-6 text-center text-sm text-gray-400">
           No unallocated payments for this party.
@@ -149,8 +153,8 @@ onMounted(async () => {
           class="mb-1 grid grid-cols-12 items-center gap-2 text-sm"
         >
           <span class="col-span-4">{{ invoice.name }}</span>
-          <span class="col-span-3 text-gray-500">{{ invoice.posting_date }}</span>
-          <span class="col-span-2 text-right">{{ invoice.outstanding_amount }}</span>
+          <span class="col-span-3 text-gray-500">{{ formatDate(invoice.posting_date) }}</span>
+          <span class="col-span-2 text-right">{{ formatCurrency(invoice.outstanding_amount) }}</span>
           <input
             v-model.number="allocations[invoice.invoice_id]"
             type="number"
@@ -167,8 +171,8 @@ onMounted(async () => {
         </p>
         <div v-if="data.invoices.length" class="mt-3 flex items-center justify-between border-t border-gray-100 pt-3">
           <p class="text-sm" :class="overAllocated ? 'text-red-600' : 'text-gray-600'">
-            Allocating {{ totalAllocated.toFixed(2) }}
-            <template v-if="selectedPayment"> of {{ selectedPayment.unallocated_amount }} available</template>
+            Allocating {{ formatCurrency(totalAllocated) }}
+            <template v-if="selectedPayment"> of {{ formatCurrency(selectedPayment.unallocated_amount) }} available</template>
           </p>
           <button
             class="btn-primary"

@@ -102,7 +102,110 @@ const routes: RouteRecordRaw[] = [
         name: "reports",
         component: () => import("@/views/accounts/ReportsView.vue"),
       },
-      // Module 03+ routes (stock/, buying/, ...) register here per module
+      // Module 03 — Stock
+      { path: "items", name: "items", component: () => import("@/views/stock/ItemsView.vue") },
+      {
+        path: "warehouses",
+        name: "warehouses",
+        component: () => import("@/views/stock/WarehousesView.vue"),
+      },
+      {
+        path: "stock-entries",
+        name: "stock-entries",
+        component: () => import("@/views/stock/StockEntryView.vue"),
+      },
+      {
+        path: "material-requests",
+        name: "material-requests",
+        component: () => import("@/views/stock/MaterialRequestView.vue"),
+      },
+      {
+        path: "stock-balance",
+        name: "stock-balance",
+        component: () => import("@/views/stock/StockBalanceView.vue"),
+      },
+      {
+        path: "purchase-receipts",
+        name: "purchase-receipts",
+        component: () => import("@/views/trade/FulfilmentView.vue"),
+        props: { kind: "purchase-receipt" },
+      },
+      {
+        path: "purchase-receipts/:id",
+        name: "purchase-receipt-detail",
+        component: () => import("@/views/trade/FulfilmentView.vue"),
+        props: (route) => ({ kind: "purchase-receipt", id: route.params.id as string }),
+      },
+      {
+        path: "delivery-notes",
+        name: "delivery-notes",
+        component: () => import("@/views/trade/FulfilmentView.vue"),
+        props: { kind: "delivery-note" },
+      },
+      {
+        path: "delivery-notes/:id",
+        name: "delivery-note-detail",
+        component: () => import("@/views/trade/FulfilmentView.vue"),
+        props: (route) => ({ kind: "delivery-note", id: route.params.id as string }),
+      },
+      // Module 04 — Buying
+      {
+        path: "purchase-orders",
+        name: "purchase-orders",
+        component: () => import("@/views/trade/OrderListView.vue"),
+        props: { kind: "purchase-order" },
+      },
+      {
+        path: "purchase-orders/new",
+        name: "purchase-order-new",
+        component: () => import("@/views/trade/OrderFormView.vue"),
+        props: { kind: "purchase-order" },
+      },
+      {
+        path: "purchase-orders/:id",
+        name: "purchase-order-detail",
+        component: () => import("@/views/trade/OrderFormView.vue"),
+        props: (route) => ({ kind: "purchase-order", id: route.params.id as string }),
+      },
+      { path: "sourcing", name: "sourcing", component: () => import("@/views/buying/RfqView.vue") },
+      // Module 05 — Selling
+      {
+        path: "quotations",
+        name: "quotations",
+        component: () => import("@/views/trade/OrderListView.vue"),
+        props: { kind: "quotation" },
+      },
+      {
+        path: "quotations/new",
+        name: "quotation-new",
+        component: () => import("@/views/trade/OrderFormView.vue"),
+        props: { kind: "quotation" },
+      },
+      {
+        path: "quotations/:id",
+        name: "quotation-detail",
+        component: () => import("@/views/trade/OrderFormView.vue"),
+        props: (route) => ({ kind: "quotation", id: route.params.id as string }),
+      },
+      {
+        path: "sales-orders",
+        name: "sales-orders",
+        component: () => import("@/views/trade/OrderListView.vue"),
+        props: { kind: "sales-order" },
+      },
+      {
+        path: "sales-orders/new",
+        name: "sales-order-new",
+        component: () => import("@/views/trade/OrderFormView.vue"),
+        props: { kind: "sales-order" },
+      },
+      {
+        path: "sales-orders/:id",
+        name: "sales-order-detail",
+        component: () => import("@/views/trade/OrderFormView.vue"),
+        props: (route) => ({ kind: "sales-order", id: route.params.id as string }),
+      },
+      // Module 06+ routes register here per module
     ],
   },
   { path: "/:pathMatch(.*)*", redirect: "/" },

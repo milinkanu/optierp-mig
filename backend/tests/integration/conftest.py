@@ -29,8 +29,11 @@ async def ctx():
     from app.models.core import Currency, Role, User, UserRole
 
     async with engine.begin() as conn:
+        # drop_all can't order DROPs across FK cycles (unnamed use_alter
+        # constraints) — recreating the schema wholesale is cycle-proof
+        await conn.execute(text("DROP SCHEMA public CASCADE"))
+        await conn.execute(text("CREATE SCHEMA public"))
         await conn.execute(text("CREATE EXTENSION IF NOT EXISTS ltree"))
-        await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
         # the GL triggers live in migration 0002; create_all doesn't know them
         await conn.execute(text(

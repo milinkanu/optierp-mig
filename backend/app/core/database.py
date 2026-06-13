@@ -15,7 +15,7 @@ Section 2.1 rule 5).
 import uuid
 from collections.abc import AsyncIterator
 
-from sqlalchemy import text
+from sqlalchemy import event, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.core.config import get_settings
@@ -37,12 +37,33 @@ async def get_db() -> AsyncIterator[AsyncSession]:
         yield session
 
 
+def _arm_company_context(session: AsyncSession) -> None:
+    """Re-apply the tenant GUC at the start of every transaction of this session.
+
+    ``set_config(..., is_local := true)`` only lives until the next COMMIT, so a
+    service that commits mid-request would otherwise continue in a fresh
+    transaction with no tenant context — and RLS would hide every row it just
+    wrote. The ``after_begin`` hook re-arms the GUC for each new transaction.
+    """
+    if session.info.get("company_context_armed"):
+        return
+    session.info["company_context_armed"] = True
+
+    @event.listens_for(session.sync_session, "after_begin")
+    def _set_guc(sync_session, transaction, connection) -> None:
+        cid = sync_session.info.get("company_id", "")
+        # cid is str(uuid.UUID) or "" — no injection surface
+        connection.exec_driver_sql(f"SELECT set_config('app.company_id', '{cid}', true)")
+
+
 async def set_company_context(session: AsyncSession, company_id: uuid.UUID | None) -> None:
     """Set the transaction-local tenant GUC consumed by RLS policies.
 
-    ``set_config(..., is_local := true)`` scopes the value to the current
-    transaction, so pooled connections never leak a tenant id.
+    The value is transaction-scoped (pooled connections never leak a tenant
+    id) and re-armed on every new transaction via ``_arm_company_context``.
     """
+    session.info["company_id"] = str(company_id) if company_id else ""
+    _arm_company_context(session)
     await session.execute(
         text("SELECT set_config('app.company_id', :cid, true)"),
         {"cid": str(company_id) if company_id else ""},

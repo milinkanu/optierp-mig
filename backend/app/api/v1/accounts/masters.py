@@ -1,7 +1,6 @@
 """Module 02 master endpoints: accounts, customers, suppliers, fiscal years,
 tax categories, tax templates."""
 
-import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query

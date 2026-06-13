@@ -52,9 +52,22 @@ api.interceptors.response.use(
         window.dispatchEvent(new CustomEvent("auth:expired"));
       }
     }
-    const envelope: ErrorEnvelope = error.response?.data?.detail
-      ? error.response.data
+    const rawDetail = error.response?.data?.detail;
+    // FastAPI request-validation failures send detail as an array of objects
+    const detail = Array.isArray(rawDetail)
+      ? rawDetail.map((d: { msg?: string }) => d.msg ?? JSON.stringify(d)).join("; ")
+      : rawDetail;
+    const envelope: ErrorEnvelope = detail
+      ? { ...error.response!.data, detail }
       : { detail: error.message, code: "ERR_NETWORK", field: null };
     return Promise.reject(envelope);
   },
 );
+
+/** Fetch a protected binary (e.g. invoice PDF) with auth and open it in a new tab. */
+export async function openPdf(path: string): Promise<void> {
+  const resp = await api.get<Blob>(path, { responseType: "blob" });
+  const url = URL.createObjectURL(resp.data);
+  window.open(url, "_blank");
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}

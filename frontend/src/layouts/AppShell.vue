@@ -7,21 +7,59 @@ const route = useRoute();
 const router = useRouter();
 const auth = useAuthStore();
 
-// Module 03+ add their entries here as they are migrated
+// Grouped per module; Module 06+ add their sections here as they are migrated
 const navigation = [
-  { name: "Dashboard", route: "dashboard", icon: "▦" },
-  { name: "Companies", route: "companies", icon: "🏢" },
-  { name: "Users", route: "users", icon: "👤" },
-  { name: "Roles", route: "roles", icon: "🛡" },
-  // Module 02 — Accounts
-  { name: "Sales Invoices", route: "sales-invoices", icon: "🧾" },
-  { name: "Purchase Invoices", route: "purchase-invoices", icon: "📥" },
-  { name: "Journal Entries", route: "journal-entries", icon: "📒" },
-  { name: "Payments", route: "payment-entries", icon: "💸" },
-  { name: "Reconciliation", route: "payment-reconciliation", icon: "🔗" },
-  { name: "Budgets", route: "budgets", icon: "🎯" },
-  { name: "Reports", route: "reports", icon: "📊" },
-  { name: "Settings", route: "settings", icon: "⚙" },
+  {
+    section: "",
+    items: [{ name: "Dashboard", route: "dashboard", icon: "▦" }],
+  },
+  {
+    section: "Selling",
+    items: [
+      { name: "Quotations", route: "quotations", icon: "📝" },
+      { name: "Sales Orders", route: "sales-orders", icon: "🛒" },
+      { name: "Delivery Notes", route: "delivery-notes", icon: "🚚" },
+      { name: "Sales Invoices", route: "sales-invoices", icon: "🧾" },
+    ],
+  },
+  {
+    section: "Buying",
+    items: [
+      { name: "Material Requests", route: "material-requests", icon: "📋" },
+      { name: "Sourcing (RFQ)", route: "sourcing", icon: "📨" },
+      { name: "Purchase Orders", route: "purchase-orders", icon: "🛍" },
+      { name: "Purchase Receipts", route: "purchase-receipts", icon: "📦" },
+      { name: "Purchase Invoices", route: "purchase-invoices", icon: "📥" },
+    ],
+  },
+  {
+    section: "Stock",
+    items: [
+      { name: "Items", route: "items", icon: "🏷" },
+      { name: "Warehouses", route: "warehouses", icon: "🏬" },
+      { name: "Stock Entries", route: "stock-entries", icon: "↔" },
+      { name: "Stock Balance", route: "stock-balance", icon: "📈" },
+    ],
+  },
+  {
+    section: "Accounting",
+    items: [
+      { name: "Journal Entries", route: "journal-entries", icon: "📒" },
+      { name: "Payments", route: "payment-entries", icon: "💸" },
+      { name: "Reconciliation", route: "payment-reconciliation", icon: "🔗" },
+      { name: "Budgets", route: "budgets", icon: "🎯" },
+      { name: "Reports", route: "reports", icon: "📊" },
+    ],
+  },
+  {
+    section: "Setup",
+    items: [
+      { name: "Companies", route: "companies", icon: "🏢" },
+      { name: "Users", route: "users", icon: "👤" },
+      { name: "Roles", route: "roles", icon: "🛡" },
+      { name: "Settings", route: "settings", icon: "⚙" },
+    ],
+  },
 ];
 
 async function logout(): Promise<void> {
@@ -40,21 +78,27 @@ async function logout(): Promise<void> {
           <div class="text-xs text-gray-500">{{ brand.tagline }}</div>
         </div>
       </div>
-      <nav class="flex-1 space-y-1 p-3">
-        <RouterLink
-          v-for="item in navigation"
-          :key="item.route"
-          :to="{ name: item.route }"
-          class="flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium"
-          :class="
-            route.name === item.route
-              ? 'bg-primary/10 text-primary'
-              : 'text-gray-600 hover:bg-gray-100'
-          "
-        >
-          <span aria-hidden="true">{{ item.icon }}</span>
-          {{ item.name }}
-        </RouterLink>
+      <nav class="flex-1 overflow-y-auto p-3">
+        <div v-for="group in navigation" :key="group.section" class="mb-2">
+          <div v-if="group.section"
+               class="px-3 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-wider text-gray-400">
+            {{ group.section }}
+          </div>
+          <RouterLink
+            v-for="item in group.items"
+            :key="item.route"
+            :to="{ name: item.route }"
+            class="flex items-center gap-3 rounded-md px-3 py-1.5 text-sm font-medium"
+            :class="
+              route.name === item.route
+                ? 'bg-primary/10 text-primary'
+                : 'text-gray-600 hover:bg-gray-100'
+            "
+          >
+            <span aria-hidden="true">{{ item.icon }}</span>
+            {{ item.name }}
+          </RouterLink>
+        </div>
       </nav>
       <div class="border-t border-gray-200 p-4">
         <div class="text-sm font-medium text-gray-900">{{ auth.fullName }}</div>
@@ -65,7 +109,9 @@ async function logout(): Promise<void> {
       </div>
     </aside>
     <main class="flex-1 overflow-y-auto p-6">
-      <RouterView />
+      <!-- keyed by fullPath: reusing a component instance across e.g.
+           /quotations/:id -> /sales-orders/new would keep stale state -->
+      <RouterView :key="route.fullPath" />
     </main>
   </div>
 </template>

@@ -83,6 +83,20 @@ class Company(Base, DocumentMixin):
         ForeignKey("cost_centers.id", use_alter=True, name="fk_company_cost_center"),
     )
 
+    # Module 03 — perpetual inventory accounts (resolved from the COA template)
+    enable_perpetual_inventory: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default=text("true")
+    )
+    default_inventory_account_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("accounts.id", use_alter=True, name="fk_company_inventory_account")
+    )
+    stock_received_but_not_billed_account_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("accounts.id", use_alter=True, name="fk_company_srbnb_account")
+    )
+    stock_adjustment_account_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("accounts.id", use_alter=True, name="fk_company_stock_adj_account")
+    )
+
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"))
 
 

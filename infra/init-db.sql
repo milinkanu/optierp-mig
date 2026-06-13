@@ -8,8 +8,8 @@
 --
 -- MANUAL_REVIEW: passwords below are for local development only.
 
-CREATE ROLE erp_owner LOGIN PASSWORD 'erp_owner_dev_pw';
-CREATE ROLE erp_app LOGIN PASSWORD 'erp_app_dev_pw';
+CREATE ROLE erp_owner LOGIN PASSWORD 'milin';
+CREATE ROLE erp_app LOGIN PASSWORD 'milin';
 
 CREATE DATABASE erp OWNER erp_owner;
 CREATE DATABASE erp_test OWNER erp_owner;

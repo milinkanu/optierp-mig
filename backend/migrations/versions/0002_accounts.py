@@ -57,14 +57,16 @@ VOUCHER_TABLES = ("journal_entries", "sales_invoices", "purchase_invoices", "pay
 
 
 def upgrade() -> None:
+    # create_type=False: the explicit .create() below is the only CREATE TYPE —
+    # otherwise op.create_table would auto-create each enum a second time.
     charge_type = pg.ENUM(
         "Actual", "On Net Total", "On Previous Row Amount", "On Previous Row Total",
-        "On Item Quantity", name="tax_charge_type",
+        "On Item Quantity", name="tax_charge_type", create_type=False,
     )
-    party_type = pg.ENUM("Customer", "Supplier", name="party_type")
+    party_type = pg.ENUM("Customer", "Supplier", name="party_type", create_type=False)
     invoice_status = pg.ENUM(
         "Draft", "Unpaid", "Partly Paid", "Paid", "Overdue", "Cancelled", "Return",
-        name="invoice_status",
+        name="invoice_status", create_type=False,
     )
     charge_type.create(op.get_bind())
     party_type.create(op.get_bind())

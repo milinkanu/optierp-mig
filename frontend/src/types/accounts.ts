@@ -24,6 +24,12 @@ export interface InvoiceItemIn {
   uom?: string | null;
   rate: number;
   account_id?: string | null;
+  // Module 03-05 cycle links
+  item_id?: string | null;
+  sales_order_item_id?: string | null;
+  delivery_note_item_id?: string | null;
+  purchase_order_item_id?: string | null;
+  purchase_receipt_item_id?: string | null;
 }
 
 export interface TaxRowIn {
@@ -41,6 +47,10 @@ export interface InvoiceListItem {
   id: string;
   name: string;
   posting_date: string;
+  due_date: string | null;
+  currency: string | null;
+  customer_name: string | null;
+  supplier_name: string | null;
   grand_total: string;
   outstanding_amount: string;
   status: string;
@@ -82,10 +92,12 @@ export interface InvoiceDetail extends DocumentMeta {
 
 export interface SalesInvoiceDetail extends InvoiceDetail {
   customer_id: string;
+  customer_name: string | null;
 }
 
 export interface PurchaseInvoiceDetail extends InvoiceDetail {
   supplier_id: string;
+  supplier_name: string | null;
   bill_no: string | null;
 }
 
@@ -112,7 +124,11 @@ export interface PaymentEntryListItem {
   name: string;
   posting_date: string;
   payment_type: string;
+  party_type: string | null;
+  party_id: string | null;
   paid_amount: string;
+  unallocated_amount: string | null;
+  reference_no: string | null;
   status: string;
   docstatus: number;
 }

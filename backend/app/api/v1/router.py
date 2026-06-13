@@ -13,6 +13,7 @@ from app.api.v1.accounts import (
     reports as accounts_reports,
     sales_invoices,
 )
+from app.api.v1.buying import purchase_orders, rfqs
 from app.api.v1.core import (
     companies,
     currencies,
@@ -22,6 +23,15 @@ from app.api.v1.core import (
     uoms,
     users,
     workflows,
+)
+from app.api.v1.selling import quotations, sales_orders
+from app.api.v1.stock import (
+    delivery_notes,
+    masters as stock_masters,
+    material_requests,
+    purchase_receipts,
+    reports as stock_reports,
+    stock_entries,
 )
 
 api_v1_router = APIRouter()
@@ -47,4 +57,20 @@ api_v1_router.include_router(payment_reconciliation.router)
 api_v1_router.include_router(budgets.router)
 api_v1_router.include_router(accounts_reports.router)
 
-# Module 03+ — registered as each module is migrated
+# Module 03 — Stock
+api_v1_router.include_router(stock_masters.router)
+api_v1_router.include_router(stock_entries.router)
+api_v1_router.include_router(material_requests.router)
+api_v1_router.include_router(purchase_receipts.router)
+api_v1_router.include_router(delivery_notes.router)
+api_v1_router.include_router(stock_reports.router)
+
+# Module 04 — Buying
+api_v1_router.include_router(purchase_orders.router)
+api_v1_router.include_router(rfqs.router)
+
+# Module 05 — Selling
+api_v1_router.include_router(quotations.router)
+api_v1_router.include_router(sales_orders.router)
+
+# Module 06+ — registered as each module is migrated

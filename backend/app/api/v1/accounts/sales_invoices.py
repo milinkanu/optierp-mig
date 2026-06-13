@@ -48,10 +48,14 @@ async def list_invoices(
     db: Annotated[AsyncSession, Depends(get_tenant_db)],
     page: Annotated[int, Query(ge=1)] = 1,
     page_size: Annotated[int, Query(ge=1, le=200)] = 20,
-    status: str | None = None,
+    status: Annotated[
+        str | None,
+        Query(pattern="^(Draft|Unpaid|Partly Paid|Paid|Overdue|Cancelled|Return)$"),
+    ] = None,
+    customer_id: uuid.UUID | None = None,
 ) -> ListResponse[InvoiceListItem]:
     invoices, total = await service.list_sales_invoices(
-        db, current_user.company_id, page, page_size, status
+        db, current_user.company_id, page, page_size, status, customer_id
     )
     return ListResponse(
         items=[InvoiceListItem.model_validate(i) for i in invoices],

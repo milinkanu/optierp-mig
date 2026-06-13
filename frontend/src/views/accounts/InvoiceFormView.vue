@@ -1,19 +1,41 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
-import { useRouter } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import StatusBadge from "@/components/shared/StatusBadge.vue";
 import { useAccountsStore } from "@/stores/accounts";
-import { api } from "@/api/client";
+import { useCompanyCurrency } from "@/composables/useCompanyCurrency";
+import { api, openPdf } from "@/api/client";
+import { formatCurrency, formatDate, formatNumber, formatQty } from "@/utils/format";
 import type { ErrorEnvelope } from "@/types/core";
-import type { InvoiceDetail, InvoiceItemIn, TaxRowIn } from "@/types/accounts";
+import type {
+  InvoiceDetail,
+  InvoiceItemIn,
+  PurchaseInvoiceDetail,
+  SalesInvoiceDetail,
+  TaxRowIn,
+} from "@/types/accounts";
 
 const props = defineProps<{ kind: "sales" | "purchase"; id?: string }>();
 const router = useRouter();
+const route = useRoute();
 const store = useAccountsStore();
+const companyCurrency = useCompanyCurrency();
 
 const endpoint = computed(() => (props.kind === "sales" ? "/sales-invoices" : "/purchase-invoices"));
 const partyLabel = computed(() => (props.kind === "sales" ? "Customer" : "Supplier"));
 const parties = computed(() => (props.kind === "sales" ? store.customers : store.suppliers));
+
+const docPartyName = computed(() => {
+  if (!doc.value) return "";
+  return props.kind === "sales"
+    ? ((doc.value as SalesInvoiceDetail).customer_name ?? "")
+    : ((doc.value as PurchaseInvoiceDetail).supplier_name ?? "");
+});
+const docBillNo = computed(() =>
+  props.kind === "purchase" ? (doc.value as PurchaseInvoiceDetail | null)?.bill_no : null,
+);
+const money = (value: string | number | null | undefined): string =>
+  formatCurrency(value, doc.value?.currency ?? "INR");
 
 const doc = ref<InvoiceDetail | null>(null);
 const error = ref<ErrorEnvelope | null>(null);
@@ -40,12 +62,40 @@ function addTax(): void {
 
 async function quickCreateParty(): Promise<void> {
   if (!newPartyName.value) return;
-  const created =
-    props.kind === "sales"
-      ? await store.createCustomer(newPartyName.value)
-      : await store.createSupplier(newPartyName.value);
-  partyId.value = created.id;
-  newPartyName.value = "";
+  error.value = null;
+  try {
+    const created =
+      props.kind === "sales"
+        ? await store.createCustomer(newPartyName.value)
+        : await store.createSupplier(newPartyName.value);
+    partyId.value = created.id;
+    newPartyName.value = "";
+  } catch (e) {
+    error.value = e as ErrorEnvelope;
+  }
+}
+
+async function viewPdf(): Promise<void> {
+  error.value = null;
+  try {
+    await openPdf(`${endpoint.value}/${doc.value!.id}/pdf`);
+  } catch (e) {
+    error.value = e as ErrorEnvelope;
+  }
+}
+
+function goToPayment(): void {
+  if (!doc.value) return;
+  void router.push({
+    name: "payment-entries",
+    query: {
+      type: props.kind === "sales" ? "Receive" : "Pay",
+      party_id:
+        props.kind === "sales"
+          ? (doc.value as SalesInvoiceDetail).customer_id
+          : (doc.value as PurchaseInvoiceDetail).supplier_id,
+    },
+  });
 }
 
 async function save(): Promise<void> {
@@ -79,6 +129,89 @@ async function action(name: "submit" | "cancel"): Promise<void> {
   }
 }
 
+interface SourceItem {
+  id: string;
+  item_id: string | null;
+  item_code: string | null;
+  item_name: string | null;
+  qty: string;
+  rate: string;
+  billed_qty?: string;
+  billed_amt?: string;
+  delivered_qty?: string;
+  received_qty?: string;
+  sales_order_item_id?: string | null;
+  purchase_order_item_id?: string | null;
+}
+
+// "Create Invoice" from an order / delivery / receipt prefills the unbilled rows
+async function prefillFromSource(): Promise<void> {
+  const sources: Array<{
+    param: string;
+    endpoint: string;
+    partyKey: "customer_id" | "supplier_id";
+    link: (row: SourceItem) => Partial<InvoiceItemIn>;
+    unbilled: (row: SourceItem) => number;
+  }> = props.kind === "sales"
+    ? [
+        {
+          param: "sales_order_id", endpoint: "/sales-orders", partyKey: "customer_id",
+          link: (row) => ({ sales_order_item_id: row.id }),
+          unbilled: (row) =>
+            Number(row.rate) > 0
+              ? Number(row.qty) - (Number(row.billed_amt) || 0) / Number(row.rate)
+              : Number(row.qty),
+        },
+        {
+          param: "delivery_note_id", endpoint: "/delivery-notes", partyKey: "customer_id",
+          link: (row) => ({
+            delivery_note_item_id: row.id,
+            sales_order_item_id: row.sales_order_item_id ?? null,
+          }),
+          unbilled: (row) => Number(row.qty) - (Number(row.billed_qty) || 0),
+        },
+      ]
+    : [
+        {
+          param: "purchase_order_id", endpoint: "/purchase-orders", partyKey: "supplier_id",
+          link: (row) => ({ purchase_order_item_id: row.id }),
+          unbilled: (row) =>
+            Number(row.rate) > 0
+              ? Number(row.qty) - (Number(row.billed_amt) || 0) / Number(row.rate)
+              : Number(row.qty),
+        },
+        {
+          param: "purchase_receipt_id", endpoint: "/purchase-receipts", partyKey: "supplier_id",
+          link: (row) => ({
+            purchase_receipt_item_id: row.id,
+            purchase_order_item_id: row.purchase_order_item_id ?? null,
+          }),
+          unbilled: (row) => Number(row.qty) - (Number(row.billed_qty) || 0),
+        },
+      ];
+
+  for (const source of sources) {
+    const docId = route.query[source.param];
+    if (typeof docId !== "string") continue;
+    const sourceDoc = (
+      await api.get<Record<string, unknown> & { items: SourceItem[] }>(`${source.endpoint}/${docId}`)
+    ).data;
+    partyId.value = String(sourceDoc[source.partyKey] ?? "");
+    items.value = sourceDoc.items
+      .map((row) => ({ row, pending: source.unbilled(row) }))
+      .filter(({ pending }) => pending > 0.000001)
+      .map(({ row, pending }) => ({
+        item_name: row.item_name ?? row.item_code ?? "",
+        item_code: row.item_code,
+        qty: Math.round(pending * 1000) / 1000,
+        rate: Number(row.rate),
+        item_id: row.item_id,
+        ...source.link(row),
+      }));
+    return;
+  }
+}
+
 onMounted(async () => {
   await Promise.all([
     store.fetchAccounts(),
@@ -86,6 +219,8 @@ onMounted(async () => {
   ]);
   if (props.id) {
     doc.value = (await api.get<InvoiceDetail>(`${endpoint.value}/${props.id}`)).data;
+  } else {
+    await prefillFromSource();
   }
 });
 </script>
@@ -96,22 +231,49 @@ onMounted(async () => {
     <div v-if="doc">
       <div class="mb-4 flex items-center justify-between">
         <div>
-          <h1 class="text-xl font-semibold text-gray-900">{{ doc.name }}</h1>
-          <p class="text-sm text-gray-500">{{ doc.posting_date }} · {{ doc.currency }}</p>
+          <h1 class="text-xl font-semibold text-gray-900">{{ docPartyName || doc.name }}</h1>
+          <p class="text-sm text-gray-500">{{ doc.name }}</p>
         </div>
         <div class="flex items-center gap-3">
           <StatusBadge :status="doc.status" />
           <button v-if="doc.docstatus === 0" class="btn-primary" @click="action('submit')">Submit</button>
+          <button
+            v-if="doc.docstatus === 1 && Number(doc.outstanding_amount) > 0"
+            class="btn-primary"
+            @click="goToPayment"
+          >{{ kind === "sales" ? "Receive Payment" : "Pay" }}</button>
           <button v-if="doc.docstatus === 1" class="btn-secondary" @click="action('cancel')">Cancel</button>
-          <a
-            v-if="doc.docstatus === 1"
-            class="btn-secondary"
-            :href="`/api/v1${endpoint}/${doc.id}/pdf`"
-            target="_blank"
-          >PDF</a>
+          <button v-if="doc.docstatus === 1" class="btn-secondary" @click="viewPdf">PDF</button>
         </div>
       </div>
       <p v-if="error" class="mb-3 text-sm text-red-600">{{ error.detail }}</p>
+
+      <div class="mb-4 grid grid-cols-2 gap-x-8 gap-y-3 rounded-lg border border-gray-200 bg-white p-5 shadow-sm md:grid-cols-4">
+        <div>
+          <div class="text-xs font-semibold uppercase tracking-wide text-gray-400">{{ partyLabel }}</div>
+          <div class="mt-0.5 text-sm font-medium text-gray-900">{{ docPartyName || "—" }}</div>
+        </div>
+        <div>
+          <div class="text-xs font-semibold uppercase tracking-wide text-gray-400">Posting Date</div>
+          <div class="mt-0.5 text-sm text-gray-900">{{ formatDate(doc.posting_date) }}</div>
+        </div>
+        <div>
+          <div class="text-xs font-semibold uppercase tracking-wide text-gray-400">Due Date</div>
+          <div class="mt-0.5 text-sm text-gray-900">{{ formatDate(doc.due_date) }}</div>
+        </div>
+        <div>
+          <div class="text-xs font-semibold uppercase tracking-wide text-gray-400">Currency</div>
+          <div class="mt-0.5 text-sm text-gray-900">{{ doc.currency }}</div>
+        </div>
+        <div v-if="docBillNo">
+          <div class="text-xs font-semibold uppercase tracking-wide text-gray-400">Supplier Invoice</div>
+          <div class="mt-0.5 text-sm text-gray-900">{{ docBillNo }}</div>
+        </div>
+        <div v-if="doc.remarks" class="col-span-2 md:col-span-3">
+          <div class="text-xs font-semibold uppercase tracking-wide text-gray-400">Remarks</div>
+          <div class="mt-0.5 text-sm text-gray-700">{{ doc.remarks }}</div>
+        </div>
+      </div>
 
       <div class="rounded-lg border border-gray-200 bg-white shadow-sm">
         <table class="min-w-full text-sm">
@@ -123,25 +285,29 @@ onMounted(async () => {
           <tbody>
             <tr v-for="item in doc.items" :key="item.idx" class="border-t border-gray-100">
               <td class="px-4 py-2">{{ item.idx }}</td>
-              <td class="px-4 py-2">{{ item.item_name }}</td>
-              <td class="px-4 py-2 text-right">{{ item.qty }}</td>
-              <td class="px-4 py-2 text-right">{{ item.rate }}</td>
-              <td class="px-4 py-2 text-right">{{ item.amount }}</td>
+              <td class="px-4 py-2 font-medium text-gray-900">{{ item.item_name }}</td>
+              <td class="px-4 py-2 text-right">{{ formatQty(item.qty) }}</td>
+              <td class="px-4 py-2 text-right">{{ money(item.rate) }}</td>
+              <td class="px-4 py-2 text-right">{{ money(item.amount) }}</td>
             </tr>
           </tbody>
         </table>
         <div class="border-t border-gray-200 p-4">
-          <dl class="ml-auto w-64 space-y-1 text-sm">
-            <div class="flex justify-between"><dt class="text-gray-500">Net Total</dt><dd>{{ doc.net_total }}</dd></div>
+          <dl class="ml-auto w-80 space-y-1 text-sm">
+            <div class="flex justify-between"><dt class="text-gray-500">Net Total</dt><dd>{{ money(doc.net_total) }}</dd></div>
             <div v-for="tax in doc.taxes" :key="tax.idx" class="flex justify-between">
-              <dt class="text-gray-500">{{ tax.description || tax.charge_type }} {{ tax.rate }}%</dt>
-              <dd>{{ tax.tax_amount }}</dd>
+              <dt class="text-gray-500">{{ tax.description || tax.charge_type }} <template v-if="Number(tax.rate)">({{ Number(tax.rate) }}%)</template></dt>
+              <dd>{{ money(tax.tax_amount) }}</dd>
             </div>
-            <div class="flex justify-between border-t border-gray-200 pt-1 font-semibold">
-              <dt>Grand Total</dt><dd>{{ doc.grand_total }}</dd>
+            <div v-if="Number(doc.discount_amount)" class="flex justify-between text-gray-500">
+              <dt>Discount</dt><dd>-{{ money(doc.discount_amount) }}</dd>
             </div>
-            <div class="flex justify-between text-gray-500">
-              <dt>Outstanding</dt><dd>{{ doc.outstanding_amount }}</dd>
+            <div class="flex justify-between border-t border-gray-200 pt-1 text-base font-semibold">
+              <dt>Grand Total</dt><dd>{{ money(doc.rounded_total) }}</dd>
+            </div>
+            <!-- outstanding is tracked in company (base) currency -->
+            <div class="flex justify-between" :class="Number(doc.outstanding_amount) > 0 ? 'font-medium text-red-700' : 'text-gray-500'">
+              <dt>Outstanding</dt><dd>{{ formatCurrency(doc.outstanding_amount, companyCurrency) }}</dd>
             </div>
           </dl>
         </div>
@@ -187,10 +353,10 @@ onMounted(async () => {
           <input v-model.number="item.qty" type="number" step="any" min="0" placeholder="Qty" class="form-input col-span-2" />
           <input v-model.number="item.rate" type="number" step="any" min="0" placeholder="Rate" class="form-input col-span-2" />
           <div class="col-span-2 flex items-center justify-end pr-2 text-sm text-gray-600">
-            {{ ((item.qty || 0) * (item.rate || 0)).toFixed(2) }}
+            {{ formatNumber((item.qty || 0) * (item.rate || 0)) }}
           </div>
         </div>
-        <p class="text-right text-sm font-medium text-gray-700">Net: {{ previewNet.toFixed(2) }}</p>
+        <p class="text-right text-sm font-medium text-gray-700">Net: {{ formatNumber(previewNet) }}</p>
       </div>
 
       <div class="rounded-lg border border-gray-200 bg-white p-5 shadow-sm">
@@ -206,7 +372,23 @@ onMounted(async () => {
             <option>Actual</option>
             <option>On Item Quantity</option>
           </select>
-          <input v-model.number="tax.rate" type="number" step="any" placeholder="Rate %" class="form-input col-span-2" />
+          <input
+            v-if="tax.charge_type === 'Actual'"
+            v-model.number="tax.tax_amount"
+            type="number"
+            step="any"
+            min="0"
+            placeholder="Amount"
+            class="form-input col-span-2"
+          />
+          <input
+            v-else
+            v-model.number="tax.rate"
+            type="number"
+            step="any"
+            placeholder="Rate %"
+            class="form-input col-span-2"
+          />
           <select v-model="tax.account_head_id" class="form-input col-span-5">
             <option value="" disabled>Tax account…</option>
             <option v-for="opt in store.accountOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>

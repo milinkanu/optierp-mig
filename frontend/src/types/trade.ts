@@ -1,0 +1,119 @@
+// Modules 04/05 — order document types (PO / SO / Quotation / Supplier Quotation / RFQ)
+
+import type { DocumentMeta } from "@/types/core";
+
+export interface OrderItemIn {
+  item_id: string;
+  qty: number;
+  rate?: number | null;
+  uom?: string | null;
+  description?: string | null;
+  warehouse_id?: string | null;
+  schedule_date?: string | null;
+  delivery_date?: string | null;
+  material_request_item_id?: string | null;
+  quotation_item_id?: string | null;
+}
+
+export interface OrderListItem {
+  id: string;
+  name: string;
+  posting_date: string;
+  customer_name?: string | null;
+  supplier_name?: string | null;
+  currency: string | null;
+  grand_total: string;
+  status: string;
+  per_received?: string | null;
+  per_delivered?: string | null;
+  per_billed?: string | null;
+  docstatus: number;
+}
+
+export interface OrderItemDetail {
+  id: string;
+  idx: number;
+  item_id: string | null;
+  item_code: string | null;
+  item_name: string;
+  description: string | null;
+  qty: string;
+  uom: string | null;
+  rate: string;
+  amount: string;
+  warehouse_id?: string | null;
+  received_qty?: string;
+  delivered_qty?: string;
+  billed_amt?: string;
+}
+
+export interface OrderTaxDetail {
+  idx: number;
+  charge_type: string;
+  rate: string;
+  description: string | null;
+  tax_amount: string;
+}
+
+export interface OrderDetail extends DocumentMeta {
+  name: string;
+  posting_date: string;
+  currency: string;
+  total_qty: string;
+  net_total: string;
+  total_taxes_and_charges: string;
+  discount_amount: string;
+  grand_total: string;
+  rounded_total: string;
+  status: string;
+  remarks: string | null;
+  items: OrderItemDetail[];
+  taxes: OrderTaxDetail[];
+  // party (one of the two)
+  customer_id?: string;
+  customer_name?: string | null;
+  supplier_id?: string;
+  supplier_name?: string | null;
+  // purchase order
+  schedule_date?: string | null;
+  per_received?: string;
+  // sales order
+  delivery_date?: string | null;
+  per_delivered?: string;
+  quotation_id?: string | null;
+  warnings?: string[];
+  // shared
+  per_billed?: string;
+  valid_till?: string | null;
+}
+
+export interface RFQListItem {
+  id: string;
+  name: string;
+  posting_date: string;
+  status: string;
+  docstatus: number;
+}
+
+export interface RFQDetail extends DocumentMeta {
+  name: string;
+  posting_date: string;
+  schedule_date: string | null;
+  message_for_supplier: string | null;
+  status: string;
+  items: Array<{
+    id: string;
+    idx: number;
+    item_id: string;
+    item_code: string | null;
+    item_name: string | null;
+    qty: string;
+    uom: string | null;
+  }>;
+  suppliers: Array<{
+    idx: number;
+    supplier_id: string;
+    supplier_name: string | null;
+    quote_status: string;
+  }>;
+}

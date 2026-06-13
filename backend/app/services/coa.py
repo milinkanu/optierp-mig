@@ -160,6 +160,14 @@ def resolve_default_accounts(company: Company, created: dict[str, Account]) -> N
     company.round_off_account_id = _find(created, account_type="Round Off", name="Round Off")
     company.write_off_account_id = _find(created, name="Write Off")
     company.exchange_gain_loss_account_id = _find(created, name="Exchange Gain/Loss")
+    # Module 03 — perpetual inventory accounts
+    company.default_inventory_account_id = _find(created, account_type="Stock", name="Stock In Hand")
+    company.stock_received_but_not_billed_account_id = _find(
+        created, account_type="Stock Received But Not Billed", name="Stock Received But Not Billed"
+    )
+    company.stock_adjustment_account_id = _find(
+        created, account_type="Stock Adjustment", name="Stock Adjustment"
+    )
 
 
 async def get_account_tree(db: AsyncSession, company_id: uuid.UUID) -> list[Account]:

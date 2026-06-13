@@ -4,7 +4,7 @@ import { ref, type Ref } from "vue";
 import { api } from "@/api/client";
 import type { ErrorEnvelope, ListResponse } from "@/types/core";
 
-export function useList<T>(endpoint: string) {
+export function useList<T>(endpoint: string | (() => string)) {
   const items: Ref<T[]> = ref([]);
   const total = ref(0);
   const page = ref(1);
@@ -13,11 +13,13 @@ export function useList<T>(endpoint: string) {
   const error = ref<ErrorEnvelope | null>(null);
   const filters = ref<Record<string, string | number | boolean | undefined>>({});
 
+  const resolveEndpoint = (): string => (typeof endpoint === "function" ? endpoint() : endpoint);
+
   async function fetchList(): Promise<void> {
     loading.value = true;
     error.value = null;
     try {
-      const resp = await api.get<ListResponse<T>>(endpoint, {
+      const resp = await api.get<ListResponse<T>>(resolveEndpoint(), {
         params: { page: page.value, page_size: pageSize.value, ...filters.value },
       });
       items.value = resp.data.items;
@@ -34,5 +36,12 @@ export function useList<T>(endpoint: string) {
     await fetchList();
   }
 
-  return { items, total, page, pageSize, loading, error, filters, fetchList, goToPage };
+  /** Reset paging/filters (e.g. when the underlying endpoint switches). */
+  async function reset(): Promise<void> {
+    page.value = 1;
+    filters.value = {};
+    await fetchList();
+  }
+
+  return { items, total, page, pageSize, loading, error, filters, fetchList, goToPage, reset };
 }

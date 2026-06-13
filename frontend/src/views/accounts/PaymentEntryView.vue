@@ -1,23 +1,32 @@
 <script setup lang="ts">
-// Payment Entry list + creation (Receive/Pay with invoice allocation).
+// Payment Entry list + creation (Receive/Pay with invoice allocation,
+// on-account advances supported via an independent amount field).
 
 import { computed, onMounted, ref, watch } from "vue";
+import { useRoute } from "vue-router";
 import DataTable, { type Column } from "@/components/shared/DataTable.vue";
+import PaginationFooter from "@/components/shared/PaginationFooter.vue";
 import StatusBadge from "@/components/shared/StatusBadge.vue";
 import { useList } from "@/composables/useList";
+import { useCompanyCurrency } from "@/composables/useCompanyCurrency";
 import { useAccountsStore } from "@/stores/accounts";
 import { api } from "@/api/client";
+import { formatCurrency, formatDate } from "@/utils/format";
 import type { ErrorEnvelope, ListResponse } from "@/types/core";
 import type { InvoiceListItem, PaymentEntryListItem } from "@/types/accounts";
 
 const store = useAccountsStore();
-const { items, total, loading, fetchList } = useList<PaymentEntryListItem>("/payment-entries");
+const route = useRoute();
+const companyCurrency = useCompanyCurrency();
+const { items, total, page, pageSize, loading, fetchList, goToPage } =
+  useList<PaymentEntryListItem>("/payment-entries");
 
 const showForm = ref(false);
 const paymentType = ref<"Receive" | "Pay">("Receive");
 const partyId = ref("");
 const bankAccountId = ref("");
 const postingDate = ref(new Date().toISOString().slice(0, 10));
+const paidAmount = ref<number | null>(null); // null = follow allocations
 const openInvoices = ref<InvoiceListItem[]>([]);
 const allocations = ref<Record<string, number>>({});
 const error = ref<ErrorEnvelope | null>(null);
@@ -36,14 +45,29 @@ const bankAccounts = computed(() =>
 const totalAllocated = computed(() =>
   Object.values(allocations.value).reduce((s, v) => s + (Number(v) || 0), 0),
 );
+const effectiveAmount = computed(() =>
+  paidAmount.value !== null && paidAmount.value > 0 ? paidAmount.value : totalAllocated.value,
+);
+const unallocatedPreview = computed(() => effectiveAmount.value - totalAllocated.value);
+const amountTooLow = computed(() => totalAllocated.value > effectiveAmount.value + 0.005);
 
-watch([partyId, paymentType], async () => {
+watch(paymentType, () => {
+  partyId.value = "";
+  openInvoices.value = [];
+  allocations.value = {};
+});
+
+watch(partyId, async () => {
   openInvoices.value = [];
   allocations.value = {};
   if (!partyId.value) return;
-  // unpaid + partly paid + overdue invoices of the selected party
+  // submitted invoices with an outstanding amount, for the selected party only
+  const partyParam =
+    paymentType.value === "Receive"
+      ? { customer_id: partyId.value }
+      : { supplier_id: partyId.value };
   const resp = await api.get<ListResponse<InvoiceListItem>>(invoiceEndpoint.value, {
-    params: { page_size: 100 },
+    params: { page_size: 200, ...partyParam },
   });
   openInvoices.value = resp.data.items.filter(
     (i) => i.docstatus === 1 && Number(i.outstanding_amount) > 0,
@@ -66,7 +90,7 @@ async function save(): Promise<void> {
       payment_type: paymentType.value,
       party_type: paymentType.value === "Receive" ? "Customer" : "Supplier",
       party_id: partyId.value,
-      paid_amount: totalAllocated.value,
+      paid_amount: effectiveAmount.value,
       references,
     };
     if (paymentType.value === "Receive") payload.paid_to_id = bankAccountId.value;
@@ -76,6 +100,7 @@ async function save(): Promise<void> {
     await api.post(`/payment-entries/${(resp.data as { id: string }).id}/submit`);
     showForm.value = false;
     allocations.value = {};
+    paidAmount.value = null;
     await fetchList();
   } catch (e) {
     error.value = e as ErrorEnvelope;
@@ -86,14 +111,37 @@ async function save(): Promise<void> {
 
 const columns: Column[] = [
   { key: "name", label: "Payment" },
+  { key: "party", label: "Party" },
   { key: "posting_date", label: "Date" },
   { key: "payment_type", label: "Type" },
+  { key: "reference_no", label: "Reference" },
   { key: "paid_amount", label: "Amount", class: "text-right" },
+  { key: "unallocated_amount", label: "Unallocated", class: "text-right" },
   { key: "status", label: "Status" },
 ];
 
+const partyNames = computed(() => {
+  const map = new Map<string, string>();
+  for (const c of store.customers) map.set(c.id, c.customer_name);
+  for (const s of store.suppliers) map.set(s.id, s.supplier_name);
+  return map;
+});
+
+function partyName(row: PaymentEntryListItem): string {
+  if (!row.party_id) return row.payment_type === "Internal Transfer" ? "Internal" : "—";
+  return partyNames.value.get(row.party_id) ?? "—";
+}
+
 onMounted(async () => {
   await Promise.all([fetchList(), store.fetchAccounts(), store.fetchCustomers(), store.fetchSuppliers()]);
+  // deep link from an invoice's "Pay" button: ?type=Receive&party_id=...
+  const queryType = route.query.type;
+  const queryParty = route.query.party_id;
+  if (queryType === "Receive" || queryType === "Pay") {
+    paymentType.value = queryType;
+    showForm.value = true;
+    if (typeof queryParty === "string") partyId.value = queryParty;
+  }
 });
 </script>
 
@@ -110,7 +158,7 @@ onMounted(async () => {
     </div>
 
     <form v-if="showForm" class="mb-6 rounded-lg border border-gray-200 bg-white p-5 shadow-sm" @submit.prevent="save">
-      <div class="grid grid-cols-4 gap-4">
+      <div class="grid grid-cols-5 gap-4">
         <div>
           <label class="form-label">Type</label>
           <select v-model="paymentType" class="form-input">
@@ -138,6 +186,17 @@ onMounted(async () => {
           <label class="form-label">Posting Date*</label>
           <input v-model="postingDate" type="date" required class="form-input" />
         </div>
+        <div>
+          <label class="form-label">Amount</label>
+          <input
+            v-model.number="paidAmount"
+            type="number"
+            min="0"
+            step="any"
+            class="form-input"
+            :placeholder="totalAllocated ? totalAllocated.toFixed(2) : 'e.g. advance'"
+          />
+        </div>
       </div>
 
       <div v-if="openInvoices.length" class="mt-4">
@@ -147,9 +206,9 @@ onMounted(async () => {
           :key="invoice.id"
           class="mb-1 grid grid-cols-12 items-center gap-2 text-sm"
         >
-          <span class="col-span-4">{{ invoice.name }}</span>
-          <span class="col-span-3 text-gray-500">{{ invoice.posting_date }}</span>
-          <span class="col-span-2 text-right">{{ invoice.outstanding_amount }}</span>
+          <span class="col-span-4 font-medium text-gray-900">{{ invoice.name }}</span>
+          <span class="col-span-3 text-gray-500">{{ formatDate(invoice.posting_date) }}</span>
+          <span class="col-span-2 text-right">{{ formatCurrency(invoice.outstanding_amount, companyCurrency) }}</span>
           <input
             v-model.number="allocations[invoice.id]"
             type="number"
@@ -160,22 +219,59 @@ onMounted(async () => {
             class="form-input col-span-3"
           />
         </div>
-        <p class="mt-2 text-right text-sm font-medium">Total payment: {{ totalAllocated.toFixed(2) }}</p>
       </div>
-      <p v-else-if="partyId" class="mt-4 text-sm text-gray-500">No open invoices for this party.</p>
+      <p v-else-if="partyId" class="mt-4 text-sm text-gray-500">
+        No open invoices for this party — the payment will be recorded on account
+        (reconcile it later from the Reconciliation page).
+      </p>
 
-      <p v-if="error" class="mt-2 text-sm text-red-600">{{ error.detail }}</p>
-      <div class="mt-4 flex justify-end">
-        <button type="submit" class="btn-primary" :disabled="saving || totalAllocated <= 0 || !bankAccountId">
+      <div class="mt-3 flex items-center justify-between text-sm">
+        <p :class="amountTooLow ? 'text-red-600' : 'text-gray-600'">
+          Paying {{ formatCurrency(effectiveAmount, companyCurrency) }}
+          <template v-if="totalAllocated > 0">
+            · allocated {{ formatCurrency(totalAllocated, companyCurrency) }}
+          </template>
+          <template v-if="unallocatedPreview > 0.005">
+            · {{ formatCurrency(unallocatedPreview, companyCurrency) }} on account
+          </template>
+          <template v-if="amountTooLow"> — amount is less than the allocations</template>
+        </p>
+        <button
+          type="submit"
+          class="btn-primary"
+          :disabled="saving || effectiveAmount <= 0 || amountTooLow || !bankAccountId || !partyId"
+        >
           {{ saving ? "Posting…" : "Save & Submit" }}
         </button>
       </div>
+      <p v-if="error" class="mt-2 text-sm text-red-600">{{ error.detail }}</p>
     </form>
 
     <DataTable :columns="columns" :rows="items" :loading="loading">
+      <template #cell-name="{ row }">
+        <span class="font-medium text-gray-900">{{ row.name }}</span>
+      </template>
+      <template #cell-party="{ row }">
+        {{ partyName(row) }}
+      </template>
+      <template #cell-posting_date="{ value }">
+        {{ formatDate(String(value)) }}
+      </template>
+      <template #cell-reference_no="{ value }">
+        {{ value ?? "—" }}
+      </template>
+      <template #cell-paid_amount="{ value }">
+        {{ formatCurrency(String(value), companyCurrency) }}
+      </template>
+      <template #cell-unallocated_amount="{ row }">
+        <span :class="Number(row.unallocated_amount) > 0 ? 'font-medium text-amber-700' : 'text-gray-400'">
+          {{ formatCurrency(row.unallocated_amount ?? 0, companyCurrency) }}
+        </span>
+      </template>
       <template #cell-status="{ value }">
         <StatusBadge :status="String(value)" />
       </template>
     </DataTable>
+    <PaginationFooter :page="page" :page-size="pageSize" :total="total" @go-to="goToPage" />
   </div>
 </template>

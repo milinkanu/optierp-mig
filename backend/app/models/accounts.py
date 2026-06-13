@@ -411,10 +411,10 @@ class JournalEntryAccount(Base, DocumentMixin):
     journal_entry: Mapped[JournalEntry] = relationship(back_populates="accounts")
 
 
-class InvoiceMixin(VoucherMixin):
-    """Shared invoice header fields (taxes_and_totals outputs)."""
+class TotalsMixin:
+    """taxes_and_totals output columns, shared by invoices AND order documents
+    (Quotation / Sales Order / Purchase Order arrive with Modules 04-05)."""
 
-    due_date: Mapped[date | None] = mapped_column(Date)
     currency: Mapped[str] = mapped_column(String(3), nullable=False)
     conversion_rate: Mapped[Decimal] = mapped_column(
         Numeric(21, 9), nullable=False, default=1, server_default=text("1")
@@ -451,6 +451,12 @@ class InvoiceMixin(VoucherMixin):
     rounding_adjustment: Mapped[Decimal] = mapped_column(
         Numeric(21, 6), nullable=False, default=0, server_default=text("0")
     )
+
+
+class InvoiceMixin(VoucherMixin, TotalsMixin):
+    """Shared invoice header fields (totals + receivable/payable state)."""
+
+    due_date: Mapped[date | None] = mapped_column(Date)
     outstanding_amount: Mapped[Decimal] = mapped_column(
         Numeric(21, 6), nullable=False, default=0, server_default=text("0")
     )
@@ -506,6 +512,11 @@ class SalesInvoice(Base, DocumentMixin, CompanyScopedMixin, InvoiceMixin):
     taxes: Mapped[list["SalesInvoiceTax"]] = relationship(
         back_populates="invoice", cascade="all, delete-orphan", order_by="SalesInvoiceTax.idx"
     )
+    customer = relationship("Customer", lazy="joined", viewonly=True)
+
+    @property
+    def customer_name(self) -> str | None:
+        return self.customer.customer_name if self.customer else None
 
 
 class SalesInvoiceItem(Base, DocumentMixin, InvoiceItemMixin):
@@ -516,6 +527,16 @@ class SalesInvoiceItem(Base, DocumentMixin, InvoiceItemMixin):
     )
     income_account_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("accounts.id"), nullable=False
+    )
+    # Module 03/05 cycle links (sales order -> delivery note -> invoice)
+    item_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("items.id", use_alter=True, name="fk_sii_item")
+    )
+    sales_order_item_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("sales_order_items.id", use_alter=True, name="fk_sii_so_item")
+    )
+    delivery_note_item_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("delivery_note_items.id", use_alter=True, name="fk_sii_dn_item")
     )
 
     invoice: Mapped[SalesInvoice] = relationship(back_populates="items")
@@ -555,6 +576,11 @@ class PurchaseInvoice(Base, DocumentMixin, CompanyScopedMixin, InvoiceMixin):
     taxes: Mapped[list["PurchaseInvoiceTax"]] = relationship(
         back_populates="invoice", cascade="all, delete-orphan", order_by="PurchaseInvoiceTax.idx"
     )
+    supplier = relationship("Supplier", lazy="joined", viewonly=True)
+
+    @property
+    def supplier_name(self) -> str | None:
+        return self.supplier.supplier_name if self.supplier else None
 
 
 class PurchaseInvoiceItem(Base, DocumentMixin, InvoiceItemMixin):
@@ -565,6 +591,16 @@ class PurchaseInvoiceItem(Base, DocumentMixin, InvoiceItemMixin):
     )
     expense_account_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("accounts.id"), nullable=False
+    )
+    # Module 03/04 cycle links (purchase order -> receipt -> invoice)
+    item_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("items.id", use_alter=True, name="fk_pii_item")
+    )
+    purchase_order_item_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("purchase_order_items.id", use_alter=True, name="fk_pii_po_item")
+    )
+    purchase_receipt_item_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("purchase_receipt_items.id", use_alter=True, name="fk_pii_pr_item")
     )
 
     invoice: Mapped[PurchaseInvoice] = relationship(back_populates="items")
