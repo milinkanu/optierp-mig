@@ -12,6 +12,7 @@ from app.models.selling import (
     Address,
     Campaign,
     Contact,
+    CouponCode,
     Customer,
     CustomerGroup,
     MonthlyDistribution,
@@ -338,6 +339,30 @@ register(
             FieldSpec("disabled", "Disabled", "Check", in_list=True),
         ),
         list_fields=("title", "apply_on", "rate_or_discount", "disabled"),
+    )
+)
+
+register(
+    DocTypeDescriptor(
+        name="Coupon Code",
+        slug="coupon-code",
+        model=CouponCode,
+        title_field="coupon_code",
+        naming="field:coupon_code",
+        group="Selling",
+        permission_name="Coupon Code",
+        permissions={"Sales Manager": _SALES_MANAGER, "Sales User": _SALES_USER},
+        fields=(
+            FieldSpec("coupon_code", "Coupon Code", "Data", required=True, in_list=True, span=2),
+            FieldSpec("coupon_name", "Coupon Name", "Data"),
+            FieldSpec("discount_percentage", "Discount %", "Float", in_list=True),
+            FieldSpec("valid_from", "Valid From", "Date"),
+            FieldSpec("valid_upto", "Valid Upto", "Date"),
+            FieldSpec("maximum_use", "Maximum Use", "Int", help="0 = unlimited"),
+            FieldSpec("disabled", "Disabled", "Check", in_list=True),
+        ),
+        # "used" is maintained by the engine on redemption — shown in the list, not editable.
+        list_fields=("coupon_code", "discount_percentage", "used", "disabled"),
     )
 )
 

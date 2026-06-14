@@ -315,6 +315,28 @@ class PricingRule(Base, DocumentMixin, CompanyScopedMixin):
     disabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
 
 
+class CouponCode(Base, DocumentMixin, CompanyScopedMixin):
+    """Source: erpnext/accounts/doctype/coupon_code (Phase 3).
+
+    A redeemable code granting a % discount on the order, with optional validity
+    window and usage cap. Applied via the order's additional discount.
+    """
+
+    __tablename__ = "coupon_codes"
+    __table_args__ = (UniqueConstraint("company_id", "coupon_code", name="uq_coupon_code"),)
+
+    coupon_code: Mapped[str] = mapped_column(String(140), nullable=False)
+    coupon_name: Mapped[str | None] = mapped_column(String(140))
+    discount_percentage: Mapped[Decimal] = mapped_column(
+        Numeric(8, 4), nullable=False, default=0, server_default=text("0")
+    )
+    valid_from: Mapped[date | None] = mapped_column(Date)
+    valid_upto: Mapped[date | None] = mapped_column(Date)
+    maximum_use: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default=text("0"))
+    used: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default=text("0"))
+    disabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+
+
 class Quotation(Base, DocumentMixin, CompanyScopedMixin, VoucherMixin, TotalsMixin):
     """Source: erpnext/selling/doctype/quotation."""
 

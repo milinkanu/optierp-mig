@@ -22,6 +22,7 @@ from app.schemas.selling import QuotationCreate
 from app.services.accounts_common import get_company, get_customer, require_draft, require_submitted
 from app.services.audit import log_audit
 from app.services.pagination import paginate
+from app.services.coupon import resolve_and_consume_coupon
 from app.services.pricing import apply_selling_pricing
 from app.services.stock_common import STOCK_NAMING_SERIES, get_items, resolve_item_rate
 from app.services.taxes_and_totals import ItemRow, TaxRow, calculate_taxes_and_totals
@@ -81,6 +82,12 @@ async def create_quotation(
         )
         rates.append(priced.rate)
 
+    additional_discount_pct = payload.additional_discount_percentage
+    if payload.coupon_code:
+        additional_discount_pct = await resolve_and_consume_coupon(
+            db, company.id, payload.coupon_code, payload.posting_date
+        )
+
     tax_rows_in = await _load_tax_rows(db, payload, customer)
     engine_items = [ItemRow(qty=row.qty, rate=rate) for row, rate in zip(payload.items, rates)]
     engine_taxes = [
@@ -91,7 +98,7 @@ async def create_quotation(
         engine_items, engine_taxes,
         conversion_rate=payload.conversion_rate,
         apply_discount_on=payload.apply_discount_on,
-        additional_discount_percentage=payload.additional_discount_percentage,
+        additional_discount_percentage=additional_discount_pct,
         discount_amount=payload.discount_amount,
     )
 
@@ -107,7 +114,7 @@ async def create_quotation(
         conversion_rate=payload.conversion_rate,
         remarks=payload.remarks,
         apply_discount_on=payload.apply_discount_on,
-        additional_discount_percentage=payload.additional_discount_percentage,
+        additional_discount_percentage=additional_discount_pct,
         discount_amount=totals.discount_amount,
         total_qty=totals.total_qty,
         total=totals.total,
