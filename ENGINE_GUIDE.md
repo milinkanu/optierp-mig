@@ -3,9 +3,11 @@
 How to add new screens (DocTypes) to OptiReach ERP without hand-coding them.
 Two parts: a **friendly walkthrough** (start here) and a **developer reference**.
 
-> Status: the engine ships **simple masters** (flat + tree) and **Link** fields. Transactional
-> documents (invoices, orders, stock) remain bespoke services. Child grids and dynamic links
-> (Address/Contact) are not yet engine-served — see "When NOT to use the engine".
+> Status: the engine ships **simple masters** (flat + tree), **Link** fields (to engine masters
+> *and* core doctypes like Customer/Supplier), and full CRUD incl. a Delete button. Address &
+> Contact are engine-served via direct party links. Transactional documents (invoices, orders,
+> stock) remain bespoke services; **child grids** (line-item tables) and **polymorphic dynamic
+> links** (one Address → many parents) are not yet engine-served — see "When NOT to use the engine".
 
 ---
 
@@ -52,8 +54,10 @@ node that still has children is blocked.
 
 ### How to add a Link (dropdown to another screen)
 Add a field with `fieldtype="Link"` and `options="<target-slug>"`. The form turns it into a
-dropdown populated from the target master. Example: Territory's `parent_territory_id` is a Link
-to `territory`.
+dropdown populated from the target. The target can be another engine master (e.g. Territory's
+`parent_territory_id` → `territory`) **or** a core doctype registered in `LINK_SOURCES`
+(e.g. Address's `customer_id` → `customer`). To allow a new core target, add it to
+`LINK_SOURCES` in `descriptors.py` as `slug: (Model, "title_field", "PermissionName")`.
 
 ### How to add a one-off rule
 Write a small async function and attach it to the recipe card's `hooks`, e.g.
@@ -65,7 +69,8 @@ If saving a record runs real logic — posts to the general ledger, computes tax
 stock, evaluates pricing, reconciles a till — it stays a hand-written service (like Sales
 Invoice). The engine still renders its form/list/permissions from a recipe card, but the
 calculations live in code. Not yet engine-served: **child grids** (line-item tables) and
-**dynamic links** (Address/Contact attaching to any parent) — build those bespoke for now.
+**polymorphic dynamic links** (one Address attached to many parents at once) — build those
+bespoke for now. (Address/Contact today use simple direct party links, which the engine handles.)
 
 ---
 
