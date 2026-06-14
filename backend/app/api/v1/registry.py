@@ -19,7 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.exceptions import PermissionDeniedError, ValidationError
 from app.core.permissions import has_permission
 from app.core.security import CurrentUser, get_current_user, get_tenant_db
-from app.registry import DocTypeDescriptor, get_descriptor
+from app.registry import REGISTRY, DocTypeDescriptor, get_descriptor
 from app.schemas.common import ListResponse, MessageResponse
 from app.services import registry as svc
 
@@ -33,6 +33,30 @@ async def _require(
         raise PermissionDeniedError(
             f"Insufficient permissions: requires '{action}' on {descriptor.name}"
         )
+
+
+@router.get(
+    "/meta",
+    summary="List registered DocTypes (registry catalog)",
+    description="Returns the engine-served DocTypes the user may read — used to build the "
+    "navigation. Each entry: {slug, name, group, is_tree}.",
+)
+async def list_registry(
+    current_user: Annotated[CurrentUser, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_tenant_db)],
+) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for descriptor in REGISTRY.values():
+        if await has_permission(db, current_user, descriptor.permission_name, "read"):
+            out.append(
+                {
+                    "slug": descriptor.slug,
+                    "name": descriptor.name,
+                    "group": descriptor.group,
+                    "is_tree": descriptor.is_tree,
+                }
+            )
+    return out
 
 
 @router.get(

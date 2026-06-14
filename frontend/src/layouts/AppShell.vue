@@ -1,5 +1,7 @@
 <script setup lang="ts">
+import { computed, onMounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
+import { api } from "@/api/client";
 import { brand } from "@/brand";
 import { useAuthStore } from "@/stores/auth";
 
@@ -32,10 +34,6 @@ const navigation: NavGroup[] = [
       { name: "Sales Orders", route: "sales-orders", icon: "🛒" },
       { name: "Delivery Notes", route: "delivery-notes", icon: "🚚" },
       { name: "Sales Invoices", route: "sales-invoices", icon: "🧾" },
-      { name: "Campaigns", route: "generic-list", icon: "📣", params: { doctype: "campaign" } },
-      { name: "Territories", route: "generic-list", icon: "🗺", params: { doctype: "territory" } },
-      { name: "Customer Groups", route: "generic-list", icon: "👥", params: { doctype: "customer-group" } },
-      { name: "Sales Persons", route: "generic-list", icon: "🧑", params: { doctype: "sales-person" } },
     ],
   },
   {
@@ -78,6 +76,26 @@ const navigation: NavGroup[] = [
   },
 ];
 
+// Registry-driven nav: engine-served masters are fetched from /meta so a new
+// descriptor appears in the sidebar automatically (no hardcoded entry).
+const masters = ref<NavItem[]>([]);
+onMounted(async () => {
+  try {
+    const data = (await api.get<{ slug: string; name: string; group: string }[]>("/meta")).data;
+    masters.value = data.map((d) => ({
+      name: d.name,
+      route: "generic-list",
+      icon: "•",
+      params: { doctype: d.slug },
+    }));
+  } catch {
+    // registry nav is optional; ignore if unavailable
+  }
+});
+const navGroups = computed<NavGroup[]>(() =>
+  masters.value.length ? [...navigation, { section: "Masters", items: masters.value }] : navigation,
+);
+
 function linkTo(item: NavItem) {
   return item.params ? { name: item.route, params: item.params } : { name: item.route };
 }
@@ -104,7 +122,7 @@ async function logout(): Promise<void> {
         </div>
       </div>
       <nav class="flex-1 overflow-y-auto p-3">
-        <div v-for="group in navigation" :key="group.section" class="mb-2">
+        <div v-for="group in navGroups" :key="group.section" class="mb-2">
           <div v-if="group.section"
                class="px-3 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-wider text-gray-400">
             {{ group.section }}

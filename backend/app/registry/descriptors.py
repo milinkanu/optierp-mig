@@ -7,7 +7,16 @@ rest of the simple-master long tail here.
 
 from __future__ import annotations
 
-from app.models.selling import Campaign, CustomerGroup, SalesPerson, Territory
+from app.models.selling import (
+    Campaign,
+    CustomerGroup,
+    MonthlyDistribution,
+    SalesPartner,
+    SalesPerson,
+    TermsTemplate,
+    Territory,
+    UTMSource,
+)
 from app.registry.base import DocTypeDescriptor, FieldSpec, register
 
 # Common permission bundles for selling masters.
@@ -111,5 +120,93 @@ register(
             FieldSpec("disabled", "Disabled", "Check", in_list=True),
         ),
         list_fields=("sales_person_name", "is_group", "disabled"),
+    )
+)
+
+
+# --- Flat simple masters (Phase 2) -------------------------------------------
+register(
+    DocTypeDescriptor(
+        name="Sales Partner",
+        slug="sales-partner",
+        model=SalesPartner,
+        title_field="partner_name",
+        naming="field:partner_name",
+        group="Selling",
+        permission_name="Sales Partner",
+        permissions={"Sales Manager": _SALES_MANAGER, "Sales User": _SALES_USER},
+        fields=(
+            FieldSpec("partner_name", "Partner Name", "Data", required=True, in_list=True, span=2),
+            FieldSpec("partner_type", "Partner Type", "Data"),
+            FieldSpec("commission_rate", "Commission Rate (%)", "Float"),
+            FieldSpec("disabled", "Disabled", "Check", in_list=True),
+        ),
+        list_fields=("partner_name", "partner_type", "disabled"),
+    )
+)
+
+register(
+    DocTypeDescriptor(
+        name="Terms Template",
+        slug="terms-template",
+        model=TermsTemplate,
+        title_field="template_name",
+        naming="field:template_name",
+        group="Selling",
+        permission_name="Terms Template",
+        permissions={"Sales Manager": _SALES_MANAGER, "Sales User": _SALES_USER},
+        fields=(
+            FieldSpec("template_name", "Template Name", "Data", required=True, in_list=True, span=2),
+            FieldSpec("terms", "Terms and Conditions", "Text", span=2),
+            FieldSpec("disabled", "Disabled", "Check", in_list=True),
+        ),
+        list_fields=("template_name", "disabled"),
+    )
+)
+
+register(
+    DocTypeDescriptor(
+        name="UTM Source",
+        slug="utm-source",
+        model=UTMSource,
+        title_field="utm_source_name",
+        naming="field:utm_source_name",
+        group="Selling",
+        permission_name="UTM Source",
+        permissions={"Sales Manager": _SALES_MANAGER, "Sales User": _SALES_USER},
+        fields=(
+            FieldSpec("utm_source_name", "Source Name", "Data", required=True, in_list=True, span=2),
+            FieldSpec("disabled", "Disabled", "Check", in_list=True),
+        ),
+        list_fields=("utm_source_name", "disabled"),
+    )
+)
+
+register(
+    DocTypeDescriptor(
+        name="Monthly Distribution",
+        slug="monthly-distribution",
+        model=MonthlyDistribution,
+        title_field="distribution_name",
+        naming="field:distribution_name",
+        group="Selling",
+        permission_name="Monthly Distribution",
+        permissions={"Sales Manager": _SALES_MANAGER, "Sales User": _SALES_USER},
+        fields=(
+            FieldSpec("distribution_name", "Distribution Name", "Data", required=True, in_list=True, span=2),
+            FieldSpec("month_1", "January %", "Float"),
+            FieldSpec("month_2", "February %", "Float"),
+            FieldSpec("month_3", "March %", "Float"),
+            FieldSpec("month_4", "April %", "Float"),
+            FieldSpec("month_5", "May %", "Float"),
+            FieldSpec("month_6", "June %", "Float"),
+            FieldSpec("month_7", "July %", "Float"),
+            FieldSpec("month_8", "August %", "Float"),
+            FieldSpec("month_9", "September %", "Float"),
+            FieldSpec("month_10", "October %", "Float"),
+            FieldSpec("month_11", "November %", "Float"),
+            FieldSpec("month_12", "December %", "Float"),
+        ),
+        list_fields=("distribution_name",),
     )
 )

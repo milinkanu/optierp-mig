@@ -133,6 +133,69 @@ class SalesPerson(Base, DocumentMixin, CompanyScopedMixin, TreeMixin):
     disabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
 
 
+# --- Flat simple masters (Phase 2; engine-served, no bespoke logic) ----------
+
+
+class SalesPartner(Base, DocumentMixin, CompanyScopedMixin):
+    """Source: erpnext/setup/doctype/sales_partner — external reseller/distributor."""
+
+    __tablename__ = "sales_partners"
+    __table_args__ = (UniqueConstraint("company_id", "partner_name", name="uq_sales_partner"),)
+
+    partner_name: Mapped[str] = mapped_column(String(140), nullable=False)
+    partner_type: Mapped[str | None] = mapped_column(String(80))
+    commission_rate: Mapped[Decimal] = mapped_column(
+        Numeric(8, 4), nullable=False, default=0, server_default=text("0")
+    )
+    disabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+
+
+class TermsTemplate(Base, DocumentMixin, CompanyScopedMixin):
+    """Source: erpnext/setup/doctype/terms_and_conditions — reusable T&C text."""
+
+    __tablename__ = "terms_templates"
+    __table_args__ = (UniqueConstraint("company_id", "template_name", name="uq_terms_template"),)
+
+    template_name: Mapped[str] = mapped_column(String(140), nullable=False)
+    terms: Mapped[str | None] = mapped_column(Text)
+    disabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+
+
+class UTMSource(Base, DocumentMixin, CompanyScopedMixin):
+    """Source: frappe/website/doctype/utm_source — marketing attribution source."""
+
+    __tablename__ = "utm_sources"
+    __table_args__ = (UniqueConstraint("company_id", "utm_source_name", name="uq_utm_source"),)
+
+    utm_source_name: Mapped[str] = mapped_column(String(140), nullable=False)
+    disabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+
+
+class MonthlyDistribution(Base, DocumentMixin, CompanyScopedMixin):
+    """Source: erpnext/accounts/doctype/monthly_distribution — prorates annual
+    targets across 12 months. ERPNext uses a child grid; modelled flat here as
+    12 percentage columns (config-only master)."""
+
+    __tablename__ = "monthly_distributions"
+    __table_args__ = (
+        UniqueConstraint("company_id", "distribution_name", name="uq_monthly_distribution"),
+    )
+
+    distribution_name: Mapped[str] = mapped_column(String(140), nullable=False)
+    month_1: Mapped[Decimal] = mapped_column(Numeric(8, 4), nullable=False, default=0, server_default=text("0"))
+    month_2: Mapped[Decimal] = mapped_column(Numeric(8, 4), nullable=False, default=0, server_default=text("0"))
+    month_3: Mapped[Decimal] = mapped_column(Numeric(8, 4), nullable=False, default=0, server_default=text("0"))
+    month_4: Mapped[Decimal] = mapped_column(Numeric(8, 4), nullable=False, default=0, server_default=text("0"))
+    month_5: Mapped[Decimal] = mapped_column(Numeric(8, 4), nullable=False, default=0, server_default=text("0"))
+    month_6: Mapped[Decimal] = mapped_column(Numeric(8, 4), nullable=False, default=0, server_default=text("0"))
+    month_7: Mapped[Decimal] = mapped_column(Numeric(8, 4), nullable=False, default=0, server_default=text("0"))
+    month_8: Mapped[Decimal] = mapped_column(Numeric(8, 4), nullable=False, default=0, server_default=text("0"))
+    month_9: Mapped[Decimal] = mapped_column(Numeric(8, 4), nullable=False, default=0, server_default=text("0"))
+    month_10: Mapped[Decimal] = mapped_column(Numeric(8, 4), nullable=False, default=0, server_default=text("0"))
+    month_11: Mapped[Decimal] = mapped_column(Numeric(8, 4), nullable=False, default=0, server_default=text("0"))
+    month_12: Mapped[Decimal] = mapped_column(Numeric(8, 4), nullable=False, default=0, server_default=text("0"))
+
+
 class Quotation(Base, DocumentMixin, CompanyScopedMixin, VoucherMixin, TotalsMixin):
     """Source: erpnext/selling/doctype/quotation."""
 

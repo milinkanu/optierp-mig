@@ -129,6 +129,10 @@ TEST_DATABASE_URL=postgresql+asyncpg://erp_owner:erp_owner_dev_pw@localhost:5432
   `useList`/`useDocument` composables, lazy-loaded module routes
 - `frontend/public/brand/config.json` — **all** branding (name, colors, logo); zero
   hardcoded product strings in code
+- `backend/app/registry/` — the **metadata engine** ("the machine"): one descriptor renders a
+  master DocType's table, list, form, permissions and naming with no per-doctype code. See
+  [`ENGINE_GUIDE.md`](ENGINE_GUIDE.md) to add a master, and [`metadata_engine_plan.md`](metadata_engine_plan.md)
+  for the design. Engine-served masters live at `/m/<slug>`.
 
 ### Multi-tenancy
 
