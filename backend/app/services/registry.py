@@ -24,6 +24,7 @@ from app.core.exceptions import DuplicateError, NotFoundError, ValidationError
 from app.core.naming import get_next_name
 from app.core.security import CurrentUser
 from app.registry import FIELDTYPE_TO_UI, DocTypeDescriptor, FieldSpec
+from app.services import tree as tree_service
 from app.services.audit import log_audit, serialize_document
 from app.services.pagination import paginate
 
@@ -211,6 +212,8 @@ async def create_document(
     obj.modified_by = user.id
     if descriptor.naming.startswith("series:"):
         obj.name = await get_next_name(db, descriptor.naming.split(":", 1)[1], user.company_id)
+    if descriptor.is_tree:
+        await tree_service.on_create(db, descriptor, obj)
     await _run_hook(descriptor, "before_insert", db, obj, user)
     await _run_hook(descriptor, "validate", db, obj, user)
     db.add(obj)
@@ -238,10 +241,13 @@ async def update_document(
 ) -> dict[str, Any]:
     obj = await _get_obj(db, descriptor, doc_id, user.company_id)
     before = serialize_document(obj)
+    old_path = getattr(obj, "path", None) if descriptor.is_tree else None
     data = _validate(get_update_model(descriptor), payload).model_dump(exclude_unset=True)
     for key, value in data.items():
         setattr(obj, key, value)
     obj.modified_by = user.id
+    if descriptor.is_tree and old_path is not None:
+        await tree_service.on_update(db, descriptor, obj, old_path)
     await _run_hook(descriptor, "before_update", db, obj, user)
     await _run_hook(descriptor, "validate", db, obj, user)
     await _flush_unique(db)
@@ -266,6 +272,8 @@ async def delete_document(
     obj = await _get_obj(db, descriptor, doc_id, user.company_id)
     before = serialize_document(obj)
     company_id = getattr(obj, "company_id", None)
+    if descriptor.is_tree:
+        await tree_service.block_if_has_children(db, descriptor, obj)
     await _run_hook(descriptor, "before_delete", db, obj, user)
     await db.delete(obj)
     try:
@@ -285,3 +293,33 @@ async def delete_document(
         data_before=before,
     )
     await db.commit()
+
+
+# --- Link options & tree -----------------------------------------------------
+
+
+async def list_options(
+    db: AsyncSession,
+    descriptor: DocTypeDescriptor,
+    *,
+    company_id: uuid.UUID | None,
+    q: str | None,
+    limit: int = 20,
+) -> list[dict[str, str]]:
+    """Typeahead options for a Link field: [{value: id, label: title_field}]."""
+    model = descriptor.model
+    stmt = select(model)
+    if descriptor.scoped and company_id is not None:
+        stmt = stmt.where(model.company_id == company_id)
+    if q:
+        stmt = stmt.where(getattr(model, descriptor.title_field).ilike(f"%{q}%"))
+    stmt = stmt.order_by(getattr(model, descriptor.title_field)).limit(limit)
+    rows = (await db.execute(stmt)).scalars().all()
+    return [{"value": str(r.id), "label": getattr(r, descriptor.title_field)} for r in rows]
+
+
+async def get_tree(
+    db: AsyncSession, descriptor: DocTypeDescriptor, company_id: uuid.UUID | None
+) -> list[dict[str, Any]]:
+    """Nested tree for an is_tree descriptor (delegates to the tree service)."""
+    return await tree_service.get_tree(db, descriptor, company_id)

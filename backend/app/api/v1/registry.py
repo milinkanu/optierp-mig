@@ -16,7 +16,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Body, Depends, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exceptions import PermissionDeniedError
+from app.core.exceptions import PermissionDeniedError, ValidationError
 from app.core.permissions import has_permission
 from app.core.security import CurrentUser, get_current_user, get_tenant_db
 from app.registry import DocTypeDescriptor, get_descriptor
@@ -80,6 +80,40 @@ async def list_documents(
         filters=filters,
     )
     return ListResponse(items=items, total=total, page=page, page_size=page_size)
+
+
+@router.get(
+    "/registry/{doctype}/options",
+    summary="Link-field options (typeahead)",
+    description="Returns [{value, label}] for populating a Link field that targets this "
+    "DocType. `q` filters by the title field.",
+)
+async def list_options(
+    doctype: str,
+    current_user: Annotated[CurrentUser, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_tenant_db)],
+    q: Annotated[str | None, Query()] = None,
+) -> list[dict[str, str]]:
+    descriptor = get_descriptor(doctype)
+    await _require(db, current_user, descriptor, "read")
+    return await svc.list_options(db, descriptor, company_id=current_user.company_id, q=q)
+
+
+@router.get(
+    "/registry/{doctype}/tree",
+    summary="Nested tree of records",
+    description="Returns root nodes each with a `children` list (tree DocTypes only).",
+)
+async def get_tree(
+    doctype: str,
+    current_user: Annotated[CurrentUser, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_tenant_db)],
+) -> list[dict[str, Any]]:
+    descriptor = get_descriptor(doctype)
+    await _require(db, current_user, descriptor, "read")
+    if not descriptor.is_tree:
+        raise ValidationError(f"{descriptor.name} is not a tree DocType")
+    return await svc.get_tree(db, descriptor, current_user.company_id)
 
 
 @router.get(

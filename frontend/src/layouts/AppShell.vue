@@ -33,6 +33,9 @@ const navigation: NavGroup[] = [
       { name: "Delivery Notes", route: "delivery-notes", icon: "🚚" },
       { name: "Sales Invoices", route: "sales-invoices", icon: "🧾" },
       { name: "Campaigns", route: "generic-list", icon: "📣", params: { doctype: "campaign" } },
+      { name: "Territories", route: "generic-list", icon: "🗺", params: { doctype: "territory" } },
+      { name: "Customer Groups", route: "generic-list", icon: "👥", params: { doctype: "customer-group" } },
+      { name: "Sales Persons", route: "generic-list", icon: "🧑", params: { doctype: "sales-person" } },
     ],
   },
   {

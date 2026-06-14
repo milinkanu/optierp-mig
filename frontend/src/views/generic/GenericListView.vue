@@ -6,6 +6,7 @@ import { onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { api } from "@/api/client";
 import DataTable, { type Column } from "@/components/shared/DataTable.vue";
+import TreeView from "@/components/shared/TreeView.vue";
 import { useList } from "@/composables/useList";
 import type { DocTypeMeta } from "@/types/registry";
 
@@ -24,7 +25,7 @@ async function init(): Promise<void> {
   doctype.value = route.params.doctype as string;
   meta.value = (await api.get<DocTypeMeta>(`/meta/${doctype.value}`)).data;
   columns.value = meta.value.list_fields.map((c) => ({ key: c.key, label: c.label }));
-  await reset();
+  if (!meta.value.is_tree) await reset();
 }
 
 onMounted(init);
@@ -52,27 +53,31 @@ function openRow(row: { id: string }): void {
 
     <p v-if="error" class="mb-3 text-sm text-red-600">{{ error.detail }}</p>
 
-    <DataTable :columns="columns" :rows="items" :loading="loading" @row-click="openRow" />
+    <TreeView v-if="meta?.is_tree" :doctype="doctype" :title-field="meta.title_field" />
 
-    <div class="mt-3 flex items-center justify-between text-sm text-gray-500">
-      <span>{{ total }} record(s)</span>
-      <div class="flex items-center gap-2">
-        <button
-          class="rounded border border-gray-300 px-2 py-1 disabled:opacity-40"
-          :disabled="page <= 1"
-          @click="goToPage(page - 1)"
-        >
-          Prev
-        </button>
-        <span>Page {{ page }}</span>
-        <button
-          class="rounded border border-gray-300 px-2 py-1 disabled:opacity-40"
-          :disabled="page * pageSize >= total"
-          @click="goToPage(page + 1)"
-        >
-          Next
-        </button>
+    <template v-else>
+      <DataTable :columns="columns" :rows="items" :loading="loading" @row-click="openRow" />
+
+      <div class="mt-3 flex items-center justify-between text-sm text-gray-500">
+        <span>{{ total }} record(s)</span>
+        <div class="flex items-center gap-2">
+          <button
+            class="rounded border border-gray-300 px-2 py-1 disabled:opacity-40"
+            :disabled="page <= 1"
+            @click="goToPage(page - 1)"
+          >
+            Prev
+          </button>
+          <span>Page {{ page }}</span>
+          <button
+            class="rounded border border-gray-300 px-2 py-1 disabled:opacity-40"
+            :disabled="page * pageSize >= total"
+            @click="goToPage(page + 1)"
+          >
+            Next
+          </button>
+        </div>
       </div>
-    </div>
+    </template>
   </div>
 </template>

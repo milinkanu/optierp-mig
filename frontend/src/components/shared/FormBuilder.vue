@@ -10,10 +10,11 @@ export interface FieldOption {
 export interface FieldConfig {
   name: string;
   label: string;
-  type: "text" | "password" | "email" | "number" | "date" | "select" | "checkbox" | "textarea";
+  type: "text" | "password" | "email" | "number" | "date" | "select" | "checkbox" | "textarea" | "link";
   required?: boolean;
   placeholder?: string;
   options?: FieldOption[];
+  link?: string; // for type "link": the target DocType slug (resolved to options by the form)
   span?: 1 | 2; // grid columns
   help?: string;
 }

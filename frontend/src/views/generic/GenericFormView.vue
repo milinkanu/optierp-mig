@@ -25,7 +25,19 @@ const { doc, saving, error, load, create, update } = useDocument<
 >(`/registry/${doctype}`);
 
 onMounted(async () => {
-  meta.value = (await api.get<DocTypeMeta>(`/meta/${doctype}`)).data;
+  const m = (await api.get<DocTypeMeta>(`/meta/${doctype}`)).data;
+  // Resolve Link fields into dropdowns by fetching the target's options.
+  await Promise.all(
+    m.fields
+      .filter((f) => f.type === "link" && f.link)
+      .map(async (f) => {
+        f.options = (
+          await api.get<{ value: string; label: string }[]>(`/registry/${f.link}/options`)
+        ).data;
+        f.type = "select";
+      }),
+  );
+  meta.value = m;
   if (!isNew && idParam) {
     await load(idParam);
     if (doc.value) model.value = { ...doc.value };

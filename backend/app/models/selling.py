@@ -18,7 +18,7 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.accounts import InvoiceItemMixin, TaxRowMixin, TotalsMixin, VoucherMixin
-from app.models.base import Base, CompanyScopedMixin, DocumentMixin
+from app.models.base import Base, CompanyScopedMixin, DocumentMixin, TreeMixin
 
 SO_STATUSES = (
     "Draft", "To Deliver and Bill", "To Deliver", "To Bill", "Completed", "Cancelled", "Closed",
@@ -67,6 +67,69 @@ class Campaign(Base, DocumentMixin, CompanyScopedMixin):
     status: Mapped[str] = mapped_column(
         String(20), nullable=False, default="Active", server_default=text("'Active'")
     )  # Active | Inactive
+    disabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+
+
+class Territory(Base, DocumentMixin, CompanyScopedMixin, TreeMixin):
+    """Source: erpnext/setup/doctype/territory (nested-set tree).
+
+    Tree master served by the metadata engine; ``app.services.tree`` maintains
+    the ltree ``path`` from ``parent_territory_id``.
+    """
+
+    __tablename__ = "territories"
+    __table_args__ = (
+        UniqueConstraint(
+            "company_id", "territory_name", "parent_territory_id", name="uq_territory_name"
+        ),
+        Index("ix_territories_path", "path", postgresql_using="gist"),
+    )
+
+    territory_name: Mapped[str] = mapped_column(String(140), nullable=False)
+    parent_territory_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("territories.id", ondelete="RESTRICT")
+    )
+    disabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+
+
+class CustomerGroup(Base, DocumentMixin, CompanyScopedMixin, TreeMixin):
+    """Source: erpnext/setup/doctype/customer_group (nested-set tree)."""
+
+    __tablename__ = "customer_groups"
+    __table_args__ = (
+        UniqueConstraint(
+            "company_id", "customer_group_name", "parent_customer_group_id",
+            name="uq_customer_group_name",
+        ),
+        Index("ix_customer_groups_path", "path", postgresql_using="gist"),
+    )
+
+    customer_group_name: Mapped[str] = mapped_column(String(140), nullable=False)
+    parent_customer_group_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("customer_groups.id", ondelete="RESTRICT")
+    )
+    disabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+
+
+class SalesPerson(Base, DocumentMixin, CompanyScopedMixin, TreeMixin):
+    """Source: erpnext/setup/doctype/sales_person (nested-set tree)."""
+
+    __tablename__ = "sales_persons"
+    __table_args__ = (
+        UniqueConstraint(
+            "company_id", "sales_person_name", "parent_sales_person_id",
+            name="uq_sales_person_name",
+        ),
+        Index("ix_sales_persons_path", "path", postgresql_using="gist"),
+    )
+
+    sales_person_name: Mapped[str] = mapped_column(String(140), nullable=False)
+    parent_sales_person_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("sales_persons.id", ondelete="RESTRICT")
+    )
+    commission_rate: Mapped[Decimal] = mapped_column(
+        Numeric(8, 4), nullable=False, default=0, server_default=text("0")
+    )
     disabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
 
 
