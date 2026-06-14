@@ -18,6 +18,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.selling import PricingRule
+from app.services.promotion import best_scheme_discount
 
 ZERO = Decimal("0")
 HUNDRED = Decimal("100")
@@ -113,6 +114,14 @@ async def apply_selling_pricing(
         )
     ]
     rule = pick_rule(candidates)
-    if rule is None:
-        return PricingResult(base_rate, None)
-    return PricingResult(apply_rule(rule, base_rate), rule.title)
+    rule_rate = apply_rule(rule, base_rate) if rule is not None else base_rate
+    rule_title = rule.title if rule is not None else None
+
+    # Promotional schemes (tiered qty discounts) compete with pricing rules — the
+    # better (lower) resulting rate wins for the customer.
+    scheme_disc = await best_scheme_discount(db, company_id, item, customer, qty, on_date)
+    if scheme_disc > ZERO:
+        scheme_rate = base_rate * (Decimal(1) - scheme_disc / HUNDRED)
+        if scheme_rate < rule_rate:
+            return PricingResult(scheme_rate, "Promotional Scheme")
+    return PricingResult(rule_rate, rule_title)

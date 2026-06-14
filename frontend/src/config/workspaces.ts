@@ -104,6 +104,7 @@ const SELLING: WorkspaceConfig = {
       links: [
         { label: "Item", to: "/items" },
         { label: "Pricing Rule", to: "/m/pricing-rule" },
+        { label: "Promotional Scheme", to: "/m/promotional-scheme" },
         { label: "Coupon Code", to: "/m/coupon-code" },
         { label: "Item Group", planned: true },
         { label: "Price List", planned: true },

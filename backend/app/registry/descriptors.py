@@ -22,6 +22,8 @@ from app.models.selling import (
     PricingRule,
     ProductBundle,
     ProductBundleItem,
+    PromotionalScheme,
+    PromotionalSchemeTier,
     SalesPartner,
     SalesPerson,
     ShippingRule,
@@ -456,6 +458,43 @@ register(
                     FieldSpec("item_id", "Item", "Link", options="item", required=True),
                     FieldSpec("qty", "Qty", "Float"),
                     FieldSpec("rate", "Agreed Rate", "Currency"),
+                ),
+            ),
+        ),
+    )
+)
+
+register(
+    DocTypeDescriptor(
+        name="Promotional Scheme",
+        slug="promotional-scheme",
+        model=PromotionalScheme,
+        title_field="scheme_name",
+        naming="field:scheme_name",
+        group="Selling",
+        permission_name="Promotional Scheme",
+        permissions={"Sales Manager": _SALES_MANAGER, "Sales User": _SALES_USER},
+        fields=(
+            FieldSpec("scheme_name", "Scheme Name", "Data", required=True, in_list=True, span=2),
+            FieldSpec("apply_on", "Apply On", "Select", options="Item\nItem Group", in_list=True),
+            FieldSpec("item_id", "Item", "Link", options="item"),
+            FieldSpec("item_group_id", "Item Group", "Link", options="item-group"),
+            FieldSpec("customer_id", "Customer", "Link", options="customer",
+                      help="Leave blank to apply to all customers"),
+            FieldSpec("valid_from", "Valid From", "Date"),
+            FieldSpec("valid_upto", "Valid Upto", "Date"),
+            FieldSpec("disabled", "Disabled", "Check", in_list=True),
+        ),
+        list_fields=("scheme_name", "apply_on", "disabled"),
+        children=(
+            ChildSpec(
+                field="tiers",
+                label="Discount Tiers",
+                model=PromotionalSchemeTier,
+                fk_column="scheme_id",
+                fields=(
+                    FieldSpec("min_qty", "Min Qty", "Float", required=True),
+                    FieldSpec("discount_percentage", "Discount %", "Float"),
                 ),
             ),
         ),

@@ -423,6 +423,45 @@ class BlanketOrderItem(Base, DocumentMixin):
     rate: Mapped[Decimal] = mapped_column(Numeric(21, 6), nullable=False, default=0, server_default=text("0"))
 
 
+class PromotionalScheme(Base, DocumentMixin, CompanyScopedMixin):
+    """Source: erpnext/accounts/doctype/promotional_scheme (Phase 3).
+
+    Quantity-tiered discounts (buy more, save more) for an item / item group and
+    optional customer. Tiers are child rows; the best applicable tier applies.
+    """
+
+    __tablename__ = "promotional_schemes"
+    __table_args__ = (UniqueConstraint("company_id", "scheme_name", name="uq_promotional_scheme"),)
+
+    scheme_name: Mapped[str] = mapped_column(String(140), nullable=False)
+    apply_on: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="Item", server_default=text("'Item'")
+    )  # Item | Item Group
+    item_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("items.id"))
+    item_group_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("item_groups.id")
+    )
+    customer_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("customers.id"))
+    valid_from: Mapped[date | None] = mapped_column(Date)
+    valid_upto: Mapped[date | None] = mapped_column(Date)
+    disabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+
+
+class PromotionalSchemeTier(Base, DocumentMixin):
+    """A quantity tier of a Promotional Scheme (engine-managed child rows)."""
+
+    __tablename__ = "promotional_scheme_tiers"
+
+    scheme_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("promotional_schemes.id", ondelete="CASCADE"), nullable=False
+    )
+    idx: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default=text("0"))
+    min_qty: Mapped[Decimal] = mapped_column(Numeric(21, 6), nullable=False, default=0, server_default=text("0"))
+    discount_percentage: Mapped[Decimal] = mapped_column(
+        Numeric(8, 4), nullable=False, default=0, server_default=text("0")
+    )
+
+
 class Quotation(Base, DocumentMixin, CompanyScopedMixin, VoucherMixin, TotalsMixin):
     """Source: erpnext/selling/doctype/quotation."""
 
