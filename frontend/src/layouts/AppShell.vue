@@ -14,6 +14,7 @@ interface NavItem {
   route: string;
   icon: string;
   params?: Record<string, string>;
+  group?: string; // engine masters carry their module group (for sidebar placement)
 }
 interface NavGroup {
   section: string;
@@ -88,14 +89,30 @@ onMounted(async () => {
       route: "generic-list",
       icon: "•",
       params: { doctype: d.slug },
+      group: d.group,
     }));
   } catch {
     // registry nav is optional; ignore if unavailable
   }
 });
-const navGroups = computed<NavGroup[]>(() =>
-  masters.value.length ? [...navigation, { section: "Masters", items: masters.value }] : navigation,
-);
+// Place engine masters under their module section (sorted), so each module shows
+// its transactions + setup masters together — instead of one unordered "Masters" dump.
+const navGroups = computed<NavGroup[]>(() => {
+  if (!masters.value.length) return navigation;
+  const byGroup = new Map<string, NavItem[]>();
+  for (const m of [...masters.value].sort((a, b) => a.name.localeCompare(b.name))) {
+    const key = m.group || "Masters";
+    byGroup.set(key, [...(byGroup.get(key) ?? []), m]);
+  }
+  const merged = navigation.map((grp) => {
+    const extra = byGroup.get(grp.section);
+    if (!extra) return grp;
+    byGroup.delete(grp.section);
+    return { ...grp, items: [...grp.items, ...extra] };
+  });
+  for (const [section, items] of byGroup) merged.push({ section, items });
+  return merged;
+});
 
 function linkTo(item: NavItem) {
   return item.params ? { name: item.route, params: item.params } : { name: item.route };
