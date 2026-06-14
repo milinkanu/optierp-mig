@@ -59,6 +59,14 @@ class Customer(Base, DocumentMixin, CompanyScopedMixin):
     tax_category_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("tax_categories.id", use_alter=True, name="fk_customer_tax_category")
     )
+    customer_group_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("customer_groups.id", use_alter=True, name="fk_customer_group", ondelete="SET NULL"),
+    )
+    territory_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("territories.id", use_alter=True, name="fk_customer_territory", ondelete="SET NULL"),
+    )
     disabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
     notes: Mapped[str | None] = mapped_column(Text)
 
@@ -284,6 +292,10 @@ class PricingRule(Base, DocumentMixin, CompanyScopedMixin):
         UUID(as_uuid=True), ForeignKey("item_groups.id")
     )
     customer_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("customers.id"))
+    customer_group_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("customer_groups.id")
+    )
+    territory_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("territories.id"))
     min_qty: Mapped[Decimal] = mapped_column(Numeric(21, 6), nullable=False, default=0, server_default=text("0"))
     max_qty: Mapped[Decimal] = mapped_column(Numeric(21, 6), nullable=False, default=0, server_default=text("0"))
     valid_from: Mapped[date | None] = mapped_column(Date)

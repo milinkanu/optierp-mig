@@ -50,6 +50,7 @@ const SELLING: WorkspaceConfig = {
     {
       title: "Setup",
       items: [
+        { label: "Customer", to: "/m/customer" },
         { label: "Address", to: "/m/address" },
         { label: "Campaign", to: "/m/campaign" },
         { label: "Contact", to: "/m/contact" },
@@ -75,7 +76,7 @@ const SELLING: WorkspaceConfig = {
     {
       title: "Selling",
       links: [
-        { label: "Customer", planned: true },
+        { label: "Customer", to: "/m/customer" },
         { label: "Quotation", to: "/quotations" },
         { label: "Sales Order", to: "/sales-orders" },
         { label: "Sales Invoice", to: "/sales-invoices" },

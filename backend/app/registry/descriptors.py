@@ -273,6 +273,33 @@ register(
 )
 
 
+# --- Selling: Customer (engine-served CRUD UI) -------------------------------
+register(
+    DocTypeDescriptor(
+        name="Customer",
+        slug="customer",
+        model=Customer,
+        title_field="customer_name",
+        naming="field:customer_name",
+        group="Selling",
+        permission_name="Customer",
+        permissions={"Sales Manager": _SALES_MANAGER, "Sales User": _SALES_USER_RW},
+        fields=(
+            FieldSpec("customer_name", "Customer Name", "Data", required=True, in_list=True, span=2),
+            FieldSpec("customer_type", "Type", "Select", options="Company\nIndividual", in_list=True),
+            FieldSpec("customer_group_id", "Customer Group", "Link", options="customer-group", in_list=True),
+            FieldSpec("territory_id", "Territory", "Link", options="territory"),
+            FieldSpec("tax_id", "Tax ID", "Data"),
+            FieldSpec("default_currency", "Default Currency", "Data"),
+            FieldSpec("credit_limit", "Credit Limit", "Float"),
+            FieldSpec("disabled", "Disabled", "Check", in_list=True),
+            FieldSpec("notes", "Notes", "Text", span=2),
+        ),
+        list_fields=("customer_name", "customer_type", "disabled"),
+    )
+)
+
+
 # --- Items & Pricing: Pricing Rule (Phase 3) ---------------------------------
 register(
     DocTypeDescriptor(
@@ -294,6 +321,10 @@ register(
                       help="When Apply On = Item Group"),
             FieldSpec("customer_id", "Customer", "Link", options="customer",
                       help="Leave blank to apply to all customers"),
+            FieldSpec("customer_group_id", "Customer Group", "Link", options="customer-group",
+                      help="Apply to a whole customer group"),
+            FieldSpec("territory_id", "Territory", "Link", options="territory",
+                      help="Apply to a whole territory"),
             FieldSpec("min_qty", "Min Qty", "Float"),
             FieldSpec("max_qty", "Max Qty", "Float", help="0 = no upper limit"),
             FieldSpec("valid_from", "Valid From", "Date"),

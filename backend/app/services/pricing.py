@@ -35,6 +35,8 @@ def rule_matches(
     item_id: uuid.UUID,
     item_group_id: uuid.UUID | None,
     customer_id: uuid.UUID | None,
+    customer_group_id: uuid.UUID | None = None,
+    territory_id: uuid.UUID | None = None,
     qty: Decimal,
     on_date: date,
 ) -> bool:
@@ -45,7 +47,12 @@ def rule_matches(
     else:  # "Item"
         if rule.item_id is None or rule.item_id != item_id:
             return False
+    # Party filters: each set filter must match the line's customer / segment.
     if rule.customer_id is not None and rule.customer_id != customer_id:
+        return False
+    if rule.customer_group_id is not None and rule.customer_group_id != customer_group_id:
+        return False
+    if rule.territory_id is not None and rule.territory_id != territory_id:
         return False
     if rule.valid_from and on_date < rule.valid_from:
         return False
@@ -91,7 +98,6 @@ async def apply_selling_pricing(
         PricingRule.disabled.is_(False),
         PricingRule.selling.is_(True),
     )
-    customer_id = customer.id if customer is not None else None
     candidates = [
         rule
         for rule in (await db.execute(stmt)).scalars()
@@ -99,7 +105,9 @@ async def apply_selling_pricing(
             rule,
             item_id=item.id,
             item_group_id=item.item_group_id,
-            customer_id=customer_id,
+            customer_id=customer.id if customer is not None else None,
+            customer_group_id=getattr(customer, "customer_group_id", None),
+            territory_id=getattr(customer, "territory_id", None),
             qty=qty,
             on_date=on_date,
         )

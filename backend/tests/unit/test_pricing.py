@@ -12,6 +12,8 @@ OTHER_ITEM = uuid.uuid4()
 GROUP = uuid.uuid4()
 CUST = uuid.uuid4()
 OTHER_CUST = uuid.uuid4()
+CGROUP = uuid.uuid4()
+TERR = uuid.uuid4()
 TODAY = date(2026, 6, 1)
 
 
@@ -21,6 +23,8 @@ def _rule(**kw):
         item_id=ITEM,
         item_group_id=None,
         customer_id=None,
+        customer_group_id=None,
+        territory_id=None,
         valid_from=None,
         valid_upto=None,
         min_qty=Decimal(0),
@@ -36,10 +40,13 @@ def _rule(**kw):
     return SimpleNamespace(**base)
 
 
-def _match(rule, *, item_id=ITEM, item_group_id=GROUP, customer_id=CUST, qty=Decimal(1), on_date=TODAY):
+def _match(
+    rule, *, item_id=ITEM, item_group_id=GROUP, customer_id=CUST,
+    customer_group_id=CGROUP, territory_id=TERR, qty=Decimal(1), on_date=TODAY,
+):
     return rule_matches(
         rule, item_id=item_id, item_group_id=item_group_id, customer_id=customer_id,
-        qty=qty, on_date=on_date,
+        customer_group_id=customer_group_id, territory_id=territory_id, qty=qty, on_date=on_date,
     )
 
 
@@ -79,6 +86,16 @@ def test_customer_filter():
     assert _match(_rule(customer_id=None))  # applies to all
     assert _match(_rule(customer_id=CUST))
     assert not _match(_rule(customer_id=OTHER_CUST))
+
+
+def test_customer_group_filter():
+    assert _match(_rule(customer_group_id=CGROUP))
+    assert not _match(_rule(customer_group_id=uuid.uuid4()))
+
+
+def test_territory_filter():
+    assert _match(_rule(territory_id=TERR))
+    assert not _match(_rule(territory_id=uuid.uuid4()))
 
 
 def test_qty_window():
