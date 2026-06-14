@@ -15,15 +15,18 @@ from app.registry.base import (
     get_descriptor,
     register,
 )
-from app.registry import descriptors as descriptors  # noqa: F401 — populate REGISTRY on import
+# Importing names from descriptors also populates REGISTRY on first import.
+from app.registry.descriptors import LINK_SOURCES, resolve_link_source  # noqa: F401
 
 __all__ = [
     "FIELDTYPE_TO_UI",
     "LAYOUT_FIELDTYPES",
+    "LINK_SOURCES",
     "REGISTRY",
     "ChildSpec",
     "DocTypeDescriptor",
     "FieldSpec",
     "get_descriptor",
     "register",
+    "resolve_link_source",
 ]

@@ -196,6 +196,60 @@ class MonthlyDistribution(Base, DocumentMixin, CompanyScopedMixin):
     month_12: Mapped[Decimal] = mapped_column(Numeric(8, 4), nullable=False, default=0, server_default=text("0"))
 
 
+class Address(Base, DocumentMixin, CompanyScopedMixin):
+    """Source: frappe/contacts/doctype/address.
+
+    Linked to a Customer and/or Supplier. ERPNext uses polymorphic dynamic links
+    (one address -> many parents); simplified here to direct party links, served
+    by the engine via the link-source registry. Full dynamic links are a
+    follow-up.
+    """
+
+    __tablename__ = "addresses"
+    __table_args__ = (UniqueConstraint("company_id", "address_title", name="uq_address_title"),)
+
+    address_title: Mapped[str] = mapped_column(String(140), nullable=False)
+    address_type: Mapped[str] = mapped_column(
+        String(40), nullable=False, default="Billing", server_default=text("'Billing'")
+    )
+    address_line1: Mapped[str] = mapped_column(String(240), nullable=False)
+    address_line2: Mapped[str | None] = mapped_column(String(240))
+    city: Mapped[str | None] = mapped_column(String(100))
+    state: Mapped[str | None] = mapped_column(String(100))
+    pincode: Mapped[str | None] = mapped_column(String(20))
+    country: Mapped[str | None] = mapped_column(String(100))
+    customer_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("customers.id", ondelete="SET NULL")
+    )
+    supplier_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("suppliers.id", ondelete="SET NULL")
+    )
+    disabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+
+
+class Contact(Base, DocumentMixin, CompanyScopedMixin):
+    """Source: frappe/contacts/doctype/contact (direct party links — see Address)."""
+
+    __tablename__ = "contacts"
+    __table_args__ = (
+        UniqueConstraint("company_id", "first_name", "last_name", "email_id", name="uq_contact"),
+    )
+
+    first_name: Mapped[str] = mapped_column(String(140), nullable=False)
+    last_name: Mapped[str | None] = mapped_column(String(140))
+    email_id: Mapped[str | None] = mapped_column(String(140))
+    mobile_no: Mapped[str | None] = mapped_column(String(40))
+    phone: Mapped[str | None] = mapped_column(String(40))
+    designation: Mapped[str | None] = mapped_column(String(140))
+    customer_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("customers.id", ondelete="SET NULL")
+    )
+    supplier_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("suppliers.id", ondelete="SET NULL")
+    )
+    disabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+
+
 class Quotation(Base, DocumentMixin, CompanyScopedMixin, VoucherMixin, TotalsMixin):
     """Source: erpnext/selling/doctype/quotation."""
 

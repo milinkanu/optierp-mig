@@ -16,10 +16,10 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Body, Depends, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exceptions import PermissionDeniedError, ValidationError
+from app.core.exceptions import NotFoundError, PermissionDeniedError, ValidationError
 from app.core.permissions import has_permission
 from app.core.security import CurrentUser, get_current_user, get_tenant_db
-from app.registry import REGISTRY, DocTypeDescriptor, get_descriptor
+from app.registry import REGISTRY, DocTypeDescriptor, get_descriptor, resolve_link_source
 from app.schemas.common import ListResponse, MessageResponse
 from app.services import registry as svc
 
@@ -118,9 +118,16 @@ async def list_options(
     db: Annotated[AsyncSession, Depends(get_tenant_db)],
     q: Annotated[str | None, Query()] = None,
 ) -> list[dict[str, str]]:
-    descriptor = get_descriptor(doctype)
-    await _require(db, current_user, descriptor, "read")
-    return await svc.list_options(db, descriptor, company_id=current_user.company_id, q=q)
+    source = resolve_link_source(doctype)
+    if source is None:
+        raise NotFoundError(f"Unknown doctype: {doctype}", code="ERR_UNKNOWN_DOCTYPE")
+    model, title_field, permission_name, scoped = source
+    if not await has_permission(db, current_user, permission_name, "read"):
+        raise PermissionDeniedError(f"Insufficient permissions: requires 'read' on {permission_name}")
+    return await svc.list_link_options(
+        db, model=model, title_field=title_field, scoped=scoped,
+        company_id=current_user.company_id, q=q,
+    )
 
 
 @router.get(

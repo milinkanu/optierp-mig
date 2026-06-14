@@ -50,5 +50,19 @@ export function useDocument<T extends { id: string }>(endpoint: string) {
     }
   }
 
-  return { doc, loading, saving, error, load, create, update };
+  async function remove(id: string): Promise<boolean> {
+    saving.value = true;
+    error.value = null;
+    try {
+      await api.delete(`${endpoint}/${id}`);
+      return true;
+    } catch (e) {
+      error.value = e as ErrorEnvelope;
+      return false;
+    } finally {
+      saving.value = false;
+    }
+  }
+
+  return { doc, loading, saving, error, load, create, update, remove };
 }

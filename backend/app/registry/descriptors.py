@@ -7,8 +7,12 @@ rest of the simple-master long tail here.
 
 from __future__ import annotations
 
+from app.models.buying import Supplier
 from app.models.selling import (
+    Address,
     Campaign,
+    Contact,
+    Customer,
     CustomerGroup,
     MonthlyDistribution,
     SalesPartner,
@@ -17,7 +21,7 @@ from app.models.selling import (
     Territory,
     UTMSource,
 )
-from app.registry.base import DocTypeDescriptor, FieldSpec, register
+from app.registry.base import REGISTRY, DocTypeDescriptor, FieldSpec, register
 
 # Common permission bundles for selling masters.
 _SALES_MANAGER = ("read", "write", "create", "delete", "report")
@@ -210,3 +214,84 @@ register(
         list_fields=("distribution_name",),
     )
 )
+
+_SALES_USER_RW = ("read", "write", "create", "report")
+
+register(
+    DocTypeDescriptor(
+        name="Address",
+        slug="address",
+        model=Address,
+        title_field="address_title",
+        naming="field:address_title",
+        group="Selling",
+        permission_name="Address",
+        permissions={"Sales Manager": _SALES_MANAGER, "Sales User": _SALES_USER_RW},
+        fields=(
+            FieldSpec("address_title", "Address Title", "Data", required=True, in_list=True, span=2),
+            FieldSpec("address_type", "Type", "Select",
+                      options="Billing\nShipping\nOffice\nWarehouse", in_list=True),
+            FieldSpec("address_line1", "Address Line 1", "Data", required=True, span=2),
+            FieldSpec("address_line2", "Address Line 2", "Data", span=2),
+            FieldSpec("city", "City", "Data"),
+            FieldSpec("state", "State / Province", "Data"),
+            FieldSpec("pincode", "Postal Code", "Data"),
+            FieldSpec("country", "Country", "Data"),
+            FieldSpec("customer_id", "Customer", "Link", options="customer"),
+            FieldSpec("supplier_id", "Supplier", "Link", options="supplier"),
+            FieldSpec("disabled", "Disabled", "Check"),
+        ),
+        list_fields=("address_title", "address_type", "city"),
+    )
+)
+
+register(
+    DocTypeDescriptor(
+        name="Contact",
+        slug="contact",
+        model=Contact,
+        title_field="first_name",
+        naming="field:first_name",
+        group="Selling",
+        permission_name="Contact",
+        permissions={"Sales Manager": _SALES_MANAGER, "Sales User": _SALES_USER_RW},
+        fields=(
+            FieldSpec("first_name", "First Name", "Data", required=True, in_list=True),
+            FieldSpec("last_name", "Last Name", "Data", in_list=True),
+            FieldSpec("email_id", "Email", "Email", in_list=True),
+            FieldSpec("mobile_no", "Mobile", "Data"),
+            FieldSpec("phone", "Phone", "Data"),
+            FieldSpec("designation", "Designation", "Data"),
+            FieldSpec("customer_id", "Customer", "Link", options="customer"),
+            FieldSpec("supplier_id", "Supplier", "Link", options="supplier"),
+            FieldSpec("disabled", "Disabled", "Check"),
+        ),
+        list_fields=("first_name", "last_name", "email_id"),
+    )
+)
+
+
+# --- Link sources ------------------------------------------------------------
+# Lets engine Link fields target core/bespoke doctypes (not just engine masters),
+# e.g. an Address's "customer" Link resolves Customers. Maps slug -> (model,
+# title_field, permission_name). Engine descriptors are resolved first.
+LINK_SOURCES: dict[str, tuple[type, str, str]] = {
+    "customer": (Customer, "customer_name", "Customer"),
+    "supplier": (Supplier, "supplier_name", "Supplier"),
+}
+
+
+def resolve_link_source(slug: str) -> tuple[type, str, str, bool] | None:
+    """Resolve a Link target slug to (model, title_field, permission_name, scoped).
+
+    Checks registered descriptors first, then the LINK_SOURCES table for core
+    doctypes. Returns None if the slug is unknown.
+    """
+    descriptor = REGISTRY.get(slug)
+    if descriptor is not None:
+        return (descriptor.model, descriptor.title_field, descriptor.permission_name, descriptor.scoped)
+    src = LINK_SOURCES.get(slug)
+    if src is not None:
+        model, title_field, permission_name = src
+        return (model, title_field, permission_name, True)
+    return None

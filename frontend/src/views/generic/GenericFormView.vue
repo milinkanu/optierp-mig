@@ -20,20 +20,25 @@ const meta = ref<DocTypeMeta | null>(null);
 const model = ref<Record<string, unknown>>({});
 const errorField = ref<string | null>(null);
 
-const { doc, saving, error, load, create, update } = useDocument<
+const { doc, saving, error, load, create, update, remove } = useDocument<
   { id: string } & Record<string, unknown>
 >(`/registry/${doctype}`);
 
 onMounted(async () => {
   const m = (await api.get<DocTypeMeta>(`/meta/${doctype}`)).data;
   // Resolve Link fields into dropdowns by fetching the target's options.
+  // Resilient: a field whose target the user can't read just stays an empty list.
   await Promise.all(
     m.fields
       .filter((f) => f.type === "link" && f.link)
       .map(async (f) => {
-        f.options = (
-          await api.get<{ value: string; label: string }[]>(`/registry/${f.link}/options`)
-        ).data;
+        try {
+          f.options = (
+            await api.get<{ value: string; label: string }[]>(`/registry/${f.link}/options`)
+          ).data;
+        } catch {
+          f.options = [];
+        }
         f.type = "select";
       }),
   );
@@ -43,6 +48,11 @@ onMounted(async () => {
     if (doc.value) model.value = { ...doc.value };
   }
 });
+
+async function destroy(): Promise<void> {
+  if (!idParam || !confirm("Delete this record? This cannot be undone.")) return;
+  if (await remove(idParam)) void router.push(`/m/${doctype}`);
+}
 
 async function save(): Promise<void> {
   errorField.value = null;
@@ -69,19 +79,29 @@ function cancel(): void {
 
     <div v-if="meta" class="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
       <FormBuilder v-model="model" :fields="meta.fields" :error-field="errorField" />
-      <div class="mt-6 flex gap-2">
+      <div class="mt-6 flex items-center justify-between">
+        <div class="flex gap-2">
+          <button
+            class="rounded-md bg-primary px-4 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50"
+            :disabled="saving"
+            @click="save"
+          >
+            {{ saving ? "Saving…" : "Save" }}
+          </button>
+          <button
+            class="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700"
+            @click="cancel"
+          >
+            Cancel
+          </button>
+        </div>
         <button
-          class="rounded-md bg-primary px-4 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50"
+          v-if="!isNew"
+          class="rounded-md border border-red-300 px-4 py-2 text-sm font-medium text-red-600 hover:bg-red-50 disabled:opacity-50"
           :disabled="saving"
-          @click="save"
+          @click="destroy"
         >
-          {{ saving ? "Saving…" : "Save" }}
-        </button>
-        <button
-          class="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700"
-          @click="cancel"
-        >
-          Cancel
+          Delete
         </button>
       </div>
     </div>

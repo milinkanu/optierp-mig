@@ -298,24 +298,29 @@ async def delete_document(
 # --- Link options & tree -----------------------------------------------------
 
 
-async def list_options(
+async def list_link_options(
     db: AsyncSession,
-    descriptor: DocTypeDescriptor,
     *,
+    model: type,
+    title_field: str,
+    scoped: bool,
     company_id: uuid.UUID | None,
     q: str | None,
     limit: int = 20,
 ) -> list[dict[str, str]]:
-    """Typeahead options for a Link field: [{value: id, label: title_field}]."""
-    model = descriptor.model
+    """Typeahead options for a Link field: [{value: id, label: title_field}].
+
+    Works for any model (engine descriptor or core doctype) resolved via the
+    link-source registry.
+    """
     stmt = select(model)
-    if descriptor.scoped and company_id is not None:
+    if scoped and company_id is not None:
         stmt = stmt.where(model.company_id == company_id)
     if q:
-        stmt = stmt.where(getattr(model, descriptor.title_field).ilike(f"%{q}%"))
-    stmt = stmt.order_by(getattr(model, descriptor.title_field)).limit(limit)
+        stmt = stmt.where(getattr(model, title_field).ilike(f"%{q}%"))
+    stmt = stmt.order_by(getattr(model, title_field)).limit(limit)
     rows = (await db.execute(stmt)).scalars().all()
-    return [{"value": str(r.id), "label": getattr(r, descriptor.title_field)} for r in rows]
+    return [{"value": str(r.id), "label": getattr(r, title_field)} for r in rows]
 
 
 async def get_tree(
