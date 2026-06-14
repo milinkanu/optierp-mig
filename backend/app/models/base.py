@@ -11,9 +11,11 @@ Docstatus semantics preserved from ERPNext: 0 = Draft, 1 = Submitted,
 import uuid
 from datetime import datetime
 
-from sqlalchemy import ForeignKey, SmallInteger, func, text
+from sqlalchemy import Boolean, ForeignKey, SmallInteger, func, text
 from sqlalchemy.dialects.postgresql import TIMESTAMP, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, declared_attr, mapped_column
+
+from app.models.types import Ltree
 
 DOCSTATUS_DRAFT = 0
 DOCSTATUS_SUBMITTED = 1
@@ -69,3 +71,18 @@ class CompanyScopedMixin:
         return mapped_column(
             UUID(as_uuid=True), ForeignKey("companies.id", ondelete="CASCADE"), nullable=False, index=True
         )
+
+
+class TreeMixin:
+    """Nested-master tree using a Postgres ``ltree`` materialised path.
+
+    Consistent with the Chart of Accounts / Cost Center trees (see
+    ``metadata_engine_plan.md`` §3, Decision 4). The self-referential parent FK
+    is declared on each model (its column name varies, e.g.
+    ``parent_territory_id``); the descriptor's ``parent_field`` points at it, and
+    ``app.services.tree`` maintains ``path`` on create / move. ``is_group`` marks
+    a node that may have children.
+    """
+
+    is_group: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+    path: Mapped[str] = mapped_column(Ltree, nullable=False)

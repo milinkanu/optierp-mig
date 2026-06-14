@@ -29,6 +29,7 @@ from app.models.core import (  # noqa: E402
     User,
     UserRole,
 )
+from app.registry import REGISTRY  # noqa: E402 — descriptor-declared default permissions
 
 SEED_DIR = Path(__file__).resolve().parent.parent / "data" / "seeds"
 
@@ -170,20 +171,29 @@ async def seed_masters(db: AsyncSession) -> None:
     await db.flush()
 
 
+async def _grant(db: AsyncSession, role: str, doctype: str, actions) -> None:
+    perm = await db.scalar(
+        select(RolePermission).where(
+            RolePermission.role == role,
+            RolePermission.doctype == doctype,
+            RolePermission.company_id.is_(None),
+        )
+    )
+    if perm is None:
+        perm = RolePermission(role=role, doctype=doctype)
+        db.add(perm)
+    for action in actions:
+        setattr(perm, f"can_{action}", True)
+
+
 async def seed_permissions(db: AsyncSession) -> None:
     for role, doctype, actions in DEFAULT_PERMISSIONS:
-        perm = await db.scalar(
-            select(RolePermission).where(
-                RolePermission.role == role,
-                RolePermission.doctype == doctype,
-                RolePermission.company_id.is_(None),
-            )
-        )
-        if perm is None:
-            perm = RolePermission(role=role, doctype=doctype)
-            db.add(perm)
-        for action in actions:
-            setattr(perm, f"can_{action}", True)
+        await _grant(db, role, doctype, actions)
+    # Metadata-engine masters declare their own default permissions on the
+    # descriptor, so adding a descriptor also seeds its RolePermission rows.
+    for descriptor in REGISTRY.values():
+        for role, actions in descriptor.permissions.items():
+            await _grant(db, role, descriptor.permission_name, actions)
     await db.flush()
 
 

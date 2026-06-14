@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { computed } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { brand } from "@/brand";
 import { useAuthStore } from "@/stores/auth";
@@ -7,48 +8,32 @@ const route = useRoute();
 const router = useRouter();
 const auth = useAuthStore();
 
-// Grouped per module; Module 06+ add their sections here as they are migrated
-const navigation = [
+// The home ("/") is the module launcher — render it full-page (no flat sidebar).
+const isHome = computed(() => route.name === "dashboard");
+
+interface NavItem {
+  name: string;
+  route: string;
+  icon: string;
+  params?: Record<string, string>;
+}
+interface NavGroup {
+  section: string;
+  items: NavItem[];
+}
+
+// Selling & Buying are full workspaces (their own page + sidebar), so the main
+// sidebar shows just the module entry — its transactions/masters live inside the
+// workspace. Modules without a workspace yet stay expanded.
+const navigation: NavGroup[] = [
   {
     section: "",
-    items: [{ name: "Dashboard", route: "dashboard", icon: "▦" }],
-  },
-  {
-    section: "Selling",
     items: [
-      { name: "Quotations", route: "quotations", icon: "📝" },
-      { name: "Sales Orders", route: "sales-orders", icon: "🛒" },
-      { name: "Delivery Notes", route: "delivery-notes", icon: "🚚" },
-      { name: "Sales Invoices", route: "sales-invoices", icon: "🧾" },
-    ],
-  },
-  {
-    section: "Buying",
-    items: [
-      { name: "Material Requests", route: "material-requests", icon: "📋" },
-      { name: "Sourcing (RFQ)", route: "sourcing", icon: "📨" },
-      { name: "Purchase Orders", route: "purchase-orders", icon: "🛍" },
-      { name: "Purchase Receipts", route: "purchase-receipts", icon: "📦" },
-      { name: "Purchase Invoices", route: "purchase-invoices", icon: "📥" },
-    ],
-  },
-  {
-    section: "Stock",
-    items: [
-      { name: "Items", route: "items", icon: "🏷" },
-      { name: "Warehouses", route: "warehouses", icon: "🏬" },
-      { name: "Stock Entries", route: "stock-entries", icon: "↔" },
-      { name: "Stock Balance", route: "stock-balance", icon: "📈" },
-    ],
-  },
-  {
-    section: "Accounting",
-    items: [
-      { name: "Journal Entries", route: "journal-entries", icon: "📒" },
-      { name: "Payments", route: "payment-entries", icon: "💸" },
-      { name: "Reconciliation", route: "payment-reconciliation", icon: "🔗" },
-      { name: "Budgets", route: "budgets", icon: "🎯" },
-      { name: "Reports", route: "reports", icon: "📊" },
+      { name: "Home", route: "dashboard", icon: "⌂" },
+      { name: "Selling", route: "selling-workspace", icon: "🧭" },
+      { name: "Buying", route: "buying-workspace", icon: "🛍" },
+      { name: "Stock", route: "stock-workspace", icon: "📦" },
+      { name: "Accounting", route: "accounting-workspace", icon: "📊" },
     ],
   },
   {
@@ -62,6 +47,15 @@ const navigation = [
   },
 ];
 
+function linkTo(item: NavItem) {
+  return item.params ? { name: item.route, params: item.params } : { name: item.route };
+}
+function isActive(item: NavItem): boolean {
+  if (route.name !== item.route) return false;
+  if (item.params?.doctype) return route.params.doctype === item.params.doctype;
+  return true;
+}
+
 async function logout(): Promise<void> {
   await auth.logout();
   void router.push({ name: "login" });
@@ -70,7 +64,7 @@ async function logout(): Promise<void> {
 
 <template>
   <div class="flex min-h-screen">
-    <aside class="flex w-60 flex-col border-r border-gray-200 bg-white">
+    <aside v-if="!isHome" class="flex w-60 flex-col border-r border-gray-200 bg-white">
       <div class="flex items-center gap-3 border-b border-gray-200 px-4 py-4">
         <img :src="brand.logo_url" :alt="brand.product_name" class="h-8 w-8" />
         <div>
@@ -86,11 +80,11 @@ async function logout(): Promise<void> {
           </div>
           <RouterLink
             v-for="item in group.items"
-            :key="item.route"
-            :to="{ name: item.route }"
+            :key="item.name"
+            :to="linkTo(item)"
             class="flex items-center gap-3 rounded-md px-3 py-1.5 text-sm font-medium"
             :class="
-              route.name === item.route
+              isActive(item)
                 ? 'bg-primary/10 text-primary'
                 : 'text-gray-600 hover:bg-gray-100'
             "

@@ -14,7 +14,7 @@ const routes: RouteRecordRaw[] = [
     path: "/",
     component: () => import("@/layouts/AppShell.vue"),
     children: [
-      { path: "", name: "dashboard", component: () => import("@/views/dashboard/DashboardView.vue") },
+      { path: "", name: "dashboard", component: () => import("@/views/dashboard/LauncherView.vue") },
       // Module 01 — Core / Setup
       {
         path: "companies",
@@ -205,8 +205,49 @@ const routes: RouteRecordRaw[] = [
         component: () => import("@/views/trade/OrderFormView.vue"),
         props: (route) => ({ kind: "sales-order", id: route.params.id as string }),
       },
+      // Metadata engine ("the machine") — generic list/form for any registered DocType.
+      // Adding a master needs NO new route here; it is reached via /m/<slug>.
+      {
+        path: "m/:doctype",
+        name: "generic-list",
+        component: () => import("@/views/generic/GenericListView.vue"),
+        props: true,
+      },
+      {
+        path: "m/:doctype/:id",
+        name: "generic-form",
+        component: () => import("@/views/generic/GenericFormView.vue"),
+        props: true,
+      },
       // Module 06+ routes register here per module
     ],
+  },
+  // ERPNext-style module workspaces — self-contained full pages (own sidebar),
+  // so they are top-level routes, not wrapped by the AppShell layout. One shared
+  // ModuleWorkspace component, driven by the workspace config (config/workspaces.ts).
+  {
+    path: "/selling",
+    name: "selling-workspace",
+    component: () => import("@/views/ModuleWorkspace.vue"),
+    props: { moduleKey: "selling" },
+  },
+  {
+    path: "/buying",
+    name: "buying-workspace",
+    component: () => import("@/views/ModuleWorkspace.vue"),
+    props: { moduleKey: "buying" },
+  },
+  {
+    path: "/stock",
+    name: "stock-workspace",
+    component: () => import("@/views/ModuleWorkspace.vue"),
+    props: { moduleKey: "stock" },
+  },
+  {
+    path: "/accounting",
+    name: "accounting-workspace",
+    component: () => import("@/views/ModuleWorkspace.vue"),
+    props: { moduleKey: "accounting" },
   },
   { path: "/:pathMatch(.*)*", redirect: "/" },
 ];

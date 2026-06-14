@@ -10,10 +10,11 @@ export interface FieldOption {
 export interface FieldConfig {
   name: string;
   label: string;
-  type: "text" | "password" | "email" | "number" | "date" | "select" | "checkbox";
+  type: "text" | "password" | "email" | "number" | "date" | "select" | "checkbox" | "textarea" | "link";
   required?: boolean;
   placeholder?: string;
   options?: FieldOption[];
+  link?: string; // for type "link": the target DocType slug (resolved to options by the form)
   span?: 1 | 2; // grid columns
   help?: string;
 }
@@ -74,6 +75,17 @@ function onInput(field: FieldConfig, event: Event): void {
         class="h-4 w-4 rounded border-gray-300 text-primary"
         :checked="Boolean(modelValue[field.name])"
         @change="onInput(field, $event)"
+      />
+
+      <textarea
+        v-else-if="field.type === 'textarea'"
+        :id="field.name"
+        rows="3"
+        class="form-input"
+        :class="{ 'border-red-500': errorField === field.name }"
+        :placeholder="field.placeholder"
+        :value="(modelValue[field.name] as string | null) ?? ''"
+        @input="onInput(field, $event)"
       />
 
       <input

@@ -18,7 +18,7 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.accounts import InvoiceItemMixin, TaxRowMixin, TotalsMixin, VoucherMixin
-from app.models.base import Base, CompanyScopedMixin, DocumentMixin
+from app.models.base import Base, CompanyScopedMixin, DocumentMixin, TreeMixin
 
 SO_STATUSES = (
     "Draft", "To Deliver and Bill", "To Deliver", "To Bill", "Completed", "Cancelled", "Closed",
@@ -50,6 +50,204 @@ class Customer(Base, DocumentMixin, CompanyScopedMixin):
     )
     disabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
     notes: Mapped[str | None] = mapped_column(Text)
+
+
+class Campaign(Base, DocumentMixin, CompanyScopedMixin):
+    """Source: erpnext/crm/doctype/campaign (surfaced in the Selling workspace).
+
+    A flat, company-scoped simple master — the first DocType served entirely by
+    the metadata engine (app.registry); it has no bespoke model logic.
+    """
+
+    __tablename__ = "campaigns"
+    __table_args__ = (UniqueConstraint("company_id", "campaign_name", name="uq_campaign_name"),)
+
+    campaign_name: Mapped[str] = mapped_column(String(140), nullable=False)
+    campaign_desc: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="Active", server_default=text("'Active'")
+    )  # Active | Inactive
+    disabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+
+
+class Territory(Base, DocumentMixin, CompanyScopedMixin, TreeMixin):
+    """Source: erpnext/setup/doctype/territory (nested-set tree).
+
+    Tree master served by the metadata engine; ``app.services.tree`` maintains
+    the ltree ``path`` from ``parent_territory_id``.
+    """
+
+    __tablename__ = "territories"
+    __table_args__ = (
+        UniqueConstraint(
+            "company_id", "territory_name", "parent_territory_id", name="uq_territory_name"
+        ),
+        Index("ix_territories_path", "path", postgresql_using="gist"),
+    )
+
+    territory_name: Mapped[str] = mapped_column(String(140), nullable=False)
+    parent_territory_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("territories.id", ondelete="RESTRICT")
+    )
+    disabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+
+
+class CustomerGroup(Base, DocumentMixin, CompanyScopedMixin, TreeMixin):
+    """Source: erpnext/setup/doctype/customer_group (nested-set tree)."""
+
+    __tablename__ = "customer_groups"
+    __table_args__ = (
+        UniqueConstraint(
+            "company_id", "customer_group_name", "parent_customer_group_id",
+            name="uq_customer_group_name",
+        ),
+        Index("ix_customer_groups_path", "path", postgresql_using="gist"),
+    )
+
+    customer_group_name: Mapped[str] = mapped_column(String(140), nullable=False)
+    parent_customer_group_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("customer_groups.id", ondelete="RESTRICT")
+    )
+    disabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+
+
+class SalesPerson(Base, DocumentMixin, CompanyScopedMixin, TreeMixin):
+    """Source: erpnext/setup/doctype/sales_person (nested-set tree)."""
+
+    __tablename__ = "sales_persons"
+    __table_args__ = (
+        UniqueConstraint(
+            "company_id", "sales_person_name", "parent_sales_person_id",
+            name="uq_sales_person_name",
+        ),
+        Index("ix_sales_persons_path", "path", postgresql_using="gist"),
+    )
+
+    sales_person_name: Mapped[str] = mapped_column(String(140), nullable=False)
+    parent_sales_person_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("sales_persons.id", ondelete="RESTRICT")
+    )
+    commission_rate: Mapped[Decimal] = mapped_column(
+        Numeric(8, 4), nullable=False, default=0, server_default=text("0")
+    )
+    disabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+
+
+# --- Flat simple masters (Phase 2; engine-served, no bespoke logic) ----------
+
+
+class SalesPartner(Base, DocumentMixin, CompanyScopedMixin):
+    """Source: erpnext/setup/doctype/sales_partner — external reseller/distributor."""
+
+    __tablename__ = "sales_partners"
+    __table_args__ = (UniqueConstraint("company_id", "partner_name", name="uq_sales_partner"),)
+
+    partner_name: Mapped[str] = mapped_column(String(140), nullable=False)
+    partner_type: Mapped[str | None] = mapped_column(String(80))
+    commission_rate: Mapped[Decimal] = mapped_column(
+        Numeric(8, 4), nullable=False, default=0, server_default=text("0")
+    )
+    disabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+
+
+class TermsTemplate(Base, DocumentMixin, CompanyScopedMixin):
+    """Source: erpnext/setup/doctype/terms_and_conditions — reusable T&C text."""
+
+    __tablename__ = "terms_templates"
+    __table_args__ = (UniqueConstraint("company_id", "template_name", name="uq_terms_template"),)
+
+    template_name: Mapped[str] = mapped_column(String(140), nullable=False)
+    terms: Mapped[str | None] = mapped_column(Text)
+    disabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+
+
+class UTMSource(Base, DocumentMixin, CompanyScopedMixin):
+    """Source: frappe/website/doctype/utm_source — marketing attribution source."""
+
+    __tablename__ = "utm_sources"
+    __table_args__ = (UniqueConstraint("company_id", "utm_source_name", name="uq_utm_source"),)
+
+    utm_source_name: Mapped[str] = mapped_column(String(140), nullable=False)
+    disabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+
+
+class MonthlyDistribution(Base, DocumentMixin, CompanyScopedMixin):
+    """Source: erpnext/accounts/doctype/monthly_distribution — prorates annual
+    targets across 12 months. ERPNext uses a child grid; modelled flat here as
+    12 percentage columns (config-only master)."""
+
+    __tablename__ = "monthly_distributions"
+    __table_args__ = (
+        UniqueConstraint("company_id", "distribution_name", name="uq_monthly_distribution"),
+    )
+
+    distribution_name: Mapped[str] = mapped_column(String(140), nullable=False)
+    month_1: Mapped[Decimal] = mapped_column(Numeric(8, 4), nullable=False, default=0, server_default=text("0"))
+    month_2: Mapped[Decimal] = mapped_column(Numeric(8, 4), nullable=False, default=0, server_default=text("0"))
+    month_3: Mapped[Decimal] = mapped_column(Numeric(8, 4), nullable=False, default=0, server_default=text("0"))
+    month_4: Mapped[Decimal] = mapped_column(Numeric(8, 4), nullable=False, default=0, server_default=text("0"))
+    month_5: Mapped[Decimal] = mapped_column(Numeric(8, 4), nullable=False, default=0, server_default=text("0"))
+    month_6: Mapped[Decimal] = mapped_column(Numeric(8, 4), nullable=False, default=0, server_default=text("0"))
+    month_7: Mapped[Decimal] = mapped_column(Numeric(8, 4), nullable=False, default=0, server_default=text("0"))
+    month_8: Mapped[Decimal] = mapped_column(Numeric(8, 4), nullable=False, default=0, server_default=text("0"))
+    month_9: Mapped[Decimal] = mapped_column(Numeric(8, 4), nullable=False, default=0, server_default=text("0"))
+    month_10: Mapped[Decimal] = mapped_column(Numeric(8, 4), nullable=False, default=0, server_default=text("0"))
+    month_11: Mapped[Decimal] = mapped_column(Numeric(8, 4), nullable=False, default=0, server_default=text("0"))
+    month_12: Mapped[Decimal] = mapped_column(Numeric(8, 4), nullable=False, default=0, server_default=text("0"))
+
+
+class Address(Base, DocumentMixin, CompanyScopedMixin):
+    """Source: frappe/contacts/doctype/address.
+
+    Linked to a Customer and/or Supplier. ERPNext uses polymorphic dynamic links
+    (one address -> many parents); simplified here to direct party links, served
+    by the engine via the link-source registry. Full dynamic links are a
+    follow-up.
+    """
+
+    __tablename__ = "addresses"
+    __table_args__ = (UniqueConstraint("company_id", "address_title", name="uq_address_title"),)
+
+    address_title: Mapped[str] = mapped_column(String(140), nullable=False)
+    address_type: Mapped[str] = mapped_column(
+        String(40), nullable=False, default="Billing", server_default=text("'Billing'")
+    )
+    address_line1: Mapped[str] = mapped_column(String(240), nullable=False)
+    address_line2: Mapped[str | None] = mapped_column(String(240))
+    city: Mapped[str | None] = mapped_column(String(100))
+    state: Mapped[str | None] = mapped_column(String(100))
+    pincode: Mapped[str | None] = mapped_column(String(20))
+    country: Mapped[str | None] = mapped_column(String(100))
+    customer_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("customers.id", ondelete="SET NULL")
+    )
+    supplier_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("suppliers.id", ondelete="SET NULL")
+    )
+    disabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+
+
+class Contact(Base, DocumentMixin, CompanyScopedMixin):
+    """Source: frappe/contacts/doctype/contact (direct party links — see Address)."""
+
+    __tablename__ = "contacts"
+    __table_args__ = (
+        UniqueConstraint("company_id", "first_name", "last_name", "email_id", name="uq_contact"),
+    )
+
+    first_name: Mapped[str] = mapped_column(String(140), nullable=False)
+    last_name: Mapped[str | None] = mapped_column(String(140))
+    email_id: Mapped[str | None] = mapped_column(String(140))
+    mobile_no: Mapped[str | None] = mapped_column(String(40))
+    phone: Mapped[str | None] = mapped_column(String(40))
+    designation: Mapped[str | None] = mapped_column(String(140))
+    customer_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("customers.id", ondelete="SET NULL")
+    )
+    supplier_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("suppliers.id", ondelete="SET NULL")
+    )
+    disabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
 
 
 class Quotation(Base, DocumentMixin, CompanyScopedMixin, VoucherMixin, TotalsMixin):
