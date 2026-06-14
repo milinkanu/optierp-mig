@@ -222,6 +222,13 @@ const routes: RouteRecordRaw[] = [
       // Module 06+ routes register here per module
     ],
   },
+  // ERPNext-style Selling workspace — a self-contained full page (own sidebar),
+  // so it is a top-level route, not wrapped by the AppShell layout.
+  {
+    path: "/selling",
+    name: "selling-workspace",
+    component: () => import("@/views/selling/SellingWorkspace.vue"),
+  },
   { path: "/:pathMatch(.*)*", redirect: "/" },
 ];
 

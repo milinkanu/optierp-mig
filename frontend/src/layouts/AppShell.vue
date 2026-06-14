@@ -30,6 +30,7 @@ const navigation: NavGroup[] = [
   {
     section: "Selling",
     items: [
+      { name: "Selling Workspace", route: "selling-workspace", icon: "🧭" },
       { name: "Quotations", route: "quotations", icon: "📝" },
       { name: "Sales Orders", route: "sales-orders", icon: "🛒" },
       { name: "Delivery Notes", route: "delivery-notes", icon: "🚚" },
