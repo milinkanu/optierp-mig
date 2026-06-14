@@ -30,6 +30,7 @@ from app.services.stock_common import (
     get_warehouse,
     resolve_item_rate,
 )
+from app.services.blanket import blanket_rate
 from app.services.coupon import resolve_and_consume_coupon
 from app.services.pricing import apply_selling_pricing
 from app.services.shipping import shipping_tax_row
@@ -141,10 +142,12 @@ async def create_sales_order(
         if row.rate is not None:
             base = row.rate
         else:
-            base, _ = await resolve_item_rate(
-                db, items[row.item_id], buying=False, on_date=payload.posting_date,
-                currency=currency,
-            )
+            base = await blanket_rate(db, company.id, customer.id, row.item_id, payload.posting_date)
+            if base is None:
+                base, _ = await resolve_item_rate(
+                    db, items[row.item_id], buying=False, on_date=payload.posting_date,
+                    currency=currency,
+                )
         priced = await apply_selling_pricing(
             db, company.id, item=items[row.item_id], customer=customer,
             qty=row.qty, base_rate=base, on_date=payload.posting_date,

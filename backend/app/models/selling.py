@@ -388,6 +388,41 @@ class ProductBundleItem(Base, DocumentMixin):
     description: Mapped[str | None] = mapped_column(String(240))
 
 
+class BlanketOrder(Base, DocumentMixin, CompanyScopedMixin):
+    """Source: erpnext/manufacturing/doctype/blanket_order (Phase 3).
+
+    A long-term rate agreement (header + item lines) for a customer/supplier over
+    a validity window. Matching selling lines use the agreed rate.
+    """
+
+    __tablename__ = "blanket_orders"
+    __table_args__ = (UniqueConstraint("company_id", "blanket_order_name", name="uq_blanket_order"),)
+
+    blanket_order_name: Mapped[str] = mapped_column(String(140), nullable=False)
+    order_type: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="Selling", server_default=text("'Selling'")
+    )  # Selling | Buying
+    customer_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("customers.id"))
+    supplier_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("suppliers.id"))
+    valid_from: Mapped[date | None] = mapped_column(Date)
+    valid_upto: Mapped[date | None] = mapped_column(Date)
+    disabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+
+
+class BlanketOrderItem(Base, DocumentMixin):
+    """Agreed item line of a Blanket Order (engine-managed child rows)."""
+
+    __tablename__ = "blanket_order_items"
+
+    blanket_order_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("blanket_orders.id", ondelete="CASCADE"), nullable=False
+    )
+    idx: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default=text("0"))
+    item_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("items.id"))
+    qty: Mapped[Decimal] = mapped_column(Numeric(21, 6), nullable=False, default=0, server_default=text("0"))
+    rate: Mapped[Decimal] = mapped_column(Numeric(21, 6), nullable=False, default=0, server_default=text("0"))
+
+
 class Quotation(Base, DocumentMixin, CompanyScopedMixin, VoucherMixin, TotalsMixin):
     """Source: erpnext/selling/doctype/quotation."""
 

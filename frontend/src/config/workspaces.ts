@@ -81,6 +81,7 @@ const SELLING: WorkspaceConfig = {
         { label: "Sales Order", to: "/sales-orders" },
         { label: "Sales Invoice", to: "/sales-invoices" },
         { label: "Delivery Note", to: "/delivery-notes" },
+        { label: "Blanket Order", to: "/m/blanket-order" },
         { label: "Sales Partner", to: "/m/sales-partner" },
         { label: "Sales Person", to: "/m/sales-person" },
       ],

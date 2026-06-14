@@ -11,6 +11,8 @@ from app.models.accounts import Account
 from app.models.buying import Supplier
 from app.models.selling import (
     Address,
+    BlanketOrder,
+    BlanketOrderItem,
     Campaign,
     Contact,
     CouponCode,
@@ -418,6 +420,42 @@ register(
                     FieldSpec("item_id", "Item", "Link", options="item", required=True),
                     FieldSpec("qty", "Qty", "Float"),
                     FieldSpec("description", "Description", "Data"),
+                ),
+            ),
+        ),
+    )
+)
+
+register(
+    DocTypeDescriptor(
+        name="Blanket Order",
+        slug="blanket-order",
+        model=BlanketOrder,
+        title_field="blanket_order_name",
+        naming="field:blanket_order_name",
+        group="Selling",
+        permission_name="Blanket Order",
+        permissions={"Sales Manager": _SALES_MANAGER, "Sales User": _SALES_USER},
+        fields=(
+            FieldSpec("blanket_order_name", "Name", "Data", required=True, in_list=True, span=2),
+            FieldSpec("order_type", "Order Type", "Select", options="Selling\nBuying", in_list=True),
+            FieldSpec("customer_id", "Customer", "Link", options="customer"),
+            FieldSpec("supplier_id", "Supplier", "Link", options="supplier"),
+            FieldSpec("valid_from", "Valid From", "Date"),
+            FieldSpec("valid_upto", "Valid Upto", "Date"),
+            FieldSpec("disabled", "Disabled", "Check", in_list=True),
+        ),
+        list_fields=("blanket_order_name", "order_type", "disabled"),
+        children=(
+            ChildSpec(
+                field="items",
+                label="Items",
+                model=BlanketOrderItem,
+                fk_column="blanket_order_id",
+                fields=(
+                    FieldSpec("item_id", "Item", "Link", options="item", required=True),
+                    FieldSpec("qty", "Qty", "Float"),
+                    FieldSpec("rate", "Agreed Rate", "Currency"),
                 ),
             ),
         ),
