@@ -8,6 +8,12 @@ export interface MetaColumn {
   label: string;
 }
 
+export interface MetaChild {
+  field: string;
+  label: string;
+  fields: FieldConfig[];
+}
+
 export interface DocTypeMeta {
   name: string;
   slug: string;
@@ -19,4 +25,5 @@ export interface DocTypeMeta {
   group: string;
   fields: FieldConfig[];
   list_fields: MetaColumn[];
+  children?: MetaChild[];
 }

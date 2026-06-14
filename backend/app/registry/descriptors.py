@@ -18,6 +18,8 @@ from app.models.selling import (
     CustomerGroup,
     MonthlyDistribution,
     PricingRule,
+    ProductBundle,
+    ProductBundleItem,
     SalesPartner,
     SalesPerson,
     ShippingRule,
@@ -26,7 +28,7 @@ from app.models.selling import (
     UTMSource,
 )
 from app.models.stock import Item, ItemGroup
-from app.registry.base import REGISTRY, DocTypeDescriptor, FieldSpec, register
+from app.registry.base import REGISTRY, ChildSpec, DocTypeDescriptor, FieldSpec, register
 
 # Common permission bundles for selling masters.
 _SALES_MANAGER = ("read", "write", "create", "delete", "report")
@@ -386,6 +388,39 @@ register(
             FieldSpec("disabled", "Disabled", "Check", in_list=True),
         ),
         list_fields=("shipping_rule_name", "shipping_amount", "disabled"),
+    )
+)
+
+register(
+    DocTypeDescriptor(
+        name="Product Bundle",
+        slug="product-bundle",
+        model=ProductBundle,
+        title_field="bundle_name",
+        naming="field:bundle_name",
+        group="Selling",
+        permission_name="Product Bundle",
+        permissions={"Sales Manager": _SALES_MANAGER, "Sales User": _SALES_USER},
+        fields=(
+            FieldSpec("bundle_name", "Bundle Name", "Data", required=True, in_list=True, span=2),
+            FieldSpec("item_id", "Bundle Item (SKU)", "Link", options="item"),
+            FieldSpec("description", "Description", "Text", span=2),
+            FieldSpec("disabled", "Disabled", "Check", in_list=True),
+        ),
+        list_fields=("bundle_name", "disabled"),
+        children=(
+            ChildSpec(
+                field="items",
+                label="Bundle Components",
+                model=ProductBundleItem,
+                fk_column="bundle_id",
+                fields=(
+                    FieldSpec("item_id", "Item", "Link", options="item", required=True),
+                    FieldSpec("qty", "Qty", "Float"),
+                    FieldSpec("description", "Description", "Data"),
+                ),
+            ),
+        ),
     )
 )
 

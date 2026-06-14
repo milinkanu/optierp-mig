@@ -61,11 +61,18 @@ class FieldSpec:
 
 @dataclass(frozen=True)
 class ChildSpec:
-    """A child grid owned by a parent DocType (Phase 2+: simple value grids)."""
+    """A child grid (line items) owned by a parent DocType.
 
-    field: str  # attribute on the parent payload holding the rows
-    child_slug: str  # the child DocType slug
-    fk_column: str  # the FK column on the child table pointing at the parent
+    The child has its own table/model but no standalone CRUD/permissions — it is
+    created/edited with the parent. ``field`` is the attribute on the parent
+    payload holding the row list; ``fk_column`` is the child FK to the parent id.
+    """
+
+    field: str
+    label: str
+    model: type
+    fk_column: str
+    fields: Sequence[FieldSpec]
 
 
 @dataclass(frozen=True)

@@ -358,6 +358,36 @@ class ShippingRule(Base, DocumentMixin, CompanyScopedMixin):
     disabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
 
 
+class ProductBundle(Base, DocumentMixin, CompanyScopedMixin):
+    """Source: erpnext/selling/doctype/product_bundle (Phase 3).
+
+    A bundle SKU that expands into component items at billing. Parent + a child
+    grid of components — the first engine-served DocType with child tables.
+    """
+
+    __tablename__ = "product_bundles"
+    __table_args__ = (UniqueConstraint("company_id", "bundle_name", name="uq_product_bundle"),)
+
+    bundle_name: Mapped[str] = mapped_column(String(140), nullable=False)
+    item_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("items.id"))
+    description: Mapped[str | None] = mapped_column(Text)
+    disabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+
+
+class ProductBundleItem(Base, DocumentMixin):
+    """Component line of a Product Bundle (engine-managed child rows)."""
+
+    __tablename__ = "product_bundle_items"
+
+    bundle_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("product_bundles.id", ondelete="CASCADE"), nullable=False
+    )
+    idx: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default=text("0"))
+    item_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("items.id"))
+    qty: Mapped[Decimal] = mapped_column(Numeric(21, 6), nullable=False, default=1, server_default=text("1"))
+    description: Mapped[str | None] = mapped_column(String(240))
+
+
 class Quotation(Base, DocumentMixin, CompanyScopedMixin, VoucherMixin, TotalsMixin):
     """Source: erpnext/selling/doctype/quotation."""
 

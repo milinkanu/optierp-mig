@@ -108,7 +108,7 @@ const SELLING: WorkspaceConfig = {
         { label: "Price List", planned: true },
         { label: "Item Price", planned: true },
         { label: "Shipping Rule", to: "/m/shipping-rule" },
-        { label: "Product Bundle", planned: true },
+        { label: "Product Bundle", to: "/m/product-bundle" },
       ],
     },
     {
