@@ -12,6 +12,7 @@ from app.api.v1.accounts import (
     purchase_invoices,
     reports as accounts_reports,
     sales_invoices,
+    workspace as accounts_workspace,
 )
 from app.api.v1.buying import purchase_orders, rfqs, workspace as buying_workspace
 from app.api.v1.core import (
@@ -33,6 +34,7 @@ from app.api.v1.stock import (
     purchase_receipts,
     reports as stock_reports,
     stock_entries,
+    workspace as stock_workspace,
 )
 
 api_v1_router = APIRouter()
@@ -57,6 +59,7 @@ api_v1_router.include_router(payment_entries.router)
 api_v1_router.include_router(payment_reconciliation.router)
 api_v1_router.include_router(budgets.router)
 api_v1_router.include_router(accounts_reports.router)
+api_v1_router.include_router(accounts_workspace.router)
 
 # Module 03 — Stock
 api_v1_router.include_router(stock_masters.router)
@@ -65,6 +68,7 @@ api_v1_router.include_router(material_requests.router)
 api_v1_router.include_router(purchase_receipts.router)
 api_v1_router.include_router(delivery_notes.router)
 api_v1_router.include_router(stock_reports.router)
+api_v1_router.include_router(stock_workspace.router)
 
 # Module 04 — Buying
 api_v1_router.include_router(purchase_orders.router)

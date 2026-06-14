@@ -208,7 +208,128 @@ const BUYING: WorkspaceConfig = {
   ],
 };
 
+const STOCK: WorkspaceConfig = {
+  key: "stock",
+  title: "Stock",
+  statsEndpoint: "/stock/workspace",
+  sidebar: [
+    {
+      items: [
+        { label: "Home", to: "/", icon: "⌂" },
+        { label: "Dashboard", to: "/stock", icon: "▦" },
+        { label: "Item", to: "/items", icon: "🏷" },
+        { label: "Warehouse", to: "/warehouses", icon: "🏬" },
+        { label: "Stock Entry", to: "/stock-entries", icon: "↔" },
+        { label: "Material Request", to: "/material-requests", icon: "📋" },
+        { label: "Stock Balance", to: "/stock-balance", icon: "📈" },
+        { label: "Purchase Receipt", to: "/purchase-receipts", icon: "📦" },
+        { label: "Delivery Note", to: "/delivery-notes", icon: "🚚" },
+      ],
+    },
+    { title: "Reports", items: [{ label: "Reports", to: "/reports" }] },
+  ],
+  cards: [
+    {
+      title: "Stock Transactions",
+      links: [
+        { label: "Stock Entry", to: "/stock-entries" },
+        { label: "Material Request", to: "/material-requests" },
+        { label: "Purchase Receipt", to: "/purchase-receipts" },
+        { label: "Delivery Note", to: "/delivery-notes" },
+        { label: "Stock Balance", to: "/stock-balance" },
+      ],
+    },
+    {
+      title: "Items & Pricing",
+      links: [
+        { label: "Item", to: "/items" },
+        { label: "Item Group", planned: true },
+        { label: "Price List", planned: true },
+        { label: "Item Price", planned: true },
+        { label: "Product Bundle", planned: true },
+      ],
+    },
+    {
+      title: "Setup",
+      links: [
+        { label: "Warehouse", to: "/warehouses" },
+        { label: "Item Group", planned: true },
+        { label: "UOM", planned: true },
+        { label: "Brand", planned: true },
+      ],
+    },
+    {
+      title: "Key Reports",
+      links: [
+        { label: "Stock Balance", to: "/stock-balance" },
+        { label: "Financial Reports", to: "/reports" },
+      ],
+    },
+  ],
+};
+
+const ACCOUNTING: WorkspaceConfig = {
+  key: "accounting",
+  title: "Accounting",
+  statsEndpoint: "/accounting/workspace",
+  sidebar: [
+    {
+      items: [
+        { label: "Home", to: "/", icon: "⌂" },
+        { label: "Dashboard", to: "/accounting", icon: "▦" },
+        { label: "Sales Invoice", to: "/sales-invoices", icon: "🧾" },
+        { label: "Purchase Invoice", to: "/purchase-invoices", icon: "📥" },
+        { label: "Journal Entry", to: "/journal-entries", icon: "📒" },
+        { label: "Payment Entry", to: "/payment-entries", icon: "💸" },
+      ],
+    },
+    {
+      title: "Setup",
+      items: [
+        { label: "Reconciliation", to: "/payment-reconciliation" },
+        { label: "Budget", to: "/budgets" },
+        { label: "Terms Template", to: "/m/terms-template" },
+      ],
+    },
+    { title: "Reports", items: [{ label: "Reports", to: "/reports" }] },
+  ],
+  cards: [
+    {
+      title: "Transactions",
+      links: [
+        { label: "Sales Invoice", to: "/sales-invoices" },
+        { label: "Purchase Invoice", to: "/purchase-invoices" },
+        { label: "Journal Entry", to: "/journal-entries" },
+        { label: "Payment Entry", to: "/payment-entries" },
+      ],
+    },
+    {
+      title: "Banking & Reconciliation",
+      links: [
+        { label: "Payment Reconciliation", to: "/payment-reconciliation" },
+        { label: "Bank Reconciliation", planned: true },
+      ],
+    },
+    {
+      title: "Setup",
+      links: [
+        { label: "Budget", to: "/budgets" },
+        { label: "Terms Template", to: "/m/terms-template" },
+        { label: "Chart of Accounts", planned: true },
+        { label: "Tax Template", planned: true },
+        { label: "Tax Category", planned: true },
+      ],
+    },
+    {
+      title: "Key Reports",
+      links: [{ label: "Financial Reports", to: "/reports" }],
+    },
+  ],
+};
+
 export const WORKSPACES: Record<string, WorkspaceConfig> = {
   selling: SELLING,
   buying: BUYING,
+  stock: STOCK,
+  accounting: ACCOUNTING,
 };

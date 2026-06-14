@@ -14,7 +14,7 @@ const routes: RouteRecordRaw[] = [
     path: "/",
     component: () => import("@/layouts/AppShell.vue"),
     children: [
-      { path: "", name: "dashboard", component: () => import("@/views/dashboard/DashboardView.vue") },
+      { path: "", name: "dashboard", component: () => import("@/views/dashboard/LauncherView.vue") },
       // Module 01 — Core / Setup
       {
         path: "companies",
@@ -236,6 +236,18 @@ const routes: RouteRecordRaw[] = [
     name: "buying-workspace",
     component: () => import("@/views/ModuleWorkspace.vue"),
     props: { moduleKey: "buying" },
+  },
+  {
+    path: "/stock",
+    name: "stock-workspace",
+    component: () => import("@/views/ModuleWorkspace.vue"),
+    props: { moduleKey: "stock" },
+  },
+  {
+    path: "/accounting",
+    name: "accounting-workspace",
+    component: () => import("@/views/ModuleWorkspace.vue"),
+    props: { moduleKey: "accounting" },
   },
   { path: "/:pathMatch(.*)*", redirect: "/" },
 ];

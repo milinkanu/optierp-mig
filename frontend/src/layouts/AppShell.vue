@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { computed } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { brand } from "@/brand";
 import { useAuthStore } from "@/stores/auth";
@@ -6,6 +7,9 @@ import { useAuthStore } from "@/stores/auth";
 const route = useRoute();
 const router = useRouter();
 const auth = useAuthStore();
+
+// The home ("/") is the module launcher — render it full-page (no flat sidebar).
+const isHome = computed(() => route.name === "dashboard");
 
 interface NavItem {
   name: string;
@@ -25,28 +29,11 @@ const navigation: NavGroup[] = [
   {
     section: "",
     items: [
-      { name: "Dashboard", route: "dashboard", icon: "▦" },
+      { name: "Home", route: "dashboard", icon: "⌂" },
       { name: "Selling", route: "selling-workspace", icon: "🧭" },
       { name: "Buying", route: "buying-workspace", icon: "🛍" },
-    ],
-  },
-  {
-    section: "Stock",
-    items: [
-      { name: "Items", route: "items", icon: "🏷" },
-      { name: "Warehouses", route: "warehouses", icon: "🏬" },
-      { name: "Stock Entries", route: "stock-entries", icon: "↔" },
-      { name: "Stock Balance", route: "stock-balance", icon: "📈" },
-    ],
-  },
-  {
-    section: "Accounting",
-    items: [
-      { name: "Journal Entries", route: "journal-entries", icon: "📒" },
-      { name: "Payments", route: "payment-entries", icon: "💸" },
-      { name: "Reconciliation", route: "payment-reconciliation", icon: "🔗" },
-      { name: "Budgets", route: "budgets", icon: "🎯" },
-      { name: "Reports", route: "reports", icon: "📊" },
+      { name: "Stock", route: "stock-workspace", icon: "📦" },
+      { name: "Accounting", route: "accounting-workspace", icon: "📊" },
     ],
   },
   {
@@ -77,7 +64,7 @@ async function logout(): Promise<void> {
 
 <template>
   <div class="flex min-h-screen">
-    <aside class="flex w-60 flex-col border-r border-gray-200 bg-white">
+    <aside v-if="!isHome" class="flex w-60 flex-col border-r border-gray-200 bg-white">
       <div class="flex items-center gap-3 border-b border-gray-200 px-4 py-4">
         <img :src="brand.logo_url" :alt="brand.product_name" class="h-8 w-8" />
         <div>

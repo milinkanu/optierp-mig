@@ -12,10 +12,12 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.accounts import SalesInvoice
 from app.models.base import DOCSTATUS_SUBMITTED
 from app.models.buying import PurchaseOrder
 from app.models.core import Company
 from app.models.selling import SalesOrder
+from app.models.stock import Item, StockEntry, Warehouse
 
 _MONTH_ABBR = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 
@@ -92,6 +94,73 @@ async def get_buying_workspace(db: AsyncSession, company_id: uuid.UUID) -> dict[
             {"label": "Purchase Orders", "value": count, "format": "int"},
             {"label": "Total Purchase Amount", "value": total, "format": "currency"},
             {"label": "Average Order Value", "value": average, "format": "currency"},
+        ],
+        "trend": trend,
+    }
+
+
+async def get_accounting_workspace(db: AsyncSession, company_id: uuid.UUID) -> dict[str, Any]:
+    currency = await _company_currency(db, company_id)
+    count, invoiced, _avg, trend = await _order_stats(db, SalesInvoice, company_id)
+    outstanding = float(
+        Decimal(
+            (
+                await db.execute(
+                    select(func.coalesce(func.sum(SalesInvoice.outstanding_amount), 0)).where(
+                        SalesInvoice.company_id == company_id,
+                        SalesInvoice.docstatus == DOCSTATUS_SUBMITTED,
+                    )
+                )
+            ).scalar_one()
+        )
+    )
+    return {
+        "currency": currency,
+        "chart_title": "Sales Invoice Trends",
+        "cards": [
+            {"label": "Sales Invoices", "value": count, "format": "int"},
+            {"label": "Total Invoiced", "value": invoiced, "format": "currency"},
+            {"label": "Outstanding", "value": outstanding, "format": "currency"},
+        ],
+        "trend": trend,
+    }
+
+
+async def get_stock_workspace(db: AsyncSession, company_id: uuid.UUID) -> dict[str, Any]:
+    currency = await _company_currency(db, company_id)
+    items = (
+        await db.execute(select(func.count()).select_from(Item).where(Item.company_id == company_id))
+    ).scalar_one()
+    warehouses = (
+        await db.execute(
+            select(func.count()).select_from(Warehouse).where(Warehouse.company_id == company_id)
+        )
+    ).scalar_one()
+
+    cond = (StockEntry.company_id == company_id, StockEntry.docstatus == DOCSTATUS_SUBMITTED)
+    entries = (await db.execute(select(func.count()).select_from(StockEntry).where(*cond))).scalar_one()
+
+    months = _last_12_months(date.today())
+    start = date(months[0][0], months[0][1], 1)
+    year_col = func.extract("year", StockEntry.posting_date)
+    month_col = func.extract("month", StockEntry.posting_date)
+    rows = (
+        await db.execute(
+            select(year_col.label("y"), month_col.label("m"), func.count().label("v"))
+            .where(*cond, StockEntry.posting_date >= start)
+            .group_by(year_col, month_col)
+        )
+    ).all()
+    bucket = {(int(r.y), int(r.m)): int(r.v) for r in rows}
+    trend = [{"label": _MONTH_ABBR[m - 1], "value": bucket.get((y, m), 0)} for (y, m) in months]
+
+    return {
+        "currency": currency,
+        "chart_title": "Stock Entry Trends",
+        "cards": [
+            {"label": "Items", "value": int(items), "format": "int"},
+            {"label": "Warehouses", "value": int(warehouses), "format": "int"},
+            {"label": "Stock Entries", "value": int(entries), "format": "int"},
         ],
         "trend": trend,
     }
