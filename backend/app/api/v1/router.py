@@ -13,7 +13,7 @@ from app.api.v1.accounts import (
     reports as accounts_reports,
     sales_invoices,
 )
-from app.api.v1.buying import purchase_orders, rfqs
+from app.api.v1.buying import purchase_orders, rfqs, workspace as buying_workspace
 from app.api.v1.core import (
     companies,
     currencies,
@@ -69,6 +69,7 @@ api_v1_router.include_router(stock_reports.router)
 # Module 04 — Buying
 api_v1_router.include_router(purchase_orders.router)
 api_v1_router.include_router(rfqs.router)
+api_v1_router.include_router(buying_workspace.router)
 
 # Module 05 — Selling
 api_v1_router.include_router(quotations.router)

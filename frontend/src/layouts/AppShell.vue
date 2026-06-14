@@ -1,7 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { api } from "@/api/client";
 import { brand } from "@/brand";
 import { useAuthStore } from "@/stores/auth";
 
@@ -14,38 +12,22 @@ interface NavItem {
   route: string;
   icon: string;
   params?: Record<string, string>;
-  group?: string; // engine masters carry their module group (for sidebar placement)
 }
 interface NavGroup {
   section: string;
   items: NavItem[];
 }
 
-// Grouped per module; Module 06+ add their sections here as they are migrated.
-// Items with `params` target the metadata-engine generic views (route "generic-list").
+// Selling & Buying are full workspaces (their own page + sidebar), so the main
+// sidebar shows just the module entry — its transactions/masters live inside the
+// workspace. Modules without a workspace yet stay expanded.
 const navigation: NavGroup[] = [
   {
     section: "",
-    items: [{ name: "Dashboard", route: "dashboard", icon: "▦" }],
-  },
-  {
-    section: "Selling",
     items: [
-      { name: "Selling Workspace", route: "selling-workspace", icon: "🧭" },
-      { name: "Quotations", route: "quotations", icon: "📝" },
-      { name: "Sales Orders", route: "sales-orders", icon: "🛒" },
-      { name: "Delivery Notes", route: "delivery-notes", icon: "🚚" },
-      { name: "Sales Invoices", route: "sales-invoices", icon: "🧾" },
-    ],
-  },
-  {
-    section: "Buying",
-    items: [
-      { name: "Material Requests", route: "material-requests", icon: "📋" },
-      { name: "Sourcing (RFQ)", route: "sourcing", icon: "📨" },
-      { name: "Purchase Orders", route: "purchase-orders", icon: "🛍" },
-      { name: "Purchase Receipts", route: "purchase-receipts", icon: "📦" },
-      { name: "Purchase Invoices", route: "purchase-invoices", icon: "📥" },
+      { name: "Dashboard", route: "dashboard", icon: "▦" },
+      { name: "Selling", route: "selling-workspace", icon: "🧭" },
+      { name: "Buying", route: "buying-workspace", icon: "🛍" },
     ],
   },
   {
@@ -78,42 +60,6 @@ const navigation: NavGroup[] = [
   },
 ];
 
-// Registry-driven nav: engine-served masters are fetched from /meta so a new
-// descriptor appears in the sidebar automatically (no hardcoded entry).
-const masters = ref<NavItem[]>([]);
-onMounted(async () => {
-  try {
-    const data = (await api.get<{ slug: string; name: string; group: string }[]>("/meta")).data;
-    masters.value = data.map((d) => ({
-      name: d.name,
-      route: "generic-list",
-      icon: "•",
-      params: { doctype: d.slug },
-      group: d.group,
-    }));
-  } catch {
-    // registry nav is optional; ignore if unavailable
-  }
-});
-// Place engine masters under their module section (sorted), so each module shows
-// its transactions + setup masters together — instead of one unordered "Masters" dump.
-const navGroups = computed<NavGroup[]>(() => {
-  if (!masters.value.length) return navigation;
-  const byGroup = new Map<string, NavItem[]>();
-  for (const m of [...masters.value].sort((a, b) => a.name.localeCompare(b.name))) {
-    const key = m.group || "Masters";
-    byGroup.set(key, [...(byGroup.get(key) ?? []), m]);
-  }
-  const merged = navigation.map((grp) => {
-    const extra = byGroup.get(grp.section);
-    if (!extra) return grp;
-    byGroup.delete(grp.section);
-    return { ...grp, items: [...grp.items, ...extra] };
-  });
-  for (const [section, items] of byGroup) merged.push({ section, items });
-  return merged;
-});
-
 function linkTo(item: NavItem) {
   return item.params ? { name: item.route, params: item.params } : { name: item.route };
 }
@@ -140,7 +86,7 @@ async function logout(): Promise<void> {
         </div>
       </div>
       <nav class="flex-1 overflow-y-auto p-3">
-        <div v-for="group in navGroups" :key="group.section" class="mb-2">
+        <div v-for="group in navigation" :key="group.section" class="mb-2">
           <div v-if="group.section"
                class="px-3 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-wider text-gray-400">
             {{ group.section }}
