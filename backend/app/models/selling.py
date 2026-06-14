@@ -337,6 +337,27 @@ class CouponCode(Base, DocumentMixin, CompanyScopedMixin):
     disabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
 
 
+class ShippingRule(Base, DocumentMixin, CompanyScopedMixin):
+    """Source: erpnext/accounts/doctype/shipping_rule (Phase 3).
+
+    A flat freight charge, optionally waived when the line subtotal reaches a
+    threshold. Added to the order as an 'Actual' charge row posted to account_id.
+    """
+
+    __tablename__ = "shipping_rules"
+    __table_args__ = (UniqueConstraint("company_id", "shipping_rule_name", name="uq_shipping_rule"),)
+
+    shipping_rule_name: Mapped[str] = mapped_column(String(140), nullable=False)
+    shipping_amount: Mapped[Decimal] = mapped_column(
+        Numeric(21, 6), nullable=False, default=0, server_default=text("0")
+    )
+    free_above: Mapped[Decimal] = mapped_column(
+        Numeric(21, 6), nullable=False, default=0, server_default=text("0")
+    )  # subtotal at/above which shipping is free (0 = never free)
+    account_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("accounts.id"))
+    disabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+
+
 class Quotation(Base, DocumentMixin, CompanyScopedMixin, VoucherMixin, TotalsMixin):
     """Source: erpnext/selling/doctype/quotation."""
 

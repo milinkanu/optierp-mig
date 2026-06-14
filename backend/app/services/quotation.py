@@ -24,6 +24,7 @@ from app.services.audit import log_audit
 from app.services.pagination import paginate
 from app.services.coupon import resolve_and_consume_coupon
 from app.services.pricing import apply_selling_pricing
+from app.services.shipping import shipping_tax_row
 from app.services.stock_common import STOCK_NAMING_SERIES, get_items, resolve_item_rate
 from app.services.taxes_and_totals import ItemRow, TaxRow, calculate_taxes_and_totals
 
@@ -89,6 +90,11 @@ async def create_quotation(
         )
 
     tax_rows_in = await _load_tax_rows(db, payload, customer)
+    if payload.shipping_rule_id:
+        subtotal = sum((row.qty * rate for row, rate in zip(payload.items, rates)), ZERO)
+        ship_row = await shipping_tax_row(db, company.id, payload.shipping_rule_id, subtotal)
+        if ship_row is not None:
+            tax_rows_in = [*tax_rows_in, ship_row]
     engine_items = [ItemRow(qty=row.qty, rate=rate) for row, rate in zip(payload.items, rates)]
     engine_taxes = [
         TaxRow(charge_type=t.charge_type, rate=t.rate, tax_amount=t.tax_amount, row_id=t.row_id)

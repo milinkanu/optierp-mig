@@ -7,6 +7,7 @@ rest of the simple-master long tail here.
 
 from __future__ import annotations
 
+from app.models.accounts import Account
 from app.models.buying import Supplier
 from app.models.selling import (
     Address,
@@ -19,6 +20,7 @@ from app.models.selling import (
     PricingRule,
     SalesPartner,
     SalesPerson,
+    ShippingRule,
     TermsTemplate,
     Territory,
     UTMSource,
@@ -366,6 +368,27 @@ register(
     )
 )
 
+register(
+    DocTypeDescriptor(
+        name="Shipping Rule",
+        slug="shipping-rule",
+        model=ShippingRule,
+        title_field="shipping_rule_name",
+        naming="field:shipping_rule_name",
+        group="Selling",
+        permission_name="Shipping Rule",
+        permissions={"Sales Manager": _SALES_MANAGER, "Sales User": _SALES_USER},
+        fields=(
+            FieldSpec("shipping_rule_name", "Shipping Rule Name", "Data", required=True, in_list=True, span=2),
+            FieldSpec("shipping_amount", "Shipping Amount", "Currency", in_list=True),
+            FieldSpec("free_above", "Free Above Subtotal", "Currency", help="0 = never free"),
+            FieldSpec("account_id", "Freight Account", "Link", options="account"),
+            FieldSpec("disabled", "Disabled", "Check", in_list=True),
+        ),
+        list_fields=("shipping_rule_name", "shipping_amount", "disabled"),
+    )
+)
+
 
 # --- Link sources ------------------------------------------------------------
 # Lets engine Link fields target core/bespoke doctypes (not just engine masters),
@@ -376,6 +399,7 @@ LINK_SOURCES: dict[str, tuple[type, str, str]] = {
     "supplier": (Supplier, "supplier_name", "Supplier"),
     "item": (Item, "item_code", "Item"),
     "item-group": (ItemGroup, "item_group_name", "Item Group"),
+    "account": (Account, "account_name", "Account"),
 }
 
 
