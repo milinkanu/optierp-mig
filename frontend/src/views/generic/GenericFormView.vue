@@ -5,7 +5,8 @@
 import { onMounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { api } from "@/api/client";
-import FormBuilder from "@/components/shared/FormBuilder.vue";
+import ChildGrid from "@/components/shared/ChildGrid.vue";
+import FormBuilder, { type FieldConfig } from "@/components/shared/FormBuilder.vue";
 import { useDocument } from "@/composables/useDocument";
 import type { DocTypeMeta } from "@/types/registry";
 
@@ -24,12 +25,11 @@ const { doc, saving, error, load, create, update, remove } = useDocument<
   { id: string } & Record<string, unknown>
 >(`/registry/${doctype}`);
 
-onMounted(async () => {
-  const m = (await api.get<DocTypeMeta>(`/meta/${doctype}`)).data;
-  // Resolve Link fields into dropdowns by fetching the target's options.
-  // Resilient: a field whose target the user can't read just stays an empty list.
+// Resolve Link fields into dropdowns by fetching the target's options.
+// Resilient: a field whose target the user can't read just stays an empty list.
+async function resolveLinks(fields: FieldConfig[]): Promise<void> {
   await Promise.all(
-    m.fields
+    fields
       .filter((f) => f.type === "link" && f.link)
       .map(async (f) => {
         try {
@@ -42,6 +42,15 @@ onMounted(async () => {
         f.type = "select";
       }),
   );
+}
+
+onMounted(async () => {
+  const m = (await api.get<DocTypeMeta>(`/meta/${doctype}`)).data;
+  await resolveLinks(m.fields);
+  for (const child of m.children ?? []) {
+    await resolveLinks(child.fields);
+    if (!(child.field in model.value)) model.value[child.field] = [];
+  }
   meta.value = m;
   if (!isNew && idParam) {
     await load(idParam);
@@ -79,6 +88,14 @@ function cancel(): void {
 
     <div v-if="meta" class="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
       <FormBuilder v-model="model" :fields="meta.fields" :error-field="errorField" />
+      <ChildGrid
+        v-for="child in meta.children ?? []"
+        :key="child.field"
+        :label="child.label"
+        :fields="child.fields"
+        :model-value="(model[child.field] as Record<string, unknown>[]) ?? []"
+        @update:model-value="(rows) => (model[child.field] = rows)"
+      />
       <div class="mt-6 flex items-center justify-between">
         <div class="flex gap-2">
           <button

@@ -7,21 +7,32 @@ rest of the simple-master long tail here.
 
 from __future__ import annotations
 
+from app.models.accounts import Account
 from app.models.buying import Supplier
 from app.models.selling import (
     Address,
+    BlanketOrder,
+    BlanketOrderItem,
     Campaign,
     Contact,
+    CouponCode,
     Customer,
     CustomerGroup,
     MonthlyDistribution,
+    PricingRule,
+    ProductBundle,
+    ProductBundleItem,
+    PromotionalScheme,
+    PromotionalSchemeTier,
     SalesPartner,
     SalesPerson,
+    ShippingRule,
     TermsTemplate,
     Territory,
     UTMSource,
 )
-from app.registry.base import REGISTRY, DocTypeDescriptor, FieldSpec, register
+from app.models.stock import Item, ItemGroup
+from app.registry.base import REGISTRY, ChildSpec, DocTypeDescriptor, FieldSpec, register
 
 # Common permission bundles for selling masters.
 _SALES_MANAGER = ("read", "write", "create", "delete", "report")
@@ -271,6 +282,226 @@ register(
 )
 
 
+# --- Selling: Customer (engine-served CRUD UI) -------------------------------
+register(
+    DocTypeDescriptor(
+        name="Customer",
+        slug="customer",
+        model=Customer,
+        title_field="customer_name",
+        naming="field:customer_name",
+        group="Selling",
+        permission_name="Customer",
+        permissions={"Sales Manager": _SALES_MANAGER, "Sales User": _SALES_USER_RW},
+        fields=(
+            FieldSpec("customer_name", "Customer Name", "Data", required=True, in_list=True, span=2),
+            FieldSpec("customer_type", "Type", "Select", options="Company\nIndividual", in_list=True),
+            FieldSpec("customer_group_id", "Customer Group", "Link", options="customer-group", in_list=True),
+            FieldSpec("territory_id", "Territory", "Link", options="territory"),
+            FieldSpec("tax_id", "Tax ID", "Data"),
+            FieldSpec("default_currency", "Default Currency", "Data"),
+            FieldSpec("credit_limit", "Credit Limit", "Float"),
+            FieldSpec("disabled", "Disabled", "Check", in_list=True),
+            FieldSpec("notes", "Notes", "Text", span=2),
+        ),
+        list_fields=("customer_name", "customer_type", "disabled"),
+    )
+)
+
+
+# --- Items & Pricing: Pricing Rule (Phase 3) ---------------------------------
+register(
+    DocTypeDescriptor(
+        name="Pricing Rule",
+        slug="pricing-rule",
+        model=PricingRule,
+        title_field="title",
+        naming="field:title",
+        group="Selling",
+        permission_name="Pricing Rule",
+        permissions={"Sales Manager": _SALES_MANAGER, "Sales User": _SALES_USER},
+        fields=(
+            FieldSpec("title", "Title", "Data", required=True, in_list=True, span=2),
+            FieldSpec("selling", "Applies to Selling", "Check"),
+            FieldSpec("buying", "Applies to Buying", "Check"),
+            FieldSpec("apply_on", "Apply On", "Select", options="Item\nItem Group", in_list=True),
+            FieldSpec("item_id", "Item", "Link", options="item", help="When Apply On = Item"),
+            FieldSpec("item_group_id", "Item Group", "Link", options="item-group",
+                      help="When Apply On = Item Group"),
+            FieldSpec("customer_id", "Customer", "Link", options="customer",
+                      help="Leave blank to apply to all customers"),
+            FieldSpec("customer_group_id", "Customer Group", "Link", options="customer-group",
+                      help="Apply to a whole customer group"),
+            FieldSpec("territory_id", "Territory", "Link", options="territory",
+                      help="Apply to a whole territory"),
+            FieldSpec("min_qty", "Min Qty", "Float"),
+            FieldSpec("max_qty", "Max Qty", "Float", help="0 = no upper limit"),
+            FieldSpec("valid_from", "Valid From", "Date"),
+            FieldSpec("valid_upto", "Valid Upto", "Date"),
+            FieldSpec("rate_or_discount", "Rate or Discount", "Select",
+                      options="Discount Percentage\nDiscount Amount\nRate", in_list=True),
+            FieldSpec("discount_percentage", "Discount %", "Float"),
+            FieldSpec("discount_amount", "Discount Amount", "Float"),
+            FieldSpec("rate", "Rate", "Float"),
+            FieldSpec("priority", "Priority", "Int", help="Higher wins when several rules match"),
+            FieldSpec("disabled", "Disabled", "Check", in_list=True),
+        ),
+        list_fields=("title", "apply_on", "rate_or_discount", "disabled"),
+    )
+)
+
+register(
+    DocTypeDescriptor(
+        name="Coupon Code",
+        slug="coupon-code",
+        model=CouponCode,
+        title_field="coupon_code",
+        naming="field:coupon_code",
+        group="Selling",
+        permission_name="Coupon Code",
+        permissions={"Sales Manager": _SALES_MANAGER, "Sales User": _SALES_USER},
+        fields=(
+            FieldSpec("coupon_code", "Coupon Code", "Data", required=True, in_list=True, span=2),
+            FieldSpec("coupon_name", "Coupon Name", "Data"),
+            FieldSpec("discount_percentage", "Discount %", "Float", in_list=True),
+            FieldSpec("valid_from", "Valid From", "Date"),
+            FieldSpec("valid_upto", "Valid Upto", "Date"),
+            FieldSpec("maximum_use", "Maximum Use", "Int", help="0 = unlimited"),
+            FieldSpec("disabled", "Disabled", "Check", in_list=True),
+        ),
+        # "used" is maintained by the engine on redemption — shown in the list, not editable.
+        list_fields=("coupon_code", "discount_percentage", "used", "disabled"),
+    )
+)
+
+register(
+    DocTypeDescriptor(
+        name="Shipping Rule",
+        slug="shipping-rule",
+        model=ShippingRule,
+        title_field="shipping_rule_name",
+        naming="field:shipping_rule_name",
+        group="Selling",
+        permission_name="Shipping Rule",
+        permissions={"Sales Manager": _SALES_MANAGER, "Sales User": _SALES_USER},
+        fields=(
+            FieldSpec("shipping_rule_name", "Shipping Rule Name", "Data", required=True, in_list=True, span=2),
+            FieldSpec("shipping_amount", "Shipping Amount", "Currency", in_list=True),
+            FieldSpec("free_above", "Free Above Subtotal", "Currency", help="0 = never free"),
+            FieldSpec("account_id", "Freight Account", "Link", options="account"),
+            FieldSpec("disabled", "Disabled", "Check", in_list=True),
+        ),
+        list_fields=("shipping_rule_name", "shipping_amount", "disabled"),
+    )
+)
+
+register(
+    DocTypeDescriptor(
+        name="Product Bundle",
+        slug="product-bundle",
+        model=ProductBundle,
+        title_field="bundle_name",
+        naming="field:bundle_name",
+        group="Selling",
+        permission_name="Product Bundle",
+        permissions={"Sales Manager": _SALES_MANAGER, "Sales User": _SALES_USER},
+        fields=(
+            FieldSpec("bundle_name", "Bundle Name", "Data", required=True, in_list=True, span=2),
+            FieldSpec("item_id", "Bundle Item (SKU)", "Link", options="item"),
+            FieldSpec("description", "Description", "Text", span=2),
+            FieldSpec("disabled", "Disabled", "Check", in_list=True),
+        ),
+        list_fields=("bundle_name", "disabled"),
+        children=(
+            ChildSpec(
+                field="items",
+                label="Bundle Components",
+                model=ProductBundleItem,
+                fk_column="bundle_id",
+                fields=(
+                    FieldSpec("item_id", "Item", "Link", options="item", required=True),
+                    FieldSpec("qty", "Qty", "Float"),
+                    FieldSpec("description", "Description", "Data"),
+                ),
+            ),
+        ),
+    )
+)
+
+register(
+    DocTypeDescriptor(
+        name="Blanket Order",
+        slug="blanket-order",
+        model=BlanketOrder,
+        title_field="blanket_order_name",
+        naming="field:blanket_order_name",
+        group="Selling",
+        permission_name="Blanket Order",
+        permissions={"Sales Manager": _SALES_MANAGER, "Sales User": _SALES_USER},
+        fields=(
+            FieldSpec("blanket_order_name", "Name", "Data", required=True, in_list=True, span=2),
+            FieldSpec("order_type", "Order Type", "Select", options="Selling\nBuying", in_list=True),
+            FieldSpec("customer_id", "Customer", "Link", options="customer"),
+            FieldSpec("supplier_id", "Supplier", "Link", options="supplier"),
+            FieldSpec("valid_from", "Valid From", "Date"),
+            FieldSpec("valid_upto", "Valid Upto", "Date"),
+            FieldSpec("disabled", "Disabled", "Check", in_list=True),
+        ),
+        list_fields=("blanket_order_name", "order_type", "disabled"),
+        children=(
+            ChildSpec(
+                field="items",
+                label="Items",
+                model=BlanketOrderItem,
+                fk_column="blanket_order_id",
+                fields=(
+                    FieldSpec("item_id", "Item", "Link", options="item", required=True),
+                    FieldSpec("qty", "Qty", "Float"),
+                    FieldSpec("rate", "Agreed Rate", "Currency"),
+                ),
+            ),
+        ),
+    )
+)
+
+register(
+    DocTypeDescriptor(
+        name="Promotional Scheme",
+        slug="promotional-scheme",
+        model=PromotionalScheme,
+        title_field="scheme_name",
+        naming="field:scheme_name",
+        group="Selling",
+        permission_name="Promotional Scheme",
+        permissions={"Sales Manager": _SALES_MANAGER, "Sales User": _SALES_USER},
+        fields=(
+            FieldSpec("scheme_name", "Scheme Name", "Data", required=True, in_list=True, span=2),
+            FieldSpec("apply_on", "Apply On", "Select", options="Item\nItem Group", in_list=True),
+            FieldSpec("item_id", "Item", "Link", options="item"),
+            FieldSpec("item_group_id", "Item Group", "Link", options="item-group"),
+            FieldSpec("customer_id", "Customer", "Link", options="customer",
+                      help="Leave blank to apply to all customers"),
+            FieldSpec("valid_from", "Valid From", "Date"),
+            FieldSpec("valid_upto", "Valid Upto", "Date"),
+            FieldSpec("disabled", "Disabled", "Check", in_list=True),
+        ),
+        list_fields=("scheme_name", "apply_on", "disabled"),
+        children=(
+            ChildSpec(
+                field="tiers",
+                label="Discount Tiers",
+                model=PromotionalSchemeTier,
+                fk_column="scheme_id",
+                fields=(
+                    FieldSpec("min_qty", "Min Qty", "Float", required=True),
+                    FieldSpec("discount_percentage", "Discount %", "Float"),
+                ),
+            ),
+        ),
+    )
+)
+
+
 # --- Link sources ------------------------------------------------------------
 # Lets engine Link fields target core/bespoke doctypes (not just engine masters),
 # e.g. an Address's "customer" Link resolves Customers. Maps slug -> (model,
@@ -278,6 +509,9 @@ register(
 LINK_SOURCES: dict[str, tuple[type, str, str]] = {
     "customer": (Customer, "customer_name", "Customer"),
     "supplier": (Supplier, "supplier_name", "Supplier"),
+    "item": (Item, "item_code", "Item"),
+    "item-group": (ItemGroup, "item_group_name", "Item Group"),
+    "account": (Account, "account_name", "Account"),
 }
 
 

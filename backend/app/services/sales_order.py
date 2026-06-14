@@ -30,6 +30,10 @@ from app.services.stock_common import (
     get_warehouse,
     resolve_item_rate,
 )
+from app.services.blanket import blanket_rate
+from app.services.coupon import resolve_and_consume_coupon
+from app.services.pricing import apply_selling_pricing
+from app.services.shipping import shipping_tax_row
 from app.services.stock_ledger import update_reserved_qty
 from app.services.taxes_and_totals import ItemRow, TaxRow, calculate_taxes_and_totals
 
@@ -136,15 +140,32 @@ async def create_sales_order(
     rates: list[Decimal] = []
     for row in payload.items:
         if row.rate is not None:
-            rates.append(row.rate)
+            base = row.rate
         else:
-            rate, _ = await resolve_item_rate(
-                db, items[row.item_id], buying=False, on_date=payload.posting_date,
-                currency=currency,
-            )
-            rates.append(rate)
+            base = await blanket_rate(db, company.id, customer.id, row.item_id, payload.posting_date)
+            if base is None:
+                base, _ = await resolve_item_rate(
+                    db, items[row.item_id], buying=False, on_date=payload.posting_date,
+                    currency=currency,
+                )
+        priced = await apply_selling_pricing(
+            db, company.id, item=items[row.item_id], customer=customer,
+            qty=row.qty, base_rate=base, on_date=payload.posting_date,
+        )
+        rates.append(priced.rate)
+
+    additional_discount_pct = payload.additional_discount_percentage
+    if payload.coupon_code:
+        additional_discount_pct = await resolve_and_consume_coupon(
+            db, company.id, payload.coupon_code, payload.posting_date
+        )
 
     tax_rows_in = await _load_tax_rows(db, payload, customer)
+    if payload.shipping_rule_id:
+        subtotal = sum((row.qty * rate for row, rate in zip(payload.items, rates)), Decimal("0"))
+        ship_row = await shipping_tax_row(db, company.id, payload.shipping_rule_id, subtotal)
+        if ship_row is not None:
+            tax_rows_in = [*tax_rows_in, ship_row]
     engine_items = [ItemRow(qty=row.qty, rate=rate) for row, rate in zip(payload.items, rates)]
     engine_taxes = [
         TaxRow(charge_type=t.charge_type, rate=t.rate, tax_amount=t.tax_amount, row_id=t.row_id)
@@ -154,7 +175,7 @@ async def create_sales_order(
         engine_items, engine_taxes,
         conversion_rate=payload.conversion_rate,
         apply_discount_on=payload.apply_discount_on,
-        additional_discount_percentage=payload.additional_discount_percentage,
+        additional_discount_percentage=additional_discount_pct,
         discount_amount=payload.discount_amount,
     )
 
@@ -172,7 +193,7 @@ async def create_sales_order(
         conversion_rate=payload.conversion_rate,
         remarks=payload.remarks,
         apply_discount_on=payload.apply_discount_on,
-        additional_discount_percentage=payload.additional_discount_percentage,
+        additional_discount_percentage=additional_discount_pct,
         discount_amount=totals.discount_amount,
         total_qty=totals.total_qty,
         total=totals.total,

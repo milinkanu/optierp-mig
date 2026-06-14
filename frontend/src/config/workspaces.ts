@@ -50,6 +50,7 @@ const SELLING: WorkspaceConfig = {
     {
       title: "Setup",
       items: [
+        { label: "Customer", to: "/m/customer" },
         { label: "Address", to: "/m/address" },
         { label: "Campaign", to: "/m/campaign" },
         { label: "Contact", to: "/m/contact" },
@@ -62,18 +63,25 @@ const SELLING: WorkspaceConfig = {
         { label: "UTM Source", to: "/m/utm-source" },
       ],
     },
-    { title: "Items & Pricing", items: [{ label: "Item", to: "/items" }] },
+    {
+      title: "Items & Pricing",
+      items: [
+        { label: "Item", to: "/items" },
+        { label: "Pricing Rule", to: "/m/pricing-rule" },
+      ],
+    },
     { title: "Reports", items: [{ label: "Reports", to: "/reports" }] },
   ],
   cards: [
     {
       title: "Selling",
       links: [
-        { label: "Customer", planned: true },
+        { label: "Customer", to: "/m/customer" },
         { label: "Quotation", to: "/quotations" },
         { label: "Sales Order", to: "/sales-orders" },
         { label: "Sales Invoice", to: "/sales-invoices" },
         { label: "Delivery Note", to: "/delivery-notes" },
+        { label: "Blanket Order", to: "/m/blanket-order" },
         { label: "Sales Partner", to: "/m/sales-partner" },
         { label: "Sales Person", to: "/m/sales-person" },
       ],
@@ -95,12 +103,14 @@ const SELLING: WorkspaceConfig = {
       title: "Items & Pricing",
       links: [
         { label: "Item", to: "/items" },
+        { label: "Pricing Rule", to: "/m/pricing-rule" },
+        { label: "Promotional Scheme", to: "/m/promotional-scheme" },
+        { label: "Coupon Code", to: "/m/coupon-code" },
         { label: "Item Group", planned: true },
         { label: "Price List", planned: true },
         { label: "Item Price", planned: true },
-        { label: "Pricing Rule", planned: true },
-        { label: "Product Bundle", planned: true },
-        { label: "Shipping Rule", planned: true },
+        { label: "Shipping Rule", to: "/m/shipping-rule" },
+        { label: "Product Bundle", to: "/m/product-bundle" },
       ],
     },
     {

@@ -16,7 +16,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, create_model
 from pydantic import ValidationError as PydanticValidationError
-from sqlalchemy import select
+from sqlalchemy import delete as sa_delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -44,14 +44,15 @@ _PY_TYPES: dict[str, type] = {
 
 _create_models: dict[str, type[BaseModel]] = {}
 _update_models: dict[str, type[BaseModel]] = {}
+_child_models: dict[str, type[BaseModel]] = {}
 
 
 # --- generated request models ------------------------------------------------
 
 
-def _build_model(descriptor: DocTypeDescriptor, *, all_optional: bool) -> type[BaseModel]:
+def _specs_to_fields(specs: Any, *, all_optional: bool) -> dict[str, Any]:
     fields_def: dict[str, Any] = {}
-    for spec in descriptor.fields:
+    for spec in specs:
         if not spec.is_persisted:
             continue
         py = _PY_TYPES.get(spec.fieldtype, str)
@@ -59,6 +60,28 @@ def _build_model(descriptor: DocTypeDescriptor, *, all_optional: bool) -> type[B
             fields_def[spec.name] = (py, ...)
         else:
             fields_def[spec.name] = (py | None, None)
+    return fields_def
+
+
+def _child_model(descriptor: DocTypeDescriptor, child: Any) -> type[BaseModel]:
+    key = f"{descriptor.slug}.{child.field}"
+    if key not in _child_models:
+        name = f"{descriptor.name.replace(' ', '')}{child.field.title().replace('_', '')}Row"
+        _child_models[key] = create_model(
+            name, __config__=ConfigDict(extra="ignore"),
+            **_specs_to_fields(child.fields, all_optional=False),
+        )
+    return _child_models[key]
+
+
+def _build_model(descriptor: DocTypeDescriptor, *, all_optional: bool) -> type[BaseModel]:
+    fields_def = _specs_to_fields(descriptor.fields, all_optional=all_optional)
+    for child in descriptor.children:
+        row_model = _child_model(descriptor, child)
+        if all_optional:
+            fields_def[child.field] = (list[row_model] | None, None)
+        else:
+            fields_def[child.field] = (list[row_model], [])
     suffix = "Update" if all_optional else "Create"
     return create_model(
         f"{descriptor.name.replace(' ', '')}{suffix}",
@@ -129,6 +152,10 @@ def build_meta(descriptor: DocTypeDescriptor) -> dict[str, Any]:
         "list_fields": [
             {"key": n, "label": fmap[n].label if n in fmap else n} for n in descriptor.list_fields
         ],
+        "children": [
+            {"field": c.field, "label": c.label, "fields": [_field_config(f) for f in c.fields]}
+            for c in descriptor.children
+        ],
     }
 
 
@@ -166,6 +193,48 @@ async def _flush_unique(db: AsyncSession) -> None:
         raise DuplicateError("A record with these values already exists.") from exc
 
 
+async def _write_children(
+    db: AsyncSession,
+    descriptor: DocTypeDescriptor,
+    parent_id: uuid.UUID,
+    child_rows: dict[str, Any],
+    *,
+    replace: bool,
+) -> None:
+    """Create child rows for a parent. On update (replace=True) a provided list
+    wholesale-replaces existing rows; a missing (None) list is left untouched."""
+    for child in descriptor.children:
+        rows = child_rows.get(child.field)
+        if rows is None:
+            if replace:
+                continue
+            rows = []
+        if replace:
+            await db.execute(
+                sa_delete(child.model).where(getattr(child.model, child.fk_column) == parent_id)
+            )
+        for idx, row in enumerate(rows, start=1):
+            db.add(child.model(**{child.fk_column: parent_id, "idx": idx, **row}))
+    if descriptor.children:
+        await db.flush()
+
+
+async def _serialize_with_children(
+    db: AsyncSession, descriptor: DocTypeDescriptor, obj: Any
+) -> dict[str, Any]:
+    result = serialize_document(obj)
+    for child in descriptor.children:
+        rows = (
+            await db.execute(
+                select(child.model)
+                .where(getattr(child.model, child.fk_column) == obj.id)
+                .order_by(child.model.idx)
+            )
+        ).scalars().all()
+        result[child.field] = [serialize_document(r) for r in rows]
+    return result
+
+
 # --- CRUD --------------------------------------------------------------------
 
 
@@ -196,13 +265,15 @@ async def list_documents(
 async def get_document(
     db: AsyncSession, descriptor: DocTypeDescriptor, doc_id: uuid.UUID, company_id: uuid.UUID | None
 ) -> dict[str, Any]:
-    return serialize_document(await _get_obj(db, descriptor, doc_id, company_id))
+    obj = await _get_obj(db, descriptor, doc_id, company_id)
+    return await _serialize_with_children(db, descriptor, obj)
 
 
 async def create_document(
     db: AsyncSession, descriptor: DocTypeDescriptor, payload: dict[str, Any], user: CurrentUser
 ) -> dict[str, Any]:
     data = _validate(get_create_model(descriptor), payload).model_dump(exclude_unset=True)
+    child_rows = {c.field: data.pop(c.field, None) for c in descriptor.children}
     obj = descriptor.model()
     for key, value in data.items():
         setattr(obj, key, value)
@@ -218,6 +289,7 @@ async def create_document(
     await _run_hook(descriptor, "validate", db, obj, user)
     db.add(obj)
     await _flush_unique(db)
+    await _write_children(db, descriptor, obj.id, child_rows, replace=False)
     await log_audit(
         db,
         doctype=descriptor.name,
@@ -229,7 +301,7 @@ async def create_document(
     )
     await db.commit()
     await db.refresh(obj)
-    return serialize_document(obj)
+    return await _serialize_with_children(db, descriptor, obj)
 
 
 async def update_document(
@@ -243,6 +315,7 @@ async def update_document(
     before = serialize_document(obj)
     old_path = getattr(obj, "path", None) if descriptor.is_tree else None
     data = _validate(get_update_model(descriptor), payload).model_dump(exclude_unset=True)
+    child_rows = {c.field: data.pop(c.field, None) for c in descriptor.children}
     for key, value in data.items():
         setattr(obj, key, value)
     obj.modified_by = user.id
@@ -251,6 +324,7 @@ async def update_document(
     await _run_hook(descriptor, "before_update", db, obj, user)
     await _run_hook(descriptor, "validate", db, obj, user)
     await _flush_unique(db)
+    await _write_children(db, descriptor, obj.id, child_rows, replace=True)
     await log_audit(
         db,
         doctype=descriptor.name,
@@ -263,7 +337,7 @@ async def update_document(
     )
     await db.commit()
     await db.refresh(obj)
-    return serialize_document(obj)
+    return await _serialize_with_children(db, descriptor, obj)
 
 
 async def delete_document(

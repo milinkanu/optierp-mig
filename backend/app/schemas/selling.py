@@ -15,6 +15,8 @@ from app.schemas.buying import OrderCreateBase, OrderItemResponse, OrderResponse
 class QuotationCreate(OrderCreateBase):
     customer_id: uuid.UUID
     valid_till: date | None = None
+    coupon_code: str | None = None
+    shipping_rule_id: uuid.UUID | None = None
 
 
 class QuotationItemResponse(OrderItemResponse):
@@ -37,6 +39,8 @@ class SalesOrderCreate(OrderCreateBase):
     delivery_date: date | None = None
     set_warehouse_id: uuid.UUID | None = None
     quotation_id: uuid.UUID | None = None
+    coupon_code: str | None = None
+    shipping_rule_id: uuid.UUID | None = None
 
 
 class SalesOrderItemResponse(OrderItemResponse):
