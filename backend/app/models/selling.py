@@ -52,6 +52,24 @@ class Customer(Base, DocumentMixin, CompanyScopedMixin):
     notes: Mapped[str | None] = mapped_column(Text)
 
 
+class Campaign(Base, DocumentMixin, CompanyScopedMixin):
+    """Source: erpnext/crm/doctype/campaign (surfaced in the Selling workspace).
+
+    A flat, company-scoped simple master — the first DocType served entirely by
+    the metadata engine (app.registry); it has no bespoke model logic.
+    """
+
+    __tablename__ = "campaigns"
+    __table_args__ = (UniqueConstraint("company_id", "campaign_name", name="uq_campaign_name"),)
+
+    campaign_name: Mapped[str] = mapped_column(String(140), nullable=False)
+    campaign_desc: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="Active", server_default=text("'Active'")
+    )  # Active | Inactive
+    disabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+
+
 class Quotation(Base, DocumentMixin, CompanyScopedMixin, VoucherMixin, TotalsMixin):
     """Source: erpnext/selling/doctype/quotation."""
 

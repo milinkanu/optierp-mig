@@ -4,6 +4,32 @@
 
 ---
 
+## ⚙️ ARCHITECTURE UPDATE (2026-06) — MACHINE-FIRST / METADATA ENGINE
+
+> **Read this before applying Section 3 to any new module.**
+>
+> Phases 1–3 (Core, Accounts, Stock, Buying, Selling core) were built by hand-coding each
+> DocType across ~8 layers. That does not scale to ERPNext's breadth (the Selling workspace
+> alone has ~36 entries; full ERPNext has ~1000). **From here on, the migration is
+> "machine-first":** we build a small metadata engine that renders a DocType's table, list,
+> form, permissions, and naming from a single **descriptor** ("recipe card"), the same way
+> Frappe renders ~1000 DocTypes from `tabDocType`/`tabDocField`.
+>
+> - **The engine build is specified in [`metadata_engine_plan.md`](metadata_engine_plan.md).**
+> - **How to add screens via the engine is in `ENGINE_GUIDE.md`** (generated at the end of that plan).
+>
+> **New rule for every remaining DocType — classify first:**
+> 1. **Simple master** (no business logic) → write a descriptor. *No bespoke code.*
+> 2. **Master + one rule** → descriptor + a `validate`/`before_insert` hook.
+> 3. **Transaction / heavy logic** (GL posting, taxes & totals, stock moves, pricing
+>    priority, POS reconciliation, ledgers) → bespoke service **as before**, but its
+>    list/form/permissions still come from a descriptor.
+>
+> Only bucket 3 uses the full Section 3 procedure. Buckets 1–2 are configuration. See
+> Section 3's "Machine-first decision tree" and Section 6's "Phase 3.5".
+
+---
+
 ## ⚠️ PREAMBLE — READ BEFORE DOING ANYTHING
 
 You are acting as a **senior ERP migration architect** who is an expert in:
@@ -222,7 +248,29 @@ frontend/
 
 ## SECTION 3 — MODULE-BY-MODULE MIGRATION SPECIFICATION
 
-For each module below, you must:
+### Machine-first decision tree (apply to EVERY DocType)
+
+Before writing any code for a DocType, classify it (see the Architecture Update banner above):
+
+```
+Does saving a record run real logic — post to the GL, compute taxes/totals,
+move stock, evaluate pricing priority, reconcile a till, append to a ledger?
+│
+├─ NO, and it has no special rules ........ SIMPLE MASTER
+│     → Add ONE DocTypeDescriptor (recipe card) + thin model + migration + permission rows.
+│       NO bespoke schema/service/router/store/views. (e.g. Territory, Campaign, UTM Source)
+│
+├─ NO, but it has one or two rules ........ MASTER + HOOK
+│     → Descriptor as above + a validate/before_insert hook function.
+│       (e.g. Item Price "rate > 0", "parent must be a group")
+│
+└─ YES ................................... TRANSACTION / HEAVY LOGIC
+      → Use the full 8-step procedure below for the SERVICE/MODEL,
+        but still drive its list/form/permissions from a descriptor.
+        (e.g. Sales Invoice, Pricing Rule, POS Invoice, Loyalty Point Entry)
+```
+
+Only the **Transaction / Heavy Logic** bucket uses all 8 steps. For that bucket, you must:
 
 1. **Extract** the complete list of DocTypes from the source
 2. **Design** the PostgreSQL schema (CREATE TABLE statements)
@@ -232,6 +280,11 @@ For each module below, you must:
 6. **Write** the FastAPI router (CRUD + all custom endpoints matching whitelisted methods in ERPNext)
 7. **Write** the Vue views and Pinia store for that module
 8. **Write** Alembic migration
+
+For the **Simple Master** and **Master + Hook** buckets, the deliverable is just: a descriptor
+in `backend/app/registry/descriptors.py`, a thin model, an Alembic migration, permission seed
+rows, and (optionally) a hook function — per [`metadata_engine_plan.md`](metadata_engine_plan.md)
+and `ENGINE_GUIDE.md`. The generic engine supplies the schema, router, store, list, and form.
 
 Work through modules in this dependency order (later modules depend on earlier ones):
 
@@ -802,7 +855,29 @@ Deliver:
 - [ ] Selling module (Customer, Quotation, SO, Delivery Note)
 - [ ] Full purchase and sales cycle end-to-end
 
+### Phase 3.5 — Metadata Engine ("The Machine") — NEW, do before Phase 4
+
+> Detailed plan: [`metadata_engine_plan.md`](metadata_engine_plan.md). Rationale: the supply-chain
+> phase revealed that ERPNext's per-module breadth (dozens of masters per module) cannot be
+> hand-coded economically. Build the engine once; every later phase harvests its masters as
+> descriptors instead of ~8 files each.
+
+Deliver:
+- [ ] Descriptor registry + generic CRUD router + `GET /meta/{doctype}` (engine core)
+- [ ] Generic `GenericListView`/`GenericFormView` + catch-all `/m/:doctype` routes; reuse existing `FormBuilder`/`DataTable`/`useList`/`useDocument`
+- [ ] `TreeMixin` (Postgres `ltree`, consistent with the COA tree) + tree service + `GET /registry/{doctype}/tree`; retrofit Item Group/Warehouse
+- [ ] Link options endpoint + dynamic-links table (Address/Contact)
+- [ ] Hook escape hatch (validate/before_insert/after_submit) for "master + rule" DocTypes
+- [ ] Descriptor-drift test + per-master smoke/isolation tests
+- [ ] Harvest the Selling master long tail as descriptors (Territory, Customer Group, Sales Person, Campaign, Sales Partner, Monthly Distribution, Terms Template, UTM Source, Tax Template)
+- [ ] Generate `ENGINE_GUIDE.md`
+
 ### Phase 4 — Operations (Week 9–11)
+
+> **Apply the machine-first decision tree (Section 3).** For each module below, the masters
+> (Department, Designation, Lead Source, Opportunity Type, Workstation, etc.) become
+> descriptors; only the transactional documents (Salary Slip, Work Order, BOM, Timesheet…)
+> use the full 8-step bespoke procedure.
 
 Deliver:
 - [ ] Manufacturing (BOM, Work Order, Job Card, BOM explosion)
@@ -896,11 +971,21 @@ For each module you implement, structure your output as follows:
 9. **CORS**: configurable allowed origins via env var `ALLOWED_ORIGINS`
 10. **Logging**: structured JSON logging via `structlog`, include `trace_id` on every log line
 11. **Docker**: provide `Dockerfile` for backend and frontend, and a `docker-compose.yml` for local dev with PostgreSQL + Redis
+12. **Descriptor is the single source of truth** (machine-first): for any DocType served by the engine, the recipe card in `backend/app/registry/descriptors.py` is canonical. The Pydantic schema is generated from it; the bound SQLAlchemy model is validated against it by the descriptor-drift test. Do not hand-write a schema/router/store/view for a Simple-Master or Master+Hook DocType.
+13. **Don't over-generalize transactions**: GL posting, taxes & totals, `per_billed`/`per_delivered`, stock effects, pricing priority, POS reconciliation, and append-only ledgers stay in bespoke services behind the hook escape hatch — never expressed in metadata. The generic child-grid handler is only for simple value grids.
 
 ---
 
 ## BEGIN
 
-Start with **Phase 1, Module 01 (Core/Setup)**. Follow the output format from Section 8 exactly. After completing each module, pause and ask: *"Proceed to the next module?"* before continuing, to allow for review.
+**Current state (2026-06):** Phases 1–3 are complete (Core, Accounts, Stock, Buying, Selling
+core), hand-coded. The **next step is Phase 3.5 — the Metadata Engine**, specified in
+[`metadata_engine_plan.md`](metadata_engine_plan.md). After the engine ships, resume the
+remaining modules using the **machine-first decision tree** (Section 3): masters become
+descriptors, only transactions use the full 8-step procedure.
+
+> *(Historical entry point, for the original hand-coded run: "Start with Phase 1, Module 01
+> (Core/Setup). Follow the output format from Section 8 exactly. After completing each module,
+> pause and ask: 'Proceed to the next module?' before continuing, to allow for review.")*
 
 For anything not specified above that you encounter in the ERPNext codebase, apply your best judgment as a senior ERP architect, document the decision inline with a comment, and flag it in the "Assumptions Made" section of that module's output.

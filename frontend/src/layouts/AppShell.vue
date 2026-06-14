@@ -7,8 +7,20 @@ const route = useRoute();
 const router = useRouter();
 const auth = useAuthStore();
 
-// Grouped per module; Module 06+ add their sections here as they are migrated
-const navigation = [
+interface NavItem {
+  name: string;
+  route: string;
+  icon: string;
+  params?: Record<string, string>;
+}
+interface NavGroup {
+  section: string;
+  items: NavItem[];
+}
+
+// Grouped per module; Module 06+ add their sections here as they are migrated.
+// Items with `params` target the metadata-engine generic views (route "generic-list").
+const navigation: NavGroup[] = [
   {
     section: "",
     items: [{ name: "Dashboard", route: "dashboard", icon: "▦" }],
@@ -20,6 +32,7 @@ const navigation = [
       { name: "Sales Orders", route: "sales-orders", icon: "🛒" },
       { name: "Delivery Notes", route: "delivery-notes", icon: "🚚" },
       { name: "Sales Invoices", route: "sales-invoices", icon: "🧾" },
+      { name: "Campaigns", route: "generic-list", icon: "📣", params: { doctype: "campaign" } },
     ],
   },
   {
@@ -62,6 +75,15 @@ const navigation = [
   },
 ];
 
+function linkTo(item: NavItem) {
+  return item.params ? { name: item.route, params: item.params } : { name: item.route };
+}
+function isActive(item: NavItem): boolean {
+  if (route.name !== item.route) return false;
+  if (item.params?.doctype) return route.params.doctype === item.params.doctype;
+  return true;
+}
+
 async function logout(): Promise<void> {
   await auth.logout();
   void router.push({ name: "login" });
@@ -86,11 +108,11 @@ async function logout(): Promise<void> {
           </div>
           <RouterLink
             v-for="item in group.items"
-            :key="item.route"
-            :to="{ name: item.route }"
+            :key="item.name"
+            :to="linkTo(item)"
             class="flex items-center gap-3 rounded-md px-3 py-1.5 text-sm font-medium"
             :class="
-              route.name === item.route
+              isActive(item)
                 ? 'bg-primary/10 text-primary'
                 : 'text-gray-600 hover:bg-gray-100'
             "

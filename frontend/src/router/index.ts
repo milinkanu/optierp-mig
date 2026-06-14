@@ -205,6 +205,20 @@ const routes: RouteRecordRaw[] = [
         component: () => import("@/views/trade/OrderFormView.vue"),
         props: (route) => ({ kind: "sales-order", id: route.params.id as string }),
       },
+      // Metadata engine ("the machine") — generic list/form for any registered DocType.
+      // Adding a master needs NO new route here; it is reached via /m/<slug>.
+      {
+        path: "m/:doctype",
+        name: "generic-list",
+        component: () => import("@/views/generic/GenericListView.vue"),
+        props: true,
+      },
+      {
+        path: "m/:doctype/:id",
+        name: "generic-form",
+        component: () => import("@/views/generic/GenericFormView.vue"),
+        props: true,
+      },
       // Module 06+ routes register here per module
     ],
   },

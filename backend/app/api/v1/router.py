@@ -24,6 +24,7 @@ from app.api.v1.core import (
     users,
     workflows,
 )
+from app.api.v1 import registry as metadata_engine
 from app.api.v1.selling import quotations, sales_orders
 from app.api.v1.stock import (
     delivery_notes,
@@ -72,5 +73,9 @@ api_v1_router.include_router(rfqs.router)
 # Module 05 — Selling
 api_v1_router.include_router(quotations.router)
 api_v1_router.include_router(sales_orders.router)
+
+# Metadata engine ("the machine") — generic CRUD/list/form for every registered
+# DocType (app.registry). Adding a master needs no new router here.
+api_v1_router.include_router(metadata_engine.router)
 
 # Module 06+ — registered as each module is migrated
