@@ -62,7 +62,13 @@ const SELLING: WorkspaceConfig = {
         { label: "UTM Source", to: "/m/utm-source" },
       ],
     },
-    { title: "Items & Pricing", items: [{ label: "Item", to: "/items" }] },
+    {
+      title: "Items & Pricing",
+      items: [
+        { label: "Item", to: "/items" },
+        { label: "Pricing Rule", to: "/m/pricing-rule" },
+      ],
+    },
     { title: "Reports", items: [{ label: "Reports", to: "/reports" }] },
   ],
   cards: [
@@ -95,10 +101,10 @@ const SELLING: WorkspaceConfig = {
       title: "Items & Pricing",
       links: [
         { label: "Item", to: "/items" },
+        { label: "Pricing Rule", to: "/m/pricing-rule" },
         { label: "Item Group", planned: true },
         { label: "Price List", planned: true },
         { label: "Item Price", planned: true },
-        { label: "Pricing Rule", planned: true },
         { label: "Product Bundle", planned: true },
         { label: "Shipping Rule", planned: true },
       ],

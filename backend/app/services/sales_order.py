@@ -30,6 +30,7 @@ from app.services.stock_common import (
     get_warehouse,
     resolve_item_rate,
 )
+from app.services.pricing import apply_selling_pricing
 from app.services.stock_ledger import update_reserved_qty
 from app.services.taxes_and_totals import ItemRow, TaxRow, calculate_taxes_and_totals
 
@@ -136,13 +137,17 @@ async def create_sales_order(
     rates: list[Decimal] = []
     for row in payload.items:
         if row.rate is not None:
-            rates.append(row.rate)
+            base = row.rate
         else:
-            rate, _ = await resolve_item_rate(
+            base, _ = await resolve_item_rate(
                 db, items[row.item_id], buying=False, on_date=payload.posting_date,
                 currency=currency,
             )
-            rates.append(rate)
+        priced = await apply_selling_pricing(
+            db, company.id, item=items[row.item_id], customer=customer,
+            qty=row.qty, base_rate=base, on_date=payload.posting_date,
+        )
+        rates.append(priced.rate)
 
     tax_rows_in = await _load_tax_rows(db, payload, customer)
     engine_items = [ItemRow(qty=row.qty, rate=rate) for row, rate in zip(payload.items, rates)]

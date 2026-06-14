@@ -15,12 +15,14 @@ from app.models.selling import (
     Customer,
     CustomerGroup,
     MonthlyDistribution,
+    PricingRule,
     SalesPartner,
     SalesPerson,
     TermsTemplate,
     Territory,
     UTMSource,
 )
+from app.models.stock import Item, ItemGroup
 from app.registry.base import REGISTRY, DocTypeDescriptor, FieldSpec, register
 
 # Common permission bundles for selling masters.
@@ -271,6 +273,44 @@ register(
 )
 
 
+# --- Items & Pricing: Pricing Rule (Phase 3) ---------------------------------
+register(
+    DocTypeDescriptor(
+        name="Pricing Rule",
+        slug="pricing-rule",
+        model=PricingRule,
+        title_field="title",
+        naming="field:title",
+        group="Selling",
+        permission_name="Pricing Rule",
+        permissions={"Sales Manager": _SALES_MANAGER, "Sales User": _SALES_USER},
+        fields=(
+            FieldSpec("title", "Title", "Data", required=True, in_list=True, span=2),
+            FieldSpec("selling", "Applies to Selling", "Check"),
+            FieldSpec("buying", "Applies to Buying", "Check"),
+            FieldSpec("apply_on", "Apply On", "Select", options="Item\nItem Group", in_list=True),
+            FieldSpec("item_id", "Item", "Link", options="item", help="When Apply On = Item"),
+            FieldSpec("item_group_id", "Item Group", "Link", options="item-group",
+                      help="When Apply On = Item Group"),
+            FieldSpec("customer_id", "Customer", "Link", options="customer",
+                      help="Leave blank to apply to all customers"),
+            FieldSpec("min_qty", "Min Qty", "Float"),
+            FieldSpec("max_qty", "Max Qty", "Float", help="0 = no upper limit"),
+            FieldSpec("valid_from", "Valid From", "Date"),
+            FieldSpec("valid_upto", "Valid Upto", "Date"),
+            FieldSpec("rate_or_discount", "Rate or Discount", "Select",
+                      options="Discount Percentage\nDiscount Amount\nRate", in_list=True),
+            FieldSpec("discount_percentage", "Discount %", "Float"),
+            FieldSpec("discount_amount", "Discount Amount", "Float"),
+            FieldSpec("rate", "Rate", "Float"),
+            FieldSpec("priority", "Priority", "Int", help="Higher wins when several rules match"),
+            FieldSpec("disabled", "Disabled", "Check", in_list=True),
+        ),
+        list_fields=("title", "apply_on", "rate_or_discount", "disabled"),
+    )
+)
+
+
 # --- Link sources ------------------------------------------------------------
 # Lets engine Link fields target core/bespoke doctypes (not just engine masters),
 # e.g. an Address's "customer" Link resolves Customers. Maps slug -> (model,
@@ -278,6 +318,8 @@ register(
 LINK_SOURCES: dict[str, tuple[type, str, str]] = {
     "customer": (Customer, "customer_name", "Customer"),
     "supplier": (Supplier, "supplier_name", "Supplier"),
+    "item": (Item, "item_code", "Item"),
+    "item-group": (ItemGroup, "item_group_name", "Item Group"),
 }
 
 

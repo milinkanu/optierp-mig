@@ -22,6 +22,7 @@ from app.schemas.selling import QuotationCreate
 from app.services.accounts_common import get_company, get_customer, require_draft, require_submitted
 from app.services.audit import log_audit
 from app.services.pagination import paginate
+from app.services.pricing import apply_selling_pricing
 from app.services.stock_common import STOCK_NAMING_SERIES, get_items, resolve_item_rate
 from app.services.taxes_and_totals import ItemRow, TaxRow, calculate_taxes_and_totals
 
@@ -68,13 +69,17 @@ async def create_quotation(
     rates: list[Decimal] = []
     for row in payload.items:
         if row.rate is not None:
-            rates.append(row.rate)
+            base = row.rate
         else:
-            rate, _ = await resolve_item_rate(
+            base, _ = await resolve_item_rate(
                 db, items[row.item_id], buying=False, on_date=payload.posting_date,
                 currency=currency,
             )
-            rates.append(rate)
+        priced = await apply_selling_pricing(
+            db, company.id, item=items[row.item_id], customer=customer,
+            qty=row.qty, base_rate=base, on_date=payload.posting_date,
+        )
+        rates.append(priced.rate)
 
     tax_rows_in = await _load_tax_rows(db, payload, customer)
     engine_items = [ItemRow(qty=row.qty, rate=rate) for row, rate in zip(payload.items, rates)]

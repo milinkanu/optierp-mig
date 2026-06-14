@@ -13,7 +13,18 @@ import uuid
 from datetime import date
 from decimal import Decimal
 
-from sqlalchemy import Boolean, Date, ForeignKey, Index, Numeric, String, Text, UniqueConstraint, text
+from sqlalchemy import (
+    Boolean,
+    Date,
+    ForeignKey,
+    Index,
+    Integer,
+    Numeric,
+    String,
+    Text,
+    UniqueConstraint,
+    text,
+)
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -247,6 +258,48 @@ class Contact(Base, DocumentMixin, CompanyScopedMixin):
     supplier_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("suppliers.id", ondelete="SET NULL")
     )
+    disabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+
+
+class PricingRule(Base, DocumentMixin, CompanyScopedMixin):
+    """Source: erpnext/accounts/doctype/pricing_rule (Phase 3 — pricing engine).
+
+    Applies a discount or rate override on selling lines, matched by item (or
+    item group) and optionally customer, within qty/date bounds, by priority.
+    v1: customer-group / territory matching is deferred (Customer carries no
+    group/territory link yet).
+    """
+
+    __tablename__ = "pricing_rules"
+    __table_args__ = (UniqueConstraint("company_id", "title", name="uq_pricing_rule_title"),)
+
+    title: Mapped[str] = mapped_column(String(140), nullable=False)
+    selling: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"))
+    buying: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+    apply_on: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="Item", server_default=text("'Item'")
+    )  # Item | Item Group
+    item_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("items.id"))
+    item_group_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("item_groups.id")
+    )
+    customer_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("customers.id"))
+    min_qty: Mapped[Decimal] = mapped_column(Numeric(21, 6), nullable=False, default=0, server_default=text("0"))
+    max_qty: Mapped[Decimal] = mapped_column(Numeric(21, 6), nullable=False, default=0, server_default=text("0"))
+    valid_from: Mapped[date | None] = mapped_column(Date)
+    valid_upto: Mapped[date | None] = mapped_column(Date)
+    rate_or_discount: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="Discount Percentage",
+        server_default=text("'Discount Percentage'"),
+    )  # Discount Percentage | Discount Amount | Rate
+    discount_percentage: Mapped[Decimal] = mapped_column(
+        Numeric(8, 4), nullable=False, default=0, server_default=text("0")
+    )
+    discount_amount: Mapped[Decimal] = mapped_column(
+        Numeric(21, 6), nullable=False, default=0, server_default=text("0")
+    )
+    rate: Mapped[Decimal] = mapped_column(Numeric(21, 6), nullable=False, default=0, server_default=text("0"))
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default=text("0"))
     disabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
 
 
