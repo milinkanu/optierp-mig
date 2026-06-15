@@ -219,35 +219,34 @@ const routes: RouteRecordRaw[] = [
         component: () => import("@/views/generic/GenericFormView.vue"),
         props: true,
       },
+      // ERPNext-style module workspaces — rendered INSIDE the shell so the
+      // module's context-aware sidebar persists across all its pages.
+      {
+        path: "selling",
+        name: "selling-workspace",
+        component: () => import("@/views/ModuleWorkspace.vue"),
+        props: { moduleKey: "selling" },
+      },
+      {
+        path: "buying",
+        name: "buying-workspace",
+        component: () => import("@/views/ModuleWorkspace.vue"),
+        props: { moduleKey: "buying" },
+      },
+      {
+        path: "stock",
+        name: "stock-workspace",
+        component: () => import("@/views/ModuleWorkspace.vue"),
+        props: { moduleKey: "stock" },
+      },
+      {
+        path: "accounting",
+        name: "accounting-workspace",
+        component: () => import("@/views/ModuleWorkspace.vue"),
+        props: { moduleKey: "accounting" },
+      },
       // Module 06+ routes register here per module
     ],
-  },
-  // ERPNext-style module workspaces — self-contained full pages (own sidebar),
-  // so they are top-level routes, not wrapped by the AppShell layout. One shared
-  // ModuleWorkspace component, driven by the workspace config (config/workspaces.ts).
-  {
-    path: "/selling",
-    name: "selling-workspace",
-    component: () => import("@/views/ModuleWorkspace.vue"),
-    props: { moduleKey: "selling" },
-  },
-  {
-    path: "/buying",
-    name: "buying-workspace",
-    component: () => import("@/views/ModuleWorkspace.vue"),
-    props: { moduleKey: "buying" },
-  },
-  {
-    path: "/stock",
-    name: "stock-workspace",
-    component: () => import("@/views/ModuleWorkspace.vue"),
-    props: { moduleKey: "stock" },
-  },
-  {
-    path: "/accounting",
-    name: "accounting-workspace",
-    component: () => import("@/views/ModuleWorkspace.vue"),
-    props: { moduleKey: "accounting" },
   },
   { path: "/:pathMatch(.*)*", redirect: "/" },
 ];
