@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { brand } from "@/brand";
 import { WORKSPACES, type WsNavGroup } from "@/config/workspaces";
@@ -31,37 +31,65 @@ const GLOBAL_NAV: WsNavGroup[] = [
   },
 ];
 
-// Map every module's routes -> module key (from the workspace configs), so we can
-// tell which module the current page belongs to and keep that sidebar showing.
-const ROUTE_MODULE: Record<string, string> = {};
-for (const [key, cfg] of Object.entries(WORKSPACES)) {
-  ROUTE_MODULE[`/${key}`] = key;
-  for (const group of cfg.sidebar) {
-    for (const item of group.items) {
-      if (item.to !== "/" && !(item.to in ROUTE_MODULE)) ROUTE_MODULE[item.to] = key;
-    }
-  }
-}
-const MODULE_PATHS = Object.keys(ROUTE_MODULE).sort((a, b) => b.length - a.length);
+const MODULE_KEYS = Object.keys(WORKSPACES);
+const GLOBAL_PREFIXES = ["/companies", "/users", "/roles", "/settings"];
 
-function moduleForPath(path: string): string | null {
-  if (path.startsWith("/m/")) return "selling"; // engine masters are Selling-group
-  for (const p of MODULE_PATHS) {
-    if (path === p || path.startsWith(`${p}/`)) return ROUTE_MODULE[p];
-  }
-  return null;
+// Which module(s) list each route path (from the workspace configs). A path in
+// exactly one module is "owned" by it; a path in several (Item, Reports, Sales
+// Invoice, Delivery Note...) is shared.
+const ROUTE_OWNERS: Record<string, Set<string>> = {};
+function addOwner(path: string, key: string): void {
+  (ROUTE_OWNERS[path] ??= new Set()).add(key);
 }
+for (const [key, cfg] of Object.entries(WORKSPACES)) {
+  addOwner(`/${key}`, key);
+  for (const group of cfg.sidebar) {
+    for (const item of group.items) if (item.to !== "/") addOwner(item.to, key);
+  }
+}
+
+function ownersForPath(path: string): Set<string> {
+  const owners = new Set<string>();
+  for (const [p, set] of Object.entries(ROUTE_OWNERS)) {
+    if (path === p || path.startsWith(`${p}/`)) set.forEach((m) => owners.add(m));
+  }
+  return owners;
+}
+
+// Sticky module context (mirrors ERPNext workspaces): entering a module keeps its
+// sidebar as you move through its pages — including shared pages like Item — until
+// you go Home, open a Setup page, or open a page owned by ONE other module.
+const currentModule = ref<string | null>(null);
+
+function updateModule(path: string): void {
+  const root = MODULE_KEYS.find((k) => path === `/${k}` || path.startsWith(`/${k}/`));
+  if (root) {
+    currentModule.value = root;
+  } else if (path === "/" || GLOBAL_PREFIXES.some((p) => path === p || path.startsWith(`${p}/`))) {
+    currentModule.value = null;
+  } else if (path.startsWith("/m/")) {
+    currentModule.value = currentModule.value ?? "selling"; // engine masters are Selling-group
+  } else {
+    const owners = ownersForPath(path);
+    if (owners.size === 1) {
+      currentModule.value = [...owners][0]; // belongs to exactly one module -> switch
+    } else if (currentModule.value === null) {
+      currentModule.value = owners.size ? [...owners][0] : null; // deep-link guess
+    }
+    // shared page with an existing context -> keep it
+  }
+}
+watch(() => route.path, updateModule, { immediate: true });
 
 const isHome = computed(() => route.name === "dashboard"); // launcher: full-page, no sidebar
-const activeModule = computed(() => moduleForPath(route.path));
 const sidebarGroups = computed<WsNavGroup[]>(() =>
-  activeModule.value ? WORKSPACES[activeModule.value].sidebar : GLOBAL_NAV,
+  currentModule.value ? WORKSPACES[currentModule.value].sidebar : GLOBAL_NAV,
 );
 const headerTitle = computed(() =>
-  activeModule.value ? WORKSPACES[activeModule.value].title : brand.value.product_name,
+  currentModule.value ? WORKSPACES[currentModule.value].title : brand.value.product_name,
 );
 const headerSubtitle = computed(() =>
-  activeModule.value ? brand.value.product_name : brand.value.tagline,
+  currentModule.value ? brand.value.product_name : brand.value.tagline,
 );
 
 function isActive(to: string): boolean {
