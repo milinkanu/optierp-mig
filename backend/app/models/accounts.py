@@ -505,6 +505,18 @@ class SalesInvoice(Base, DocumentMixin, CompanyScopedMixin, InvoiceMixin):
     debit_to_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("accounts.id"), nullable=False)
     return_against_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("sales_invoices.id"))
     update_stock: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+    po_no: Mapped[str | None] = mapped_column(String(140))  # customer's PO reference
+    po_date: Mapped[date | None] = mapped_column(Date)
+    terms: Mapped[str | None] = mapped_column(Text)
+    customer_address_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("addresses.id", ondelete="SET NULL")
+    )
+    shipping_address_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("addresses.id", ondelete="SET NULL")
+    )
+    contact_person_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("contacts.id", ondelete="SET NULL")
+    )
 
     items: Mapped[list["SalesInvoiceItem"]] = relationship(
         back_populates="invoice", cascade="all, delete-orphan", order_by="SalesInvoiceItem.idx"
@@ -569,6 +581,16 @@ class PurchaseInvoice(Base, DocumentMixin, CompanyScopedMixin, InvoiceMixin):
     )
     bill_no: Mapped[str | None] = mapped_column(String(140))  # supplier's invoice number
     bill_date: Mapped[date | None] = mapped_column(Date)
+    terms: Mapped[str | None] = mapped_column(Text)
+    supplier_address_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("addresses.id", ondelete="SET NULL")
+    )
+    shipping_address_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("addresses.id", ondelete="SET NULL")
+    )
+    contact_person_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("contacts.id", ondelete="SET NULL")
+    )
 
     items: Mapped[list["PurchaseInvoiceItem"]] = relationship(
         back_populates="invoice", cascade="all, delete-orphan", order_by="PurchaseInvoiceItem.idx"

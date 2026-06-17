@@ -38,13 +38,13 @@ This plan connects them into one machine and fills the missing 30%.
 | Cross-module reuse (Buying, HR, CRM masters) | re-pay the cost every module | the same machine serves all modules |
 
 **Metadata-readiness today: 4/10.** The generic foundations exist and are good quality
-([`FormBuilder.vue`](frontend/src/components/shared/FormBuilder.vue),
-[`useList.ts`](frontend/src/composables/useList.ts),
-[`useDocument.ts`](frontend/src/composables/useDocument.ts),
-[`DataTable.vue`](frontend/src/components/shared/DataTable.vue),
-[`naming.py`](backend/app/core/naming.py),
-[`permissions.py`](backend/app/core/permissions.py),
-[`pagination.py`](backend/app/services/pagination.py)). They are just wired **per screen**
+([`FormBuilder.vue`](../frontend/src/components/shared/FormBuilder.vue),
+[`useList.ts`](../frontend/src/composables/useList.ts),
+[`useDocument.ts`](../frontend/src/composables/useDocument.ts),
+[`DataTable.vue`](../frontend/src/components/shared/DataTable.vue),
+[`naming.py`](../backend/app/core/naming.py),
+[`permissions.py`](../backend/app/core/permissions.py),
+[`pagination.py`](../backend/app/services/pagination.py)). They are just wired **per screen**
 instead of **from one registry**. This plan changes that.
 
 ---
@@ -176,19 +176,19 @@ than it returns. Each decision below states the choice, why, and what we rejecte
 - **Choice:** the generic `TreeMixin` stores a materialized path in an `ltree` column, plus a
   `parent_id` edge and `is_group`.
 - **Why — critical refinement over ERPNext:** the repo **already uses `ltree`** for the Chart
-  of Accounts and Cost Center trees (see [`README.md`](README.md)). Reusing it keeps one tree
+  of Accounts and Cost Center trees (see [`README.md`](../README.md)). Reusing it keeps one tree
   mechanism across the whole app, gives indexed subtree/ancestor lookups, and **avoids the
   concurrency hazard of nested-set** (`lft`/`rgt` need careful row-locking and can corrupt
   under parallel inserts).
 - **Rejected — nested-set:** what Frappe uses, but it adds a rebalancing/locking risk we'd
   rather not own when a simpler path-based option is already in the stack.
 - **Cleanup bonus:** Item Group and Warehouse currently fake trees with a bare parent FK
-  ([`stock_masters.py`](backend/app/services/stock_masters.py)); they get retrofitted onto
+  ([`stock_masters.py`](../backend/app/services/stock_masters.py)); they get retrofitted onto
   the real tree service.
 
 ### Decision 5 — Reuse existing engines for naming, permissions, scoping, audit
-- Naming → [`naming.py`](backend/app/core/naming.py) (`get_next_name` to consume,
-  `peek_next_name` to preview). Permissions → [`permissions.py`](backend/app/core/permissions.py)
+- Naming → [`naming.py`](../backend/app/core/naming.py) (`get_next_name` to consume,
+  `peek_next_name` to preview). Permissions → [`permissions.py`](../backend/app/core/permissions.py)
   (`require_permission`). Tenant isolation → existing per-request `app.company_id` GUC + RLS,
   with the router **also** filtering `company_id` explicitly (defense in depth). Audit →
   `services/audit.py` `log_audit`. **No new versions of these.**
@@ -215,15 +215,15 @@ than it returns. Each decision below states the choice, why, and what we rejecte
 
 | Capability | Status | Where |
 |---|---|---|
-| Schema-driven form renderer | ✅ reuse (small additive change) | [`FormBuilder.vue`](frontend/src/components/shared/FormBuilder.vue) — add `link` (remote-options) + `textarea` types |
-| Generic table renderer | ✅ reuse as-is | [`DataTable.vue`](frontend/src/components/shared/DataTable.vue) |
-| Paginated list composable | ✅ reuse as-is | [`useList.ts`](frontend/src/composables/useList.ts) |
-| Single-document CRUD composable | ✅ reuse as-is | [`useDocument.ts`](frontend/src/composables/useDocument.ts) |
-| Naming series engine | ✅ reuse as-is | [`naming.py`](backend/app/core/naming.py) |
-| RBAC permission engine | ✅ reuse as-is | [`permissions.py`](backend/app/core/permissions.py) |
-| Pagination helper | ✅ reuse as-is | [`pagination.py`](backend/app/services/pagination.py) |
+| Schema-driven form renderer | ✅ reuse (small additive change) | [`FormBuilder.vue`](../frontend/src/components/shared/FormBuilder.vue) — add `link` (remote-options) + `textarea` types |
+| Generic table renderer | ✅ reuse as-is | [`DataTable.vue`](../frontend/src/components/shared/DataTable.vue) |
+| Paginated list composable | ✅ reuse as-is | [`useList.ts`](../frontend/src/composables/useList.ts) |
+| Single-document CRUD composable | ✅ reuse as-is | [`useDocument.ts`](../frontend/src/composables/useDocument.ts) |
+| Naming series engine | ✅ reuse as-is | [`naming.py`](../backend/app/core/naming.py) |
+| RBAC permission engine | ✅ reuse as-is | [`permissions.py`](../backend/app/core/permissions.py) |
+| Pagination helper | ✅ reuse as-is | [`pagination.py`](../backend/app/services/pagination.py) |
 | Audit logging | ✅ reuse as-is | `services/audit.py` |
-| Base columns / tenant scoping mixins | ✅ reuse as-is | [`base.py`](backend/app/models/base.py) (`DocumentMixin`, `CompanyScopedMixin`) |
+| Base columns / tenant scoping mixins | ✅ reuse as-is | [`base.py`](../backend/app/models/base.py) (`DocumentMixin`, `CompanyScopedMixin`) |
 | **Descriptor registry** | 🔨 build | new `backend/app/registry/descriptors.py` |
 | **Generic CRUD router** | 🔨 build | new `backend/app/api/v1/registry.py` |
 | **`/meta/{doctype}` endpoint** | 🔨 build | in `registry.py` |
@@ -231,7 +231,7 @@ than it returns. Each decision below states the choice, why, and what we rejecte
 | **`TreeMixin` (ltree) + tree service + `/tree`** | 🔨 build | new `backend/app/models/tree.py`, `backend/app/services/tree.py` |
 | **Dynamic-links table + attach/detach** | 🔨 build | new model + endpoint (Phase 2) |
 | **Generic Vue views + catch-all routes** | 🔨 build | new `GenericListView.vue`, `GenericFormView.vue`, `TreeView.vue` |
-| **Registry-driven sidebar** | 🔨 build | extend [`AppShell.vue`](frontend/src/layouts/AppShell.vue) |
+| **Registry-driven sidebar** | 🔨 build | extend [`AppShell.vue`](../frontend/src/layouts/AppShell.vue) |
 
 ---
 
@@ -261,7 +261,7 @@ trivial flat master.
    fetching `/meta/{doctype}` once, then driving `useList`/`useDocument` against
    `/registry/{doctype}` and rendering with the unchanged `DataTable`/`FormBuilder`.
 5. `router/index.ts`: add catch-all routes `/m/:doctype` and `/m/:doctype/:id`.
-6. Mount the registry router once in [`router.py`](backend/app/api/v1/router.py).
+6. Mount the registry router once in [`router.py`](../backend/app/api/v1/router.py).
 7. **Pilot:** ship **Campaign** (pure flat master) end-to-end as the smoke test.
 
 **Acceptance criteria**
@@ -387,7 +387,7 @@ This is why the engine pays for itself across **every** remaining module, not ju
 > Create a new file `ENGINE_GUIDE.md` at the repo root with **exactly** the content in the
 > block below. (It documents the machine as actually built; if any names changed during
 > implementation, update them here to match the real code before saving.) Then add a one-line
-> link to it from [`README.md`](README.md) under "Architecture."
+> link to it from [`README.md`](../README.md) under "Architecture."
 
 ~~~~markdown
 # Using the OptiReach Metadata Engine ("The Machine")

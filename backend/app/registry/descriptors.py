@@ -8,7 +8,7 @@ rest of the simple-master long tail here.
 from __future__ import annotations
 
 from app.models.accounts import Account
-from app.models.buying import Supplier
+from app.models.buying import Supplier, SupplierGroup
 from app.models.selling import (
     Address,
     BlanketOrder,
@@ -32,11 +32,22 @@ from app.models.selling import (
     UTMSource,
 )
 from app.models.stock import Item, ItemGroup
-from app.registry.base import REGISTRY, ChildSpec, DocTypeDescriptor, FieldSpec, register
+from app.registry.base import (
+    REGISTRY,
+    ChildSpec,
+    DocTypeDescriptor,
+    FieldSpec,
+    LinkSpec,
+    register,
+)
 
 # Common permission bundles for selling masters.
 _SALES_MANAGER = ("read", "write", "create", "delete", "report")
 _SALES_USER = ("read", "report")
+
+# Buying masters (Purchase Manager / User roles exist in scripts.seed).
+_PURCHASE_MANAGER = ("read", "write", "create", "delete", "report")
+_PURCHASE_USER_RW = ("read", "write", "create", "report")
 
 
 # --- Selling: Campaign (Phase 0 pilot) ---------------------------------------
@@ -305,6 +316,67 @@ register(
             FieldSpec("notes", "Notes", "Text", span=2),
         ),
         list_fields=("customer_name", "customer_type", "disabled"),
+        links=(
+            LinkSpec("address", "customer_id", "Addresses"),
+            LinkSpec("contact", "customer_id", "Contacts"),
+        ),
+    )
+)
+
+
+# --- Buying: Supplier Group + Supplier (Phase BA) ----------------------------
+register(
+    DocTypeDescriptor(
+        name="Supplier Group",
+        slug="supplier-group",
+        model=SupplierGroup,
+        title_field="supplier_group_name",
+        naming="field:supplier_group_name",
+        group="Buying",
+        permission_name="Supplier Group",
+        permissions={"Purchase Manager": _PURCHASE_MANAGER, "Purchase User": _PURCHASE_USER_RW},
+        is_tree=True,
+        parent_field="parent_supplier_group_id",
+        fields=(
+            FieldSpec(
+                "supplier_group_name", "Supplier Group Name", "Data",
+                required=True, in_list=True, span=2,
+            ),
+            FieldSpec("parent_supplier_group_id", "Parent Supplier Group", "Link", options="supplier-group"),
+            FieldSpec("is_group", "Is Group", "Check", in_list=True),
+            FieldSpec("disabled", "Disabled", "Check", in_list=True),
+        ),
+        list_fields=("supplier_group_name", "is_group", "disabled"),
+    )
+)
+
+register(
+    DocTypeDescriptor(
+        name="Supplier",
+        slug="supplier",
+        model=Supplier,
+        title_field="supplier_name",
+        naming="field:supplier_name",
+        group="Buying",
+        permission_name="Supplier",
+        permissions={"Purchase Manager": _PURCHASE_MANAGER, "Purchase User": _PURCHASE_USER_RW},
+        fields=(
+            FieldSpec("supplier_name", "Supplier Name", "Data", required=True, in_list=True, span=2),
+            FieldSpec("supplier_type", "Supplier Type", "Select", options="Company\nIndividual\nPartnership", in_list=True),
+            FieldSpec("supplier_group_id", "Supplier Group", "Link", options="supplier-group", in_list=True),
+            FieldSpec("tax_id", "Tax ID", "Data"),
+            FieldSpec("default_currency", "Billing Currency", "Data"),
+            FieldSpec("on_hold", "Block Supplier", "Check"),
+            FieldSpec("hold_type", "Hold Type", "Select", options="All\nInvoices\nPayments", depends_on="on_hold"),
+            FieldSpec("release_date", "Release Date", "Date", depends_on="on_hold"),
+            FieldSpec("disabled", "Disabled", "Check", in_list=True),
+            FieldSpec("notes", "Notes", "Text", span=2),
+        ),
+        list_fields=("supplier_name", "supplier_group_id", "supplier_type", "disabled"),
+        links=(
+            LinkSpec("address", "supplier_id", "Addresses"),
+            LinkSpec("contact", "supplier_id", "Contacts"),
+        ),
     )
 )
 
@@ -508,7 +580,7 @@ register(
 # title_field, permission_name). Engine descriptors are resolved first.
 LINK_SOURCES: dict[str, tuple[type, str, str]] = {
     "customer": (Customer, "customer_name", "Customer"),
-    "supplier": (Supplier, "supplier_name", "Supplier"),
+    # "supplier" is now a registered descriptor (resolved first) — no LINK_SOURCES entry needed.
     "item": (Item, "item_code", "Item"),
     "item-group": (ItemGroup, "item_group_name", "Item Group"),
     "account": (Account, "account_name", "Account"),

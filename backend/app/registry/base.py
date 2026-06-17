@@ -9,7 +9,7 @@ its list, form, permissions and naming with no per-doctype code.
 
 Design note: descriptors are typed Python objects (version-controlled,
 IDE-checked) rather than DB rows (cf. Frappe's ``tabDocType``/``tabDocField``).
-See ``metadata_engine_plan.md`` §3, Decision 1.
+See ``docs/metadata_engine_plan.md`` §3, Decision 1.
 """
 
 from __future__ import annotations
@@ -76,6 +76,23 @@ class ChildSpec:
 
 
 @dataclass(frozen=True)
+class LinkSpec:
+    """A related DocType that points back to this one via a FK field.
+
+    Unlike a ChildSpec (rows owned by, and saved with, the parent), a link target
+    is a *standalone* DocType with its own CRUD/permissions — e.g. a Customer's
+    Addresses and Contacts. The generic form renders each link as an inline
+    managed list (add/edit/delete) filtered to the parent, mirroring ERPNext's
+    Address & Contact section. ``link_field`` is the FK on the target pointing at
+    this parent's id; the inline editor sets it automatically.
+    """
+
+    doctype: str  # slug of the (registered) linked DocType
+    link_field: str  # FK field on the linked DocType -> this parent's id
+    label: str
+
+
+@dataclass(frozen=True)
 class DocTypeDescriptor:
     """The recipe card for one DocType served by the generic engine."""
 
@@ -91,6 +108,7 @@ class DocTypeDescriptor:
     is_tree: bool = False
     parent_field: str | None = None
     children: Sequence[ChildSpec] = ()
+    links: Sequence[LinkSpec] = ()  # related standalone DocTypes (Address, Contact, …)
     hooks: Mapping[str, Callable] = field(default_factory=dict)
     # role -> actions; seeded as RolePermission rows by scripts.seed
     permissions: Mapping[str, Sequence[str]] = field(default_factory=dict)

@@ -25,8 +25,8 @@ services:
     build: ./backend
     environment:
       SECRET_KEY: "local-dev-secret-key-change-in-production-0001"
-      DATABASE_URL: "postgresql+asyncpg://erp_app:erp_app_dev_pw@postgres:5432/erp"
-      MIGRATIONS_DATABASE_URL: "postgresql+asyncpg://erp_owner:erp_owner_dev_pw@postgres:5432/erp"
+      DATABASE_URL: "postgresql+asyncpg://erp_app:milin@postgres:5432/erp"
+      MIGRATIONS_DATABASE_URL: "postgresql+asyncpg://erp_owner:milin@postgres:5432/erp"
       REDIS_URL: "redis://redis:6379/0"
       ALLOWED_ORIGINS: "http://localhost:5173,http://localhost:8080"
       REFRESH_COOKIE_SECURE: "false"

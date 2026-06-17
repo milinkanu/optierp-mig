@@ -12,6 +12,7 @@ from app.registry.base import (
     ChildSpec,
     DocTypeDescriptor,
     FieldSpec,
+    LinkSpec,
     get_descriptor,
     register,
 )
@@ -26,6 +27,7 @@ __all__ = [
     "ChildSpec",
     "DocTypeDescriptor",
     "FieldSpec",
+    "LinkSpec",
     "get_descriptor",
     "register",
     "resolve_link_source",

@@ -127,13 +127,13 @@ freight charge. Every step is just data the user set up — no code per deal.
 
 ### Child tables
 - **Declare a grid:** add a `ChildSpec(field, label, model, fk_column, fields)` to a
-  descriptor's `children` in [backend/app/registry/descriptors.py](backend/app/registry/descriptors.py).
-  (`ChildSpec` is defined in [backend/app/registry/base.py](backend/app/registry/base.py).)
-- **Engine handling:** [backend/app/services/registry.py](backend/app/services/registry.py)
+  descriptor's `children` in [backend/app/registry/descriptors.py](../backend/app/registry/descriptors.py).
+  (`ChildSpec` is defined in [backend/app/registry/base.py](../backend/app/registry/base.py).)
+- **Engine handling:** [backend/app/services/registry.py](../backend/app/services/registry.py)
   generates the child row model, writes rows (FK + `idx`) on create, wholesale-replaces
   them on update, includes them in `GET`/responses, and exposes the grid config via `/meta`.
-- **Frontend grid:** [frontend/src/components/shared/ChildGrid.vue](frontend/src/components/shared/ChildGrid.vue),
-  rendered by [frontend/src/views/generic/GenericFormView.vue](frontend/src/views/generic/GenericFormView.vue).
+- **Frontend grid:** [frontend/src/components/shared/ChildGrid.vue](../frontend/src/components/shared/ChildGrid.vue),
+  rendered by [frontend/src/views/generic/GenericFormView.vue](../frontend/src/views/generic/GenericFormView.vue).
 - Child rows have **no separate permissions/RLS** — they're reached only through the
   parent (which is company-checked), matching the existing invoice/order line tables.
 
@@ -142,14 +142,14 @@ One small service per tool, plus a single entry point wired into the order servi
 
 | Tool | Service |
 |---|---|
-| Pricing Rule + Promotional Scheme combine here (entry point) | [backend/app/services/pricing.py](backend/app/services/pricing.py) → `apply_selling_pricing` |
-| Promotional Scheme tiers | [backend/app/services/promotion.py](backend/app/services/promotion.py) |
-| Coupon Code | [backend/app/services/coupon.py](backend/app/services/coupon.py) |
-| Shipping Rule | [backend/app/services/shipping.py](backend/app/services/shipping.py) |
-| Blanket Order (contract rate) | [backend/app/services/blanket.py](backend/app/services/blanket.py) |
+| Pricing Rule + Promotional Scheme combine here (entry point) | [backend/app/services/pricing.py](../backend/app/services/pricing.py) → `apply_selling_pricing` |
+| Promotional Scheme tiers | [backend/app/services/promotion.py](../backend/app/services/promotion.py) |
+| Coupon Code | [backend/app/services/coupon.py](../backend/app/services/coupon.py) |
+| Shipping Rule | [backend/app/services/shipping.py](../backend/app/services/shipping.py) |
+| Blanket Order (contract rate) | [backend/app/services/blanket.py](../backend/app/services/blanket.py) |
 
-- **Wired into** the line loops of [backend/app/services/quotation.py](backend/app/services/quotation.py)
-  and [backend/app/services/sales_order.py](backend/app/services/sales_order.py): base rate
+- **Wired into** the line loops of [backend/app/services/quotation.py](../backend/app/services/quotation.py)
+  and [backend/app/services/sales_order.py](../backend/app/services/sales_order.py): base rate
   (blanket → item price) → `apply_selling_pricing` → coupon (order discount) → shipping (charge row).
 - The match/calc helpers (`rule_matches`, `apply_rule`, `best_tier_discount`,
   `coupon_invalid_reason`, `shipping_amount_for`) are **pure functions**, unit-tested in
@@ -159,5 +159,5 @@ One small service per tool, plus a single entry point wired into the order servi
 
 ### The screens (DocTypes)
 Pricing Rule, Coupon Code, Shipping Rule, Product Bundle, Blanket Order, Promotional
-Scheme — models in [backend/app/models/selling.py](backend/app/models/selling.py),
+Scheme — models in [backend/app/models/selling.py](../backend/app/models/selling.py),
 migrations `0011`–`0017`, all reachable from the **Selling workspace → Items & Pricing**.

@@ -5,7 +5,7 @@ A clean re-architecture of ERPNext's business logic onto a modern stack — **Fa
 (UUID keys, ltree trees, row-level-security multi-tenancy). No Frappe dependency anywhere.
 
 Migration source: [frappe/erpnext](https://github.com/frappe/erpnext) (`develop` branch),
-per `erpnext_migration_prompt.md`.
+per `docs/erpnext_migration_prompt.md`.
 
 ## Status
 
@@ -131,11 +131,11 @@ TEST_DATABASE_URL=postgresql+asyncpg://erp_owner:erp_owner_dev_pw@localhost:5432
   hardcoded product strings in code
 - `backend/app/registry/` — the **metadata engine** ("the machine"): one descriptor renders a
   master DocType's table, list, form, permissions and naming with no per-doctype code. See
-  [`ENGINE_GUIDE.md`](ENGINE_GUIDE.md) to add a master, and [`metadata_engine_plan.md`](metadata_engine_plan.md)
+  [`ENGINE_GUIDE.md`](docs/ENGINE_GUIDE.md) to add a master, and [`metadata_engine_plan.md`](docs/metadata_engine_plan.md)
   for the design. Engine-served masters live at `/m/<slug>`.
 - **Child tables & the pricing engine** — line-item grids (Product Bundle, Blanket Order,
   Promotional Scheme) and the selling pricing pipeline (Pricing Rule, Coupon Code, Shipping Rule,
-  Blanket Order, Promotional Scheme). Plain-language guide: [`PRICING_AND_CHILD_TABLES.md`](PRICING_AND_CHILD_TABLES.md).
+  Blanket Order, Promotional Scheme). Plain-language guide: [`PRICING_AND_CHILD_TABLES.md`](docs/PRICING_AND_CHILD_TABLES.md).
 
 ### Multi-tenancy
 

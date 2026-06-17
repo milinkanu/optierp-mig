@@ -14,6 +14,12 @@ export interface MetaChild {
   fields: FieldConfig[];
 }
 
+export interface MetaLink {
+  doctype: string; // slug of the linked DocType (e.g. "address")
+  link_field: string; // FK on the linked DocType pointing back to this record
+  label: string;
+}
+
 export interface DocTypeMeta {
   name: string;
   slug: string;
@@ -26,4 +32,5 @@ export interface DocTypeMeta {
   fields: FieldConfig[];
   list_fields: MetaColumn[];
   children?: MetaChild[];
+  links?: MetaLink[];
 }

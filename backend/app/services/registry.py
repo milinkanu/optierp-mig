@@ -156,6 +156,10 @@ def build_meta(descriptor: DocTypeDescriptor) -> dict[str, Any]:
             {"field": c.field, "label": c.label, "fields": [_field_config(f) for f in c.fields]}
             for c in descriptor.children
         ],
+        "links": [
+            {"doctype": link.doctype, "link_field": link.link_field, "label": link.label}
+            for link in descriptor.links
+        ],
     }
 
 

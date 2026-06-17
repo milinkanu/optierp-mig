@@ -94,7 +94,9 @@ async def create_delivery_note(
         require_stock_item(item)
         warehouse_id = row.warehouse_id or payload.set_warehouse_id or item.default_warehouse_id
         if warehouse_id is None:
-            raise ValidationError(f"Item row {idx}: warehouse is required", field="items")
+            raise ValidationError(
+                f"Item row {idx} ('{item.item_code}'): warehouse is required", field="items"
+            )
         await get_warehouse(db, warehouse_id, company.id)
         so_item = so_items.get(row.sales_order_item_id)
         rate = row.rate

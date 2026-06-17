@@ -13,6 +13,7 @@ export interface OrderItemIn {
   delivery_date?: string | null;
   material_request_item_id?: string | null;
   quotation_item_id?: string | null;
+  _rowKey?: string; // client-only editable-grid key (ignored by the backend)
 }
 
 export interface OrderListItem {
@@ -81,6 +82,14 @@ export interface OrderDetail extends DocumentMeta {
   delivery_date?: string | null;
   per_delivered?: string;
   quotation_id?: string | null;
+  order_type?: string;
+  po_no?: string | null;
+  po_date?: string | null;
+  terms?: string | null;
+  customer_address_id?: string | null;
+  supplier_address_id?: string | null;
+  shipping_address_id?: string | null;
+  contact_person_id?: string | null;
   warnings?: string[];
   // shared
   per_billed?: string;

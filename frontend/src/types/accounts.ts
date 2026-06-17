@@ -30,6 +30,7 @@ export interface InvoiceItemIn {
   delivery_note_item_id?: string | null;
   purchase_order_item_id?: string | null;
   purchase_receipt_item_id?: string | null;
+  _rowKey?: string; // client-only editable-grid key (ignored by the backend)
 }
 
 export interface TaxRowIn {
@@ -71,6 +72,13 @@ export interface InvoiceDetail extends DocumentMeta {
   outstanding_amount: string;
   status: string;
   is_return: boolean;
+  po_no?: string | null;
+  po_date?: string | null;
+  terms?: string | null;
+  customer_address_id?: string | null;
+  supplier_address_id?: string | null;
+  shipping_address_id?: string | null;
+  contact_person_id?: string | null;
   remarks: string | null;
   items: Array<{
     idx: number;
@@ -99,6 +107,7 @@ export interface PurchaseInvoiceDetail extends InvoiceDetail {
   supplier_id: string;
   supplier_name: string | null;
   bill_no: string | null;
+  bill_date: string | null;
 }
 
 export interface JournalEntryRowIn {

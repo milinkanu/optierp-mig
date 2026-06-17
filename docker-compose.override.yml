@@ -1,0 +1,15 @@
+# Dev override (auto-merged by `docker compose`): mount the backend source into
+# the container and run uvicorn with --reload so code edits take effect without
+# rebuilding the image. WATCHFILES_FORCE_POLLING is required because file-change
+# events don't cross the Docker Desktop / Windows filesystem boundary reliably.
+# PYTHONPATH=/app makes `import app` resolve to the mounted live source (which
+# shadows the pip-installed copy baked into the image).
+services:
+  backend:
+    volumes:
+      - ./backend/app:/app/app
+      - ./backend/migrations:/app/migrations
+    environment:
+      PYTHONPATH: /app
+      WATCHFILES_FORCE_POLLING: "true"
+    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"

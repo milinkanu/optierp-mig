@@ -77,7 +77,7 @@ class TreeMixin:
     """Nested-master tree using a Postgres ``ltree`` materialised path.
 
     Consistent with the Chart of Accounts / Cost Center trees (see
-    ``metadata_engine_plan.md`` §3, Decision 4). The self-referential parent FK
+    ``docs/metadata_engine_plan.md`` §3, Decision 4). The self-referential parent FK
     is declared on each model (its column name varies, e.g.
     ``parent_territory_id``); the descriptor's ``parent_field`` points at it, and
     ``app.services.tree`` maintains ``path`` on create / move. ``is_group`` marks

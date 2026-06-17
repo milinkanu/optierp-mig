@@ -131,6 +131,11 @@ const routes: RouteRecordRaw[] = [
         props: { kind: "purchase-receipt" },
       },
       {
+        path: "purchase-receipts/new",
+        name: "purchase-receipt-new",
+        component: () => import("@/views/trade/PurchaseReceiptFormView.vue"),
+      },
+      {
         path: "purchase-receipts/:id",
         name: "purchase-receipt-detail",
         component: () => import("@/views/trade/FulfilmentView.vue"),
@@ -141,6 +146,11 @@ const routes: RouteRecordRaw[] = [
         name: "delivery-notes",
         component: () => import("@/views/trade/FulfilmentView.vue"),
         props: { kind: "delivery-note" },
+      },
+      {
+        path: "delivery-notes/new",
+        name: "delivery-note-new",
+        component: () => import("@/views/trade/DeliveryNoteFormView.vue"),
       },
       {
         path: "delivery-notes/:id",

@@ -83,14 +83,14 @@ onMounted(async () => {
   <div>
     <div class="mb-4 flex items-center justify-between">
       <div>
-        <h1 class="text-xl font-semibold text-gray-900">Items</h1>
-        <p class="text-sm text-gray-500">{{ total }} total</p>
+        <h1 class="text-xl font-semibold text-gray-900">Products &amp; Services</h1>
+        <p class="text-sm text-gray-500">{{ total }} total (goods &amp; services)</p>
       </div>
       <div class="flex items-center gap-3">
         <input v-model="search" class="form-input w-56" placeholder="Search code or name…"
                @keyup.enter="applySearch" />
         <button class="btn-primary" @click="showForm = !showForm">
-          {{ showForm ? "Close" : "New Item" }}
+          {{ showForm ? "Close" : "New Product / Service" }}
         </button>
       </div>
     </div>
@@ -134,14 +134,14 @@ onMounted(async () => {
         <div class="flex items-end pb-2">
           <label class="flex items-center gap-2 text-sm text-gray-700">
             <input v-model="form.is_stock_item" type="checkbox" class="rounded border-gray-300" />
-            Maintain stock for this item
+            Maintain stock (uncheck for a service)
           </label>
         </div>
       </div>
       <p v-if="error" class="mt-2 text-sm text-red-600">{{ error.detail }}</p>
       <div class="mt-4 flex justify-end">
         <button type="submit" class="btn-primary" :disabled="saving || !form.item_code">
-          {{ saving ? "Saving…" : "Create Item" }}
+          {{ saving ? "Saving…" : "Create Product / Service" }}
         </button>
       </div>
     </form>

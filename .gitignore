@@ -21,3 +21,7 @@ reference/
 .vscode/
 Thumbs.db
 .DS_Store
+
+# Local artifacts — screenshots & Playwright MCP browser session
+/*.png
+.playwright-mcp/

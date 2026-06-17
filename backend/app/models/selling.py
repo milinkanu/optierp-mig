@@ -476,6 +476,19 @@ class Quotation(Base, DocumentMixin, CompanyScopedMixin, VoucherMixin, TotalsMix
         UUID(as_uuid=True), ForeignKey("customers.id"), nullable=False
     )
     valid_till: Mapped[date | None] = mapped_column(Date)
+    order_type: Mapped[str] = mapped_column(
+        String(30), nullable=False, default="Sales", server_default=text("'Sales'")
+    )  # Sales | Maintenance | Shopping Cart
+    terms: Mapped[str | None] = mapped_column(Text)
+    customer_address_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("addresses.id", ondelete="SET NULL")
+    )
+    shipping_address_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("addresses.id", ondelete="SET NULL")
+    )
+    contact_person_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("contacts.id", ondelete="SET NULL")
+    )
     status: Mapped[str] = mapped_column(
         String(30), nullable=False, default="Draft", server_default=text("'Draft'")
     )  # Draft | Open | Ordered | Cancelled | Expired
@@ -534,6 +547,9 @@ class SalesOrder(Base, DocumentMixin, CompanyScopedMixin, VoucherMixin, TotalsMi
         UUID(as_uuid=True), ForeignKey("customers.id"), nullable=False
     )
     delivery_date: Mapped[date | None] = mapped_column(Date)
+    order_type: Mapped[str] = mapped_column(
+        String(30), nullable=False, default="Sales", server_default=text("'Sales'")
+    )  # Sales | Maintenance | Shopping Cart
     set_warehouse_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("warehouses.id", use_alter=True, name="fk_so_warehouse")
     )
@@ -548,6 +564,18 @@ class SalesOrder(Base, DocumentMixin, CompanyScopedMixin, VoucherMixin, TotalsMi
     )
     per_billed: Mapped[Decimal] = mapped_column(
         Numeric(8, 3), nullable=False, default=0, server_default=text("0")
+    )
+    po_no: Mapped[str | None] = mapped_column(String(140))  # customer's PO reference
+    po_date: Mapped[date | None] = mapped_column(Date)
+    terms: Mapped[str | None] = mapped_column(Text)
+    customer_address_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("addresses.id", ondelete="SET NULL")
+    )
+    shipping_address_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("addresses.id", ondelete="SET NULL")
+    )
+    contact_person_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("contacts.id", ondelete="SET NULL")
     )
 
     items: Mapped[list["SalesOrderItem"]] = relationship(

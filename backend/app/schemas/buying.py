@@ -85,6 +85,10 @@ class OrderResponseBase(DocumentMeta):
 class PurchaseOrderCreate(OrderCreateBase):
     supplier_id: uuid.UUID
     schedule_date: date | None = None
+    terms: str | None = None
+    supplier_address_id: uuid.UUID | None = None
+    shipping_address_id: uuid.UUID | None = None
+    contact_person_id: uuid.UUID | None = None
     set_warehouse_id: uuid.UUID | None = None
     supplier_quotation_id: uuid.UUID | None = None
 
@@ -100,6 +104,10 @@ class PurchaseOrderResponse(OrderResponseBase):
     supplier_id: uuid.UUID
     supplier_name: str | None = None
     schedule_date: date | None
+    terms: str | None = None
+    supplier_address_id: uuid.UUID | None = None
+    shipping_address_id: uuid.UUID | None = None
+    contact_person_id: uuid.UUID | None = None
     set_warehouse_id: uuid.UUID | None
     supplier_quotation_id: uuid.UUID | None
     per_received: Decimal

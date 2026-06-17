@@ -1,0 +1,16 @@
+{
+  "name": "optierp-e2e",
+  "private": true,
+  "type": "module",
+  "description": "Playwright browser harness for OptiERP — captures and inspects the running app's real UI (hybrid clone workflow). Isolated from the app build.",
+  "scripts": {
+    "capture": "node capture.mjs",
+    "erpnext:login": "node erpnext-login.mjs",
+    "erpnext:capture": "node erpnext-capture.mjs",
+    "test": "playwright test",
+    "codegen": "playwright codegen http://localhost:5173"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.49.0"
+  }
+}

@@ -66,7 +66,7 @@ const SELLING: WorkspaceConfig = {
     {
       title: "Items & Pricing",
       items: [
-        { label: "Item", to: "/items" },
+        { label: "Products & Services", to: "/items" },
         { label: "Pricing Rule", to: "/m/pricing-rule" },
       ],
     },
@@ -102,7 +102,7 @@ const SELLING: WorkspaceConfig = {
     {
       title: "Items & Pricing",
       links: [
-        { label: "Item", to: "/items" },
+        { label: "Products & Services", to: "/items" },
         { label: "Pricing Rule", to: "/m/pricing-rule" },
         { label: "Promotional Scheme", to: "/m/promotional-scheme" },
         { label: "Coupon Code", to: "/m/coupon-code" },
@@ -158,10 +158,12 @@ const BUYING: WorkspaceConfig = {
     {
       title: "Setup",
       items: [
+        { label: "Supplier", to: "/m/supplier" },
+        { label: "Supplier Group", to: "/m/supplier-group" },
         { label: "Address", to: "/m/address" },
         { label: "Contact", to: "/m/contact" },
         { label: "Terms Template", to: "/m/terms-template" },
-        { label: "Item", to: "/items" },
+        { label: "Products & Services", to: "/items" },
       ],
     },
     { title: "Reports", items: [{ label: "Reports", to: "/reports" }] },
@@ -170,7 +172,7 @@ const BUYING: WorkspaceConfig = {
     {
       title: "Buying",
       links: [
-        { label: "Supplier", planned: true },
+        { label: "Supplier", to: "/m/supplier" },
         { label: "Material Request", to: "/material-requests" },
         { label: "Request for Quotation", to: "/sourcing" },
         { label: "Supplier Quotation", to: "/sourcing" },
@@ -182,8 +184,8 @@ const BUYING: WorkspaceConfig = {
     {
       title: "Setup",
       links: [
-        { label: "Supplier", planned: true },
-        { label: "Supplier Group", planned: true },
+        { label: "Supplier", to: "/m/supplier" },
+        { label: "Supplier Group", to: "/m/supplier-group" },
         { label: "Address", to: "/m/address" },
         { label: "Contact", to: "/m/contact" },
         { label: "Terms Template", to: "/m/terms-template" },
@@ -192,7 +194,7 @@ const BUYING: WorkspaceConfig = {
     {
       title: "Items & Pricing",
       links: [
-        { label: "Item", to: "/items" },
+        { label: "Products & Services", to: "/items" },
         { label: "Item Group", planned: true },
         { label: "Price List", planned: true },
         { label: "Item Price", planned: true },
@@ -227,7 +229,7 @@ const STOCK: WorkspaceConfig = {
       items: [
         { label: "Home", to: "/", icon: "⌂" },
         { label: "Dashboard", to: "/stock", icon: "▦" },
-        { label: "Item", to: "/items", icon: "🏷" },
+        { label: "Products & Services", to: "/items", icon: "🏷" },
         { label: "Warehouse", to: "/warehouses", icon: "🏬" },
         { label: "Stock Entry", to: "/stock-entries", icon: "↔" },
         { label: "Material Request", to: "/material-requests", icon: "📋" },
@@ -252,7 +254,7 @@ const STOCK: WorkspaceConfig = {
     {
       title: "Items & Pricing",
       links: [
-        { label: "Item", to: "/items" },
+        { label: "Products & Services", to: "/items" },
         { label: "Item Group", planned: true },
         { label: "Price List", planned: true },
         { label: "Item Price", planned: true },

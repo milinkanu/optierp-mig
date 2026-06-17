@@ -179,10 +179,15 @@ watch(
             {{ kind === "delivery-note" ? "Sales Orders" : "Purchase Orders" }}
           </p>
         </div>
-        <select v-model="statusFilter" class="form-input w-40" @change="applyStatus">
-          <option value="">All statuses</option>
-          <option v-for="s in STATUSES" :key="s" :value="s">{{ s }}</option>
-        </select>
+        <div class="flex items-center gap-3">
+          <select v-model="statusFilter" class="form-input w-40" @change="applyStatus">
+            <option value="">All statuses</option>
+            <option v-for="s in STATUSES" :key="s" :value="s">{{ s }}</option>
+          </select>
+          <button class="btn-primary" @click="router.push(`${cfg.endpoint}/new`)">
+            New {{ cfg.title.slice(0, -1) }}
+          </button>
+        </div>
       </div>
       <DataTable
         :columns="columns"

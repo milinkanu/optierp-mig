@@ -2,14 +2,29 @@
 import { computed, onMounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import StatusBadge from "@/components/shared/StatusBadge.vue";
+import ItemsGrid, { type GridColumn } from "@/components/shared/ItemsGrid.vue";
+import GetItemsFrom, { type ItemSource } from "@/components/shared/GetItemsFrom.vue";
+import DateField from "@/components/shared/DateField.vue";
+import TaxesCharges from "@/components/shared/TaxesCharges.vue";
+import AdditionalDiscount, { type DiscountModel } from "@/components/shared/AdditionalDiscount.vue";
+import CurrencySection, { type CurrencyModel } from "@/components/shared/CurrencySection.vue";
+import DocumentTotals from "@/components/shared/DocumentTotals.vue";
+import DataEntry, { type ImportedRow } from "@/components/shared/DataEntry.vue";
+import AddressContactTab, { type AddressContactModel } from "@/components/shared/AddressContactTab.vue";
+import AddressContactSummary from "@/components/shared/AddressContactSummary.vue";
+import { rowKey } from "@/utils/rowKey";
 import { useAccountsStore } from "@/stores/accounts";
+import { useStockStore } from "@/stores/stock";
+import { useCoreStore } from "@/stores/core";
+import { useAuthStore } from "@/stores/auth";
 import { useCompanyCurrency } from "@/composables/useCompanyCurrency";
 import { api, openPdf } from "@/api/client";
-import { formatCurrency, formatDate, formatNumber, formatQty } from "@/utils/format";
-import type { ErrorEnvelope } from "@/types/core";
+import { formatCurrency, formatDate, formatQty } from "@/utils/format";
+import type { ErrorEnvelope, ListResponse } from "@/types/core";
 import type {
   InvoiceDetail,
   InvoiceItemIn,
+  InvoiceListItem,
   PurchaseInvoiceDetail,
   SalesInvoiceDetail,
   TaxRowIn,
@@ -19,6 +34,9 @@ const props = defineProps<{ kind: "sales" | "purchase"; id?: string }>();
 const router = useRouter();
 const route = useRoute();
 const store = useAccountsStore();
+const stock = useStockStore();
+const core = useCoreStore();
+const auth = useAuthStore();
 const companyCurrency = useCompanyCurrency();
 
 const endpoint = computed(() => (props.kind === "sales" ? "/sales-invoices" : "/purchase-invoices"));
@@ -47,17 +65,126 @@ const postingDate = ref(new Date().toISOString().slice(0, 10));
 const dueDate = ref("");
 const items = ref<InvoiceItemIn[]>([{ item_name: "", qty: 1, rate: 0 }]);
 const taxes = ref<TaxRowIn[]>([]);
+const discount = ref<DiscountModel>({
+  apply_discount_on: "Grand Total",
+  additional_discount_percentage: 0,
+  discount_amount: 0,
+});
+const currencyModel = ref<CurrencyModel>({ currency: "", conversion_rate: 1 });
+const isReturn = ref(false);
+const returnAgainstId = ref("");
+const returnables = ref<InvoiceListItem[]>([]);
+const terms = ref("");
+const poNo = ref("");
+const poDate = ref("");
+const billNo = ref(""); // supplier's invoice number (purchase)
+const billDate = ref("");
+const addressContact = ref<AddressContactModel>({
+  billing_address_id: null,
+  shipping_address_id: null,
+  contact_person_id: null,
+});
 
-const previewNet = computed(() =>
-  items.value.reduce((sum, i) => sum + (Number(i.qty) || 0) * (Number(i.rate) || 0), 0),
-);
-
-function addItem(): void {
-  items.value.push({ item_name: "", qty: 1, rate: 0 });
+// Map the generic A&C picks to the party-specific billing-address column.
+function acPayload(party: "customer" | "supplier"): Record<string, unknown> {
+  return {
+    [`${party}_address_id`]: addressContact.value.billing_address_id,
+    shipping_address_id: addressContact.value.shipping_address_id,
+    contact_person_id: addressContact.value.contact_person_id,
+  };
 }
 
-function addTax(): void {
-  taxes.value.push({ charge_type: "On Net Total", rate: 0, account_head_id: "" });
+const companyName = computed(
+  () => core.companies.find((c) => c.id === auth.companyId)?.company_name ?? "",
+);
+
+const activeTab = ref("Details");
+const tabs = ["Details", "Payments", "Address & Contact", "Terms", "More Info"];
+
+const META = {
+  sales: { module: "Selling", title: "Sales Invoice", series: "SINV-.YY.-", newRoute: "sales-invoice-new" },
+  purchase: { module: "Buying", title: "Purchase Invoice", series: "PINV-.YY.-", newRoute: "purchase-invoice-new" },
+} as const;
+const meta = computed(() => META[props.kind]);
+
+const gridColumns: GridColumn[] = [
+  { key: "item_id", label: "Item / Service", type: "item", required: true },
+  { key: "qty", label: "Quantity", type: "number", align: "right", required: true },
+  { key: "uom", label: "UOM", type: "text" },
+  { key: "rate", label: "Rate", type: "number", align: "right", required: true },
+];
+
+const sources = computed<ItemSource[]>(() =>
+  props.kind === "sales"
+    ? [
+        { label: "Sales Order", param: "sales_order_id", endpoint: "/sales-orders" },
+        { label: "Delivery Note", param: "delivery_note_id", endpoint: "/delivery-notes" },
+      ]
+    : [
+        { label: "Purchase Order", param: "purchase_order_id", endpoint: "/purchase-orders" },
+        { label: "Purchase Receipt", param: "purchase_receipt_id", endpoint: "/purchase-receipts" },
+      ],
+);
+
+const gridRows = computed<Record<string, unknown>[]>({
+  get: () => items.value as unknown as Record<string, unknown>[],
+  set: (rows) => {
+    items.value = rows as unknown as InvoiceItemIn[];
+  },
+});
+
+function newItemRow(): Record<string, unknown> {
+  return { item_id: "", item_name: "", qty: 1, rate: 0, uom: "", _rowKey: rowKey() };
+}
+
+async function onItemChange(index: number): Promise<void> {
+  const row = items.value[index];
+  if (!row?.item_id) return;
+  const item = stock.items.find((it) => it.id === row.item_id);
+  let rate = row.rate;
+  try {
+    const resolved = await stock.resolveItemRate(row.item_id, props.kind === "purchase");
+    rate = Number(resolved.rate);
+  } catch {
+    // best-effort; backend re-resolves on save
+  }
+  items.value = items.value.map((r, i) =>
+    i === index
+      ? {
+          ...r,
+          item_name: item?.item_name ?? r.item_name,
+          item_code: item?.item_code ?? r.item_code,
+          uom: item?.stock_uom ?? r.uom,
+          rate,
+        }
+      : r,
+  );
+}
+
+function onGetItems(param: string, id: string): void {
+  void router.push({ name: meta.value.newRoute, query: { [param]: id } });
+}
+
+// Import (CSV / Tally) → append rows. Invoices allow free-text lines, so an
+// unknown item_code still imports (as its own name).
+function applyImportedRows(rows: ImportedRow[]): void {
+  const additions: InvoiceItemIn[] = [];
+  for (const r of rows) {
+    const item = stock.items.find((it) => it.item_code.toLowerCase() === r.item_code.toLowerCase());
+    additions.push({
+      item_id: item?.id ?? null,
+      item_code: item?.item_code ?? r.item_code,
+      item_name: item?.item_name ?? r.item_code,
+      qty: Number(r.qty) || 1,
+      rate: r.rate != null ? Number(r.rate) : Number(item?.standard_rate ?? 0) || 0,
+      uom: item?.stock_uom,
+      _rowKey: rowKey(),
+    });
+  }
+  // keep real or in-progress lines; drop only blank placeholders
+  if (additions.length) {
+    items.value = [...items.value.filter((i) => i.item_name || i.item_id || Number(i.rate)), ...additions];
+  }
 }
 
 async function quickCreateParty(): Promise<void> {
@@ -107,9 +234,27 @@ async function save(): Promise<void> {
       due_date: dueDate.value || null,
       items: items.value.filter((i) => i.item_name),
       taxes: taxes.value.filter((t) => t.account_head_id),
+      currency: currencyModel.value.currency || null,
+      conversion_rate: currencyModel.value.conversion_rate || 1,
+      apply_discount_on: discount.value.apply_discount_on,
+      additional_discount_percentage: discount.value.additional_discount_percentage || 0,
+      discount_amount: discount.value.discount_amount || 0,
+      is_return: isReturn.value,
+      return_against_id: isReturn.value ? returnAgainstId.value || null : null,
     };
-    if (props.kind === "sales") payload.customer_id = partyId.value;
-    else payload.supplier_id = partyId.value;
+    if (props.kind === "sales") {
+      payload.customer_id = partyId.value;
+      payload.po_no = poNo.value || null;
+      payload.po_date = poDate.value || null;
+      payload.terms = terms.value || null;
+      Object.assign(payload, acPayload("customer"));
+    } else {
+      payload.supplier_id = partyId.value;
+      payload.terms = terms.value || null;
+      payload.bill_no = billNo.value || null;
+      payload.bill_date = billDate.value || null;
+      Object.assign(payload, acPayload("supplier"));
+    }
     const resp = await api.post<InvoiceDetail>(endpoint.value, payload);
     void router.push(`${endpoint.value}/${resp.data.id}`);
   } catch (e) {
@@ -207,28 +352,57 @@ async function prefillFromSource(): Promise<void> {
         rate: Number(row.rate),
         item_id: row.item_id,
         ...source.link(row),
+        _rowKey: rowKey(),
       }));
     return;
+  }
+}
+
+// On a purchase Debit Note, seed the Supplier Invoice No./Date from the invoice
+// being returned against (the dropdown options only carry id+name, so we fetch
+// the original by id). ERPNext copies bill_no (no_copy=0) but deliberately
+// leaves bill_date blank (no_copy=1); we seed both by request. Per-field empty
+// guard so anything the user already typed is never overwritten.
+async function onReturnAgainstChange(): Promise<void> {
+  if (props.kind !== "purchase" || !returnAgainstId.value) return;
+  if (billNo.value && billDate.value) return; // nothing to fill
+  try {
+    const orig = (
+      await api.get<PurchaseInvoiceDetail>(`${endpoint.value}/${returnAgainstId.value}`)
+    ).data;
+    if (!billNo.value) billNo.value = orig.bill_no ?? "";
+    if (!billDate.value) billDate.value = orig.bill_date ?? "";
+  } catch {
+    // non-fatal — the user can still type the fields manually
   }
 }
 
 onMounted(async () => {
   await Promise.all([
     store.fetchAccounts(),
+    stock.fetchItems(),
     props.kind === "sales" ? store.fetchCustomers() : store.fetchSuppliers(),
   ]);
   if (props.id) {
     doc.value = (await api.get<InvoiceDetail>(`${endpoint.value}/${props.id}`)).data;
   } else {
     await prefillFromSource();
+    try {
+      const resp = await api.get<ListResponse<InvoiceListItem>>(endpoint.value, {
+        params: { page_size: 50 },
+      });
+      returnables.value = resp.data.items.filter((i) => i.docstatus === 1);
+    } catch {
+      // non-fatal — the return-against picker just stays empty
+    }
   }
 });
 </script>
 
 <template>
-  <div class="max-w-5xl">
+  <div>
     <!-- existing invoice: detail + actions -->
-    <div v-if="doc">
+    <div v-if="doc" class="max-w-5xl">
       <div class="mb-4 flex items-center justify-between">
         <div>
           <h1 class="text-xl font-semibold text-gray-900">{{ docPartyName || doc.name }}</h1>
@@ -269,10 +443,26 @@ onMounted(async () => {
           <div class="text-xs font-semibold uppercase tracking-wide text-gray-400">Supplier Invoice</div>
           <div class="mt-0.5 text-sm text-gray-900">{{ docBillNo }}</div>
         </div>
+        <div v-if="doc.po_no">
+          <div class="text-xs font-semibold uppercase tracking-wide text-gray-400">Customer PO</div>
+          <div class="mt-0.5 text-sm text-gray-900">
+            {{ doc.po_no }}<span v-if="doc.po_date" class="text-gray-500"> · {{ formatDate(doc.po_date) }}</span>
+          </div>
+        </div>
         <div v-if="doc.remarks" class="col-span-2 md:col-span-3">
           <div class="text-xs font-semibold uppercase tracking-wide text-gray-400">Remarks</div>
           <div class="mt-0.5 text-sm text-gray-700">{{ doc.remarks }}</div>
         </div>
+        <div v-if="doc.terms" class="col-span-2 md:col-span-4">
+          <div class="text-xs font-semibold uppercase tracking-wide text-gray-400">Terms</div>
+          <div class="mt-0.5 whitespace-pre-line text-sm text-gray-700">{{ doc.terms }}</div>
+        </div>
+        <AddressContactSummary
+          :billing-address-id="doc.customer_address_id ?? doc.supplier_address_id"
+          :shipping-address-id="doc.shipping_address_id"
+          :contact-person-id="doc.contact_person_id"
+          class="col-span-2 md:col-span-4"
+        />
       </div>
 
       <div class="rounded-lg border border-gray-200 bg-white shadow-sm">
@@ -314,104 +504,187 @@ onMounted(async () => {
       </div>
     </div>
 
-    <!-- new invoice form -->
-    <form v-else class="space-y-4" @submit.prevent="save">
-      <h1 class="text-xl font-semibold text-gray-900">
-        New {{ kind === "sales" ? "Sales" : "Purchase" }} Invoice
-      </h1>
-      <div class="grid grid-cols-3 gap-4 rounded-lg border border-gray-200 bg-white p-5 shadow-sm">
-        <div>
-          <label class="form-label">{{ partyLabel }}*</label>
-          <select v-model="partyId" required class="form-input">
-            <option value="" disabled>Select…</option>
-            <option v-for="p in parties" :key="p.id" :value="p.id">
-              {{ "customer_name" in p ? p.customer_name : p.supplier_name }}
-            </option>
-          </select>
-          <div class="mt-1 flex gap-2">
-            <input v-model="newPartyName" class="form-input" :placeholder="`Quick add ${partyLabel.toLowerCase()}…`" />
-            <button type="button" class="btn-secondary" @click="quickCreateParty">Add</button>
+    <!-- new invoice form (ERPNext-style) -->
+    <form v-else @submit.prevent="save">
+      <!-- top bar: breadcrumb + actions -->
+      <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <nav class="flex flex-wrap items-center gap-2 text-sm text-gray-500">
+          <span>{{ meta.module }}</span><span class="text-gray-300">/</span>
+          <span>{{ meta.title }}</span><span class="text-gray-300">/</span>
+          <span class="font-semibold text-gray-900">New {{ meta.title }}</span>
+          <span class="ml-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">
+            Not Saved
+          </span>
+        </nav>
+        <div class="flex items-center gap-2">
+          <GetItemsFrom :sources="sources" @select="onGetItems" />
+          <button type="submit" class="btn-primary" :disabled="saving || !partyId">
+            {{ saving ? "Saving…" : "Save" }}
+          </button>
+        </div>
+      </div>
+
+      <!-- tabs -->
+      <div class="mb-6 border-b border-gray-200">
+        <nav class="flex gap-6">
+          <button
+            v-for="tab in tabs"
+            :key="tab"
+            type="button"
+            class="-mb-px border-b-2 px-1 pb-2 text-sm font-medium"
+            :class="activeTab === tab ? 'border-primary text-primary' : 'border-transparent text-gray-500 hover:text-gray-700'"
+            @click="activeTab = tab"
+          >
+            {{ tab }}
+          </button>
+        </nav>
+      </div>
+
+      <div v-show="activeTab === 'Details'" class="space-y-8">
+        <!-- header fields -->
+        <div class="grid grid-cols-1 gap-x-8 gap-y-4 md:grid-cols-3">
+          <div>
+            <label class="form-label">Series</label>
+            <div class="form-input bg-gray-50 text-gray-600">{{ meta.series }}</div>
+          </div>
+          <div>
+            <label class="form-label">Posting Date <span class="text-red-500">*</span></label>
+            <DateField v-model="postingDate" required />
+          </div>
+          <div>
+            <label class="form-label">Payment Due Date</label>
+            <DateField v-model="dueDate" />
+          </div>
+          <div>
+            <label class="form-label">{{ partyLabel }} <span class="text-red-500">*</span></label>
+            <select v-model="partyId" required class="form-input">
+              <option value="" disabled>Select…</option>
+              <option v-for="p in parties" :key="p.id" :value="p.id">
+                {{ "customer_name" in p ? p.customer_name : p.supplier_name }}
+              </option>
+            </select>
+            <div class="mt-1 flex gap-2">
+              <input v-model="newPartyName" class="form-input" :placeholder="`Quick add ${partyLabel.toLowerCase()}…`" />
+              <button type="button" class="btn-secondary" @click="quickCreateParty">Add</button>
+            </div>
+          </div>
+          <div>
+            <label class="form-label">Company</label>
+            <div class="form-input bg-gray-50 text-gray-600">{{ companyName || "—" }}</div>
+          </div>
+          <div class="flex items-end pb-2">
+            <label class="flex items-center gap-2 text-sm text-gray-700">
+              <input v-model="isReturn" type="checkbox" class="rounded border-gray-300" />
+              Is Return ({{ kind === "sales" ? "Credit Note" : "Debit Note" }})
+            </label>
+          </div>
+          <div v-if="isReturn">
+            <label class="form-label">Return Against</label>
+            <select v-model="returnAgainstId" class="form-input" @change="onReturnAgainstChange">
+              <option value="">Select original invoice…</option>
+              <option v-for="inv in returnables" :key="inv.id" :value="inv.id">
+                {{ inv.name }}<template v-if="inv.customer_name || inv.supplier_name"> — {{ inv.customer_name ?? inv.supplier_name }}</template>
+              </option>
+            </select>
+          </div>
+          <div v-if="kind === 'sales'">
+            <label class="form-label">Customer's PO No.</label>
+            <input v-model="poNo" class="form-input" placeholder="Customer PO reference" />
+          </div>
+          <div v-if="kind === 'sales'">
+            <label class="form-label">Customer's PO Date</label>
+            <DateField v-model="poDate" />
+          </div>
+          <div v-if="kind === 'purchase'">
+            <label class="form-label">Supplier Invoice No.</label>
+            <input v-model="billNo" class="form-input" placeholder="Supplier's invoice number" />
+          </div>
+          <div v-if="kind === 'purchase'">
+            <label class="form-label">Supplier Invoice Date</label>
+            <DateField v-model="billDate" />
           </div>
         </div>
-        <div>
-          <label class="form-label">Posting Date*</label>
-          <input v-model="postingDate" type="date" required class="form-input" />
-        </div>
-        <div>
-          <label class="form-label">Due Date</label>
-          <input v-model="dueDate" type="date" class="form-input" />
-        </div>
-      </div>
 
-      <div class="rounded-lg border border-gray-200 bg-white p-5 shadow-sm">
-        <div class="mb-2 flex items-center justify-between">
-          <h2 class="text-sm font-semibold text-gray-900">Items</h2>
-          <button type="button" class="btn-secondary" @click="addItem">Add Row</button>
-        </div>
-        <div v-for="(item, i) in items" :key="i" class="mb-2 grid grid-cols-12 gap-2">
-          <input v-model="item.item_name" placeholder="Item name" class="form-input col-span-6" />
-          <input v-model.number="item.qty" type="number" step="any" min="0" placeholder="Qty" class="form-input col-span-2" />
-          <input v-model.number="item.rate" type="number" step="any" min="0" placeholder="Rate" class="form-input col-span-2" />
-          <div class="col-span-2 flex items-center justify-end pr-2 text-sm text-gray-600">
-            {{ formatNumber((item.qty || 0) * (item.rate || 0)) }}
+        <!-- items -->
+        <div>
+          <div class="mb-2 flex items-center justify-between">
+            <h2 class="text-sm font-semibold text-gray-900">Items &amp; Services</h2>
+            <DataEntry @import="applyImportedRows" />
           </div>
+          <ItemsGrid
+            v-model="gridRows"
+            :columns="gridColumns"
+            :item-options="stock.itemOptions"
+            :currency="currencyModel.currency || companyCurrency"
+            :new-row="newItemRow"
+            @item-change="onItemChange"
+          />
         </div>
-        <p class="text-right text-sm font-medium text-gray-700">Net: {{ formatNumber(previewNet) }}</p>
-      </div>
 
-      <div class="rounded-lg border border-gray-200 bg-white p-5 shadow-sm">
-        <div class="mb-2 flex items-center justify-between">
-          <h2 class="text-sm font-semibold text-gray-900">Taxes &amp; Charges</h2>
-          <button type="button" class="btn-secondary" @click="addTax">Add Tax</button>
-        </div>
-        <div v-for="(tax, i) in taxes" :key="i" class="mb-2 grid grid-cols-12 gap-2">
-          <select v-model="tax.charge_type" class="form-input col-span-3">
-            <option>On Net Total</option>
-            <option>On Previous Row Total</option>
-            <option>On Previous Row Amount</option>
-            <option>Actual</option>
-            <option>On Item Quantity</option>
-          </select>
-          <input
-            v-if="tax.charge_type === 'Actual'"
-            v-model.number="tax.tax_amount"
-            type="number"
-            step="any"
-            min="0"
-            placeholder="Amount"
-            class="form-input col-span-2"
-          />
-          <input
-            v-else
-            v-model.number="tax.rate"
-            type="number"
-            step="any"
-            placeholder="Rate %"
-            class="form-input col-span-2"
-          />
-          <select v-model="tax.account_head_id" class="form-input col-span-5">
-            <option value="" disabled>Tax account…</option>
-            <option v-for="opt in store.accountOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
-          </select>
-          <input
-            v-if="tax.charge_type.startsWith('On Previous')"
-            v-model.number="tax.row_id"
-            type="number"
-            min="1"
-            placeholder="Row #"
-            class="form-input col-span-2"
-          />
+        <!-- currency -->
+        <CurrencySection v-model="currencyModel" :company-currency="companyCurrency" />
+
+        <!-- taxes & charges -->
+        <TaxesCharges v-model="taxes" :account-options="store.accountOptions" />
+
+        <!-- additional discount -->
+        <AdditionalDiscount v-model="discount" />
+
+        <!-- totals -->
+        <DocumentTotals
+          :items="items"
+          :taxes="taxes"
+          :discount="discount"
+          :currency="currencyModel.currency || companyCurrency"
+        />
+
+        <p v-if="error" class="text-sm text-red-600">
+          {{ error.detail }}<span v-if="error.field" class="text-gray-400"> ({{ error.field }})</span>
+        </p>
+        <div class="flex justify-end">
+          <button type="button" class="btn-secondary" @click="router.back()">Cancel</button>
         </div>
       </div>
 
-      <p v-if="error" class="text-sm text-red-600">
-        {{ error.detail }}<span v-if="error.field" class="text-gray-400"> ({{ error.field }})</span>
-      </p>
-      <div class="flex justify-end gap-3">
-        <button type="button" class="btn-secondary" @click="router.back()">Cancel</button>
-        <button type="submit" class="btn-primary" :disabled="saving || !partyId">
-          {{ saving ? "Saving…" : "Save Draft" }}
-        </button>
+      <div v-show="activeTab === 'Payments'" class="space-y-4 rounded-lg border border-gray-200 bg-white p-6 text-sm">
+        <label class="flex items-center gap-2 text-gray-400">
+          <input type="checkbox" disabled class="rounded border-gray-300" />
+          Include Payment (POS) — coming soon
+        </label>
+        <p class="text-gray-600">
+          For a standard invoice, record the payment after saving: open the submitted invoice and use
+          <span class="font-medium text-gray-800">Receive Payment</span>, which creates a Payment Entry
+          allocated against it. Point-of-sale payment capture on the invoice itself isn’t enabled yet.
+        </p>
+      </div>
+      <div v-show="activeTab === 'Address & Contact'">
+        <AddressContactTab
+          v-model="addressContact"
+          :party-id="partyId"
+          :party-kind="kind === 'sales' ? 'customer' : 'supplier'"
+        />
+      </div>
+      <div v-show="activeTab === 'Terms'" class="space-y-4">
+        <div>
+          <label class="form-label">Terms and Conditions</label>
+          <textarea
+            v-model="terms"
+            rows="6"
+            class="form-input"
+            placeholder="Payment terms, delivery terms, warranty…"
+          ></textarea>
+        </div>
+      </div>
+      <div
+        v-show="
+          activeTab !== 'Details' &&
+          activeTab !== 'Payments' &&
+          activeTab !== 'Terms' &&
+          activeTab !== 'Address & Contact'
+        "
+        class="rounded-lg border border-dashed border-gray-300 bg-white p-10 text-center text-sm text-gray-400"
+      >
+        This section isn’t built yet.
       </div>
     </form>
   </div>

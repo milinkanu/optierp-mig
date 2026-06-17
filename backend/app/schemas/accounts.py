@@ -249,6 +249,12 @@ class InvoiceCreateBase(BaseModel):
 class SalesInvoiceCreate(InvoiceCreateBase):
     customer_id: uuid.UUID
     debit_to_id: uuid.UUID | None = None  # defaults from customer/company
+    po_no: str | None = None
+    po_date: date | None = None
+    terms: str | None = None
+    customer_address_id: uuid.UUID | None = None
+    shipping_address_id: uuid.UUID | None = None
+    contact_person_id: uuid.UUID | None = None
 
 
 class PurchaseInvoiceCreate(InvoiceCreateBase):
@@ -256,6 +262,10 @@ class PurchaseInvoiceCreate(InvoiceCreateBase):
     credit_to_id: uuid.UUID | None = None
     bill_no: str | None = None
     bill_date: date | None = None
+    terms: str | None = None
+    supplier_address_id: uuid.UUID | None = None
+    shipping_address_id: uuid.UUID | None = None
+    contact_person_id: uuid.UUID | None = None
 
 
 class InvoiceItemResponse(DocumentMeta):
@@ -321,6 +331,12 @@ class SalesInvoiceResponse(InvoiceResponseBase):
     customer_name: str | None = None
     debit_to_id: uuid.UUID
     return_against_id: uuid.UUID | None
+    po_no: str | None = None
+    po_date: date | None = None
+    terms: str | None = None
+    customer_address_id: uuid.UUID | None = None
+    shipping_address_id: uuid.UUID | None = None
+    contact_person_id: uuid.UUID | None = None
 
 
 class PurchaseInvoiceResponse(InvoiceResponseBase):
@@ -330,6 +346,10 @@ class PurchaseInvoiceResponse(InvoiceResponseBase):
     return_against_id: uuid.UUID | None
     bill_no: str | None
     bill_date: date | None
+    terms: str | None = None
+    supplier_address_id: uuid.UUID | None = None
+    shipping_address_id: uuid.UUID | None = None
+    contact_person_id: uuid.UUID | None = None
 
 
 class InvoiceListItem(ORMModel):

@@ -17,7 +17,7 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.accounts import InvoiceItemMixin, TaxRowMixin, TotalsMixin, VoucherMixin
-from app.models.base import Base, CompanyScopedMixin, DocumentMixin
+from app.models.base import Base, CompanyScopedMixin, DocumentMixin, TreeMixin
 
 PO_STATUSES = (
     "Draft", "To Receive and Bill", "To Receive", "To Bill", "Completed", "Cancelled", "Closed",
@@ -46,8 +46,34 @@ class Supplier(Base, DocumentMixin, CompanyScopedMixin):
     tax_category_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("tax_categories.id", use_alter=True, name="fk_supplier_tax_category")
     )
+    supplier_group_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("supplier_groups.id", use_alter=True, name="fk_supplier_group", ondelete="SET NULL"),
+    )
+    on_hold: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+    hold_type: Mapped[str | None] = mapped_column(String(20))  # All | Invoices | Payments
+    release_date: Mapped[date | None] = mapped_column(Date)
     disabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
     notes: Mapped[str | None] = mapped_column(Text)
+
+
+class SupplierGroup(Base, DocumentMixin, CompanyScopedMixin, TreeMixin):
+    """Source: erpnext/setup/doctype/supplier_group (nested tree)."""
+
+    __tablename__ = "supplier_groups"
+    __table_args__ = (
+        UniqueConstraint(
+            "company_id", "supplier_group_name", "parent_supplier_group_id",
+            name="uq_supplier_group_name",
+        ),
+        Index("ix_supplier_groups_path", "path", postgresql_using="gist"),
+    )
+
+    supplier_group_name: Mapped[str] = mapped_column(String(140), nullable=False)
+    parent_supplier_group_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("supplier_groups.id", ondelete="RESTRICT")
+    )
+    disabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
 
 
 class RequestForQuotation(Base, DocumentMixin, CompanyScopedMixin, VoucherMixin):
@@ -197,6 +223,16 @@ class PurchaseOrder(Base, DocumentMixin, CompanyScopedMixin, VoucherMixin, Total
     )
     per_billed: Mapped[Decimal] = mapped_column(
         Numeric(8, 3), nullable=False, default=0, server_default=text("0")
+    )
+    terms: Mapped[str | None] = mapped_column(Text)
+    supplier_address_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("addresses.id", ondelete="SET NULL")
+    )
+    shipping_address_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("addresses.id", ondelete="SET NULL")
+    )
+    contact_person_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("contacts.id", ondelete="SET NULL")
     )
 
     items: Mapped[list["PurchaseOrderItem"]] = relationship(

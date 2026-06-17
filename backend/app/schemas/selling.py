@@ -3,11 +3,14 @@
 import uuid
 from datetime import date
 from decimal import Decimal
+from typing import Literal
 
 from pydantic import Field
 
 from app.schemas.accounts import InvoiceTaxResponse
 from app.schemas.buying import OrderCreateBase, OrderItemResponse, OrderResponseBase
+
+OrderType = Literal["Sales", "Maintenance", "Shopping Cart"]
 
 # --- quotation -------------------------------------------------------------------------
 
@@ -15,6 +18,11 @@ from app.schemas.buying import OrderCreateBase, OrderItemResponse, OrderResponse
 class QuotationCreate(OrderCreateBase):
     customer_id: uuid.UUID
     valid_till: date | None = None
+    order_type: OrderType = "Sales"
+    terms: str | None = None
+    customer_address_id: uuid.UUID | None = None
+    shipping_address_id: uuid.UUID | None = None
+    contact_person_id: uuid.UUID | None = None
     coupon_code: str | None = None
     shipping_rule_id: uuid.UUID | None = None
 
@@ -27,6 +35,11 @@ class QuotationResponse(OrderResponseBase):
     customer_id: uuid.UUID
     customer_name: str | None = None
     valid_till: date | None
+    order_type: str
+    terms: str | None = None
+    customer_address_id: uuid.UUID | None = None
+    shipping_address_id: uuid.UUID | None = None
+    contact_person_id: uuid.UUID | None = None
     items: list[QuotationItemResponse]
     taxes: list[InvoiceTaxResponse]
 
@@ -37,6 +50,13 @@ class QuotationResponse(OrderResponseBase):
 class SalesOrderCreate(OrderCreateBase):
     customer_id: uuid.UUID
     delivery_date: date | None = None
+    order_type: OrderType = "Sales"
+    po_no: str | None = None
+    po_date: date | None = None
+    terms: str | None = None
+    customer_address_id: uuid.UUID | None = None
+    shipping_address_id: uuid.UUID | None = None
+    contact_person_id: uuid.UUID | None = None
     set_warehouse_id: uuid.UUID | None = None
     quotation_id: uuid.UUID | None = None
     coupon_code: str | None = None
@@ -54,6 +74,13 @@ class SalesOrderResponse(OrderResponseBase):
     customer_id: uuid.UUID
     customer_name: str | None = None
     delivery_date: date | None
+    order_type: str
+    po_no: str | None = None
+    po_date: date | None = None
+    terms: str | None = None
+    customer_address_id: uuid.UUID | None = None
+    shipping_address_id: uuid.UUID | None = None
+    contact_person_id: uuid.UUID | None = None
     set_warehouse_id: uuid.UUID | None
     quotation_id: uuid.UUID | None
     per_delivered: Decimal

@@ -6,6 +6,7 @@ import { onMounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { api } from "@/api/client";
 import ChildGrid from "@/components/shared/ChildGrid.vue";
+import LinkedRecords from "@/components/shared/LinkedRecords.vue";
 import FormBuilder, { type FieldConfig } from "@/components/shared/FormBuilder.vue";
 import { useDocument } from "@/composables/useDocument";
 import type { DocTypeMeta } from "@/types/registry";
@@ -122,5 +123,24 @@ function cancel(): void {
         </button>
       </div>
     </div>
+
+    <!-- Linked records (Address, Contact, …) — managed inline on existing records -->
+    <template v-if="meta && meta.links && meta.links.length">
+      <div
+        v-if="isNew"
+        class="mt-4 rounded-lg border border-dashed border-gray-300 bg-white p-4 text-sm text-gray-400"
+      >
+        Save this {{ meta.name }} first to add its
+        {{ meta.links.map((l) => l.label.toLowerCase()).join(" & ") }}.
+      </div>
+      <div v-else class="mt-4 rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
+        <LinkedRecords
+          v-for="link in meta.links"
+          :key="link.doctype"
+          :parent-id="idParam || ''"
+          :link="link"
+        />
+      </div>
+    </template>
   </div>
 </template>

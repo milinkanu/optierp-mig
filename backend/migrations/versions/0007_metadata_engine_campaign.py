@@ -1,7 +1,7 @@
 """Phase 0 metadata engine — Campaign master (engine smoke-test pilot).
 
 Tables created by the engine are ordinary per-DocType tables (one real table
-per master, cf. metadata_engine_plan.md §3 Decision 2). Campaign is a flat,
+per master, cf. docs/metadata_engine_plan.md §3 Decision 2). Campaign is a flat,
 company-scoped simple master served entirely by the generic engine.
 
 Revision ID: 0007_metadata_engine_campaign

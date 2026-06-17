@@ -31,12 +31,16 @@ const showForm = ref(false);
 
 // RFQ form
 const rfqDate = ref(new Date().toISOString().slice(0, 10));
+const rfqScheduleDate = ref(""); // response due / required by
+const rfqMessage = ref("");
 const rfqRows = ref<Array<{ item_id: string; qty: number }>>([{ item_id: "", qty: 1 }]);
 const rfqSupplierIds = ref<string[]>([]);
 
 // Supplier Quotation form (optionally prefilled from a selected RFQ)
 const sqSupplierId = ref("");
 const sqDate = ref(new Date().toISOString().slice(0, 10));
+const sqValidTill = ref("");
+const sqCurrency = ref("");
 const sqRfqId = ref<string | null>(null);
 const sqRows = ref<Array<{ item_id: string; qty: number; rate: number; rfq_item_id?: string | null }>>([
   { item_id: "", qty: 1, rate: 0 },
@@ -86,6 +90,8 @@ async function saveRfq(): Promise<void> {
   try {
     const resp = await api.post<{ id: string }>("/rfqs", {
       posting_date: rfqDate.value,
+      schedule_date: rfqScheduleDate.value || null,
+      message_for_supplier: rfqMessage.value || null,
       items: rfqRows.value.filter((r) => r.item_id),
       supplier_ids: rfqSupplierIds.value,
     });
@@ -93,6 +99,8 @@ async function saveRfq(): Promise<void> {
     showForm.value = false;
     rfqRows.value = [{ item_id: "", qty: 1 }];
     rfqSupplierIds.value = [];
+    rfqScheduleDate.value = "";
+    rfqMessage.value = "";
     await rfqList.fetchList();
   } catch (e) {
     error.value = e as ErrorEnvelope;
@@ -108,6 +116,8 @@ async function saveSq(): Promise<void> {
     const resp = await api.post<{ id: string }>("/supplier-quotations", {
       supplier_id: sqSupplierId.value,
       posting_date: sqDate.value,
+      valid_till: sqValidTill.value || null,
+      currency: sqCurrency.value || null,
       rfq_id: sqRfqId.value,
       items: sqRows.value.filter((r) => r.item_id),
     });
@@ -115,6 +125,8 @@ async function saveSq(): Promise<void> {
     showForm.value = false;
     sqRows.value = [{ item_id: "", qty: 1, rate: 0 }];
     sqRfqId.value = null;
+    sqValidTill.value = "";
+    sqCurrency.value = "";
     await sqList.fetchList();
     // the supplier's quote status on the RFQ just flipped to Received
     if (selectedRfq.value) {
@@ -170,7 +182,15 @@ onMounted(async () => {
           <label class="form-label">Date*</label>
           <input v-model="rfqDate" type="date" required class="form-input" />
         </div>
-        <div class="col-span-2">
+        <div>
+          <label class="form-label">Required By</label>
+          <input v-model="rfqScheduleDate" type="date" class="form-input" />
+        </div>
+        <div>
+          <label class="form-label">Message for Supplier</label>
+          <input v-model="rfqMessage" class="form-input" placeholder="Optional note to suppliers" />
+        </div>
+        <div class="col-span-3">
           <label class="form-label">Suppliers* (hold Ctrl to select several)</label>
           <select v-model="rfqSupplierIds" multiple class="form-input h-24">
             <option v-for="s in accounts.suppliers" :key="s.id" :value="s.id">{{ s.supplier_name }}</option>
@@ -206,6 +226,21 @@ onMounted(async () => {
         <div>
           <label class="form-label">Date*</label>
           <input v-model="sqDate" type="date" required class="form-input" />
+        </div>
+        <div>
+          <label class="form-label">Valid Till</label>
+          <input v-model="sqValidTill" type="date" class="form-input" />
+        </div>
+        <div>
+          <label class="form-label">Currency</label>
+          <input
+            v-model="sqCurrency"
+            class="form-input uppercase"
+            maxlength="3"
+            pattern="[A-Za-z]{3}"
+            title="3-letter currency code (e.g. INR), or leave blank for the company default"
+            :placeholder="companyCurrency"
+          />
         </div>
       </div>
       <div v-for="(row, i) in sqRows" :key="i" class="mb-2 grid grid-cols-12 gap-2">
