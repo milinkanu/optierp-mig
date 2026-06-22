@@ -16,7 +16,9 @@ from app.core.permissions import require_permission
 from app.core.security import CurrentUser, get_tenant_db
 from app.schemas.assets import (
     AssetCreate,
+    AssetDisposeIn,
     AssetListItem,
+    AssetMoveIn,
     AssetResponse,
     DepreciateResult,
 )
@@ -98,3 +100,34 @@ async def depreciate_asset(
     on_date: Annotated[date | None, Query(description="Post as if today were this date")] = None,
 ) -> DepreciateResult:
     return await service.depreciate_asset(db, asset_id, current_user, on_date=on_date)
+
+
+@router.post(
+    "/{asset_id}/dispose",
+    response_model=AssetResponse,
+    summary="Sell or scrap an asset",
+    description="Removes the asset's cost + accumulated depreciation and books the gain/loss "
+    "vs book value as a Journal Entry. Depreciation halts after disposal.",
+)
+async def dispose_asset(
+    asset_id: uuid.UUID,
+    payload: AssetDisposeIn,
+    current_user: Annotated[CurrentUser, Depends(require_permission("Asset", "write"))],
+    db: Annotated[AsyncSession, Depends(get_tenant_db)],
+) -> AssetResponse:
+    return AssetResponse.model_validate(await service.dispose_asset(db, asset_id, payload, current_user))
+
+
+@router.post(
+    "/{asset_id}/move",
+    response_model=AssetResponse,
+    summary="Move an asset (location / custodian)",
+    description="Records a transfer of the asset's location and/or custodian (no GL).",
+)
+async def move_asset(
+    asset_id: uuid.UUID,
+    payload: AssetMoveIn,
+    current_user: Annotated[CurrentUser, Depends(require_permission("Asset", "write"))],
+    db: Annotated[AsyncSession, Depends(get_tenant_db)],
+) -> AssetResponse:
+    return AssetResponse.model_validate(await service.move_asset(db, asset_id, payload, current_user))

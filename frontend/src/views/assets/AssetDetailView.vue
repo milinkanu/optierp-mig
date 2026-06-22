@@ -1,12 +1,12 @@
 <script setup lang="ts">
-// Asset detail: header + book-value summary + the depreciation schedule. Submit a
-// draft, then "Depreciate now" posts every due row (schedule_date ≤ today) as a
-// balanced Journal Entry — idempotent, so posted rows are skipped on a re-run.
-import { onMounted, ref } from "vue";
+// Asset detail: header + book-value summary + the depreciation schedule, plus Phase-2
+// actions — Submit, Depreciate now (posts due rows as JEs), Move (location/custodian),
+// and Dispose (sell/scrap → gain/loss JE, halts depreciation).
+import { computed, onMounted, ref } from "vue";
 import { api } from "@/api/client";
 import { formatCurrency, formatDate } from "@/utils/format";
 import StatusBadge from "@/components/shared/StatusBadge.vue";
-import type { ErrorEnvelope } from "@/types/core";
+import type { ErrorEnvelope, ListResponse } from "@/types/core";
 
 const props = defineProps<{ id: string }>();
 
@@ -20,11 +20,20 @@ interface ScheduleRow {
   posted_date: string | null;
   journal_entry_id: string | null;
 }
+interface MovementRow {
+  id: string;
+  movement_date: string;
+  from_location_name: string | null;
+  to_location_name: string | null;
+  from_custodian: string | null;
+  to_custodian: string | null;
+}
 interface Asset {
   id: string;
   name: string;
   asset_name: string;
   category_name: string | null;
+  location_id: string | null;
   location_name: string | null;
   depreciation_method: string | null;
   custodian: string | null;
@@ -36,14 +45,43 @@ interface Asset {
   available_for_use_date: string;
   status: string;
   remarks: string | null;
+  disposal_date: string | null;
+  disposal_type: string | null;
+  disposal_amount: string;
+  gain_loss_amount: string | null;
+  disposal_journal_entry_id: string | null;
   schedule: ScheduleRow[];
+  movements: MovementRow[];
 }
+interface AccountOpt { value: string; label: string }
+interface LocationOpt { id: string; location_name: string }
 
 const asset = ref<Asset | null>(null);
 const loading = ref(false);
 const busy = ref(false);
 const error = ref<ErrorEnvelope | null>(null);
 const notice = ref<string | null>(null);
+
+const accounts = ref<AccountOpt[]>([]);
+const locations = ref<LocationOpt[]>([]);
+
+const active = computed(() => asset.value && ["Submitted", "Partially Depreciated"].includes(asset.value.status));
+const disposed = computed(() => asset.value && ["Sold", "Scrapped"].includes(asset.value.status));
+
+// dispose form
+const showDispose = ref(false);
+const today = new Date().toISOString().slice(0, 10);
+const dType = ref<"Sell" | "Scrap">("Sell");
+const dDate = ref(today);
+const dAmount = ref<number | null>(null);
+const dProceeds = ref("");
+const dGainLoss = ref("");
+
+// move form
+const showMove = ref(false);
+const mDate = ref(today);
+const mLocation = ref("");
+const mCustodian = ref("");
 
 async function fetchAsset(): Promise<void> {
   loading.value = true;
@@ -54,6 +92,22 @@ async function fetchAsset(): Promise<void> {
     error.value = e as ErrorEnvelope;
   } finally {
     loading.value = false;
+  }
+}
+
+async function fetchPickers(): Promise<void> {
+  try {
+    const [acc, loc] = await Promise.all([
+      api.get<AccountOpt[]>("/registry/account/options"),
+      api.get<ListResponse<LocationOpt>>("/registry/location", { params: { page_size: 200 } }),
+    ]);
+    accounts.value = acc.data;
+    locations.value = loc.data.items;
+    // sensible default for the gain/loss account
+    const gl = accounts.value.find((a) => /gain.*loss.*disposal/i.test(a.label));
+    if (gl) dGainLoss.value = gl.value;
+  } catch {
+    /* pickers are best-effort */
   }
 }
 
@@ -76,9 +130,7 @@ async function depreciate(): Promise<void> {
   error.value = null;
   notice.value = null;
   try {
-    const res = (
-      await api.post<{ posted_count: number }>(`/assets/${props.id}/depreciate`)
-    ).data;
+    const res = (await api.post<{ posted_count: number }>(`/assets/${props.id}/depreciate`)).data;
     notice.value =
       res.posted_count > 0
         ? `Posted ${res.posted_count} depreciation entr${res.posted_count === 1 ? "y" : "ies"}.`
@@ -91,7 +143,54 @@ async function depreciate(): Promise<void> {
   }
 }
 
-onMounted(fetchAsset);
+async function dispose(): Promise<void> {
+  if (!dGainLoss.value) return;
+  busy.value = true;
+  error.value = null;
+  notice.value = null;
+  try {
+    await api.post(`/assets/${props.id}/dispose`, {
+      disposal_type: dType.value,
+      disposal_date: dDate.value,
+      sale_amount: dType.value === "Sell" ? dAmount.value || 0 : 0,
+      proceeds_account_id: dType.value === "Sell" ? dProceeds.value || null : null,
+      gain_loss_account_id: dGainLoss.value,
+    });
+    showDispose.value = false;
+    notice.value = `Asset ${dType.value === "Sell" ? "sold" : "scrapped"}.`;
+    await fetchAsset();
+  } catch (e) {
+    error.value = e as ErrorEnvelope;
+  } finally {
+    busy.value = false;
+  }
+}
+
+async function move(): Promise<void> {
+  busy.value = true;
+  error.value = null;
+  notice.value = null;
+  try {
+    await api.post(`/assets/${props.id}/move`, {
+      movement_date: mDate.value,
+      to_location_id: mLocation.value || null,
+      to_custodian: mCustodian.value || null,
+    });
+    showMove.value = false;
+    mLocation.value = "";
+    mCustodian.value = "";
+    notice.value = "Asset moved.";
+    await fetchAsset();
+  } catch (e) {
+    error.value = e as ErrorEnvelope;
+  } finally {
+    busy.value = false;
+  }
+}
+
+onMounted(async () => {
+  await Promise.all([fetchAsset(), fetchPickers()]);
+});
 </script>
 
 <template>
@@ -117,6 +216,12 @@ onMounted(fetchAsset);
         >
           Depreciate now
         </button>
+        <button v-if="active" class="rounded-md border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50" :disabled="busy" @click="showMove = !showMove; showDispose = false">
+          Move
+        </button>
+        <button v-if="active" class="rounded-md border border-amber-300 px-3 py-1.5 text-sm font-medium text-amber-700 hover:bg-amber-50" :disabled="busy" @click="showDispose = !showDispose; showMove = false">
+          Dispose
+        </button>
         <button
           v-if="asset.status === 'Submitted'"
           class="rounded-md border border-red-200 px-3 py-1.5 text-sm font-medium text-red-600 hover:bg-red-50"
@@ -130,6 +235,75 @@ onMounted(fetchAsset);
 
     <p v-if="notice" class="mb-3 rounded bg-green-50 px-3 py-2 text-sm text-green-700">{{ notice }}</p>
     <p v-if="error" class="mb-3 rounded bg-red-50 px-3 py-2 text-sm text-red-600">{{ error.detail }}</p>
+
+    <!-- dispose form -->
+    <form v-if="showDispose" class="mb-6 rounded-lg border border-amber-200 bg-amber-50/40 p-5 shadow-sm" @submit.prevent="dispose">
+      <h2 class="mb-3 text-sm font-semibold text-amber-800">Dispose asset</h2>
+      <div class="grid grid-cols-2 gap-4 md:grid-cols-4">
+        <div>
+          <label class="form-label">Type</label>
+          <select v-model="dType" class="form-input">
+            <option value="Sell">Sell</option>
+            <option value="Scrap">Scrap</option>
+          </select>
+        </div>
+        <div>
+          <label class="form-label">Date</label>
+          <input v-model="dDate" type="date" class="form-input" />
+        </div>
+        <div v-if="dType === 'Sell'">
+          <label class="form-label">Sale amount</label>
+          <input v-model.number="dAmount" type="number" min="0" step="any" class="form-input" />
+        </div>
+        <div v-if="dType === 'Sell'">
+          <label class="form-label">Proceeds account (bank/cash)</label>
+          <select v-model="dProceeds" class="form-input">
+            <option value="">Select…</option>
+            <option v-for="a in accounts" :key="a.value" :value="a.value">{{ a.label }}</option>
+          </select>
+        </div>
+        <div>
+          <label class="form-label">Gain/Loss account</label>
+          <select v-model="dGainLoss" class="form-input">
+            <option value="">Select…</option>
+            <option v-for="a in accounts" :key="a.value" :value="a.value">{{ a.label }}</option>
+          </select>
+        </div>
+      </div>
+      <p class="mt-2 text-xs text-gray-500">
+        Books a Journal Entry removing the cost ({{ formatCurrency(asset.gross_purchase_amount) }}) and
+        accumulated depreciation ({{ formatCurrency(asset.accumulated_depreciation) }}), with the gain/loss
+        vs the current book value ({{ formatCurrency(asset.book_value) }}). Depreciation then stops.
+      </p>
+      <div class="mt-3 flex justify-end">
+        <button type="submit" class="btn-primary" :disabled="busy || !dGainLoss">Confirm disposal</button>
+      </div>
+    </form>
+
+    <!-- move form -->
+    <form v-if="showMove" class="mb-6 rounded-lg border border-gray-200 bg-white p-5 shadow-sm" @submit.prevent="move">
+      <h2 class="mb-3 text-sm font-semibold text-gray-700">Move asset</h2>
+      <div class="grid grid-cols-2 gap-4 md:grid-cols-3">
+        <div>
+          <label class="form-label">Date</label>
+          <input v-model="mDate" type="date" class="form-input" />
+        </div>
+        <div>
+          <label class="form-label">New location</label>
+          <select v-model="mLocation" class="form-input">
+            <option value="">—</option>
+            <option v-for="l in locations" :key="l.id" :value="l.id">{{ l.location_name }}</option>
+          </select>
+        </div>
+        <div>
+          <label class="form-label">New custodian</label>
+          <input v-model="mCustodian" type="text" class="form-input" placeholder="who holds it now" />
+        </div>
+      </div>
+      <div class="mt-3 flex justify-end">
+        <button type="submit" class="btn-primary" :disabled="busy">Record move</button>
+      </div>
+    </form>
 
     <!-- summary cards -->
     <div class="mb-6 grid grid-cols-2 gap-4 md:grid-cols-4">
@@ -151,6 +325,20 @@ onMounted(fetchAsset);
       </div>
     </div>
 
+    <!-- disposal summary -->
+    <div v-if="disposed" class="mb-6 rounded-lg border border-amber-200 bg-amber-50/50 p-5 text-sm shadow-sm">
+      <div class="mb-1 font-semibold text-amber-800">{{ asset.disposal_type }} on {{ formatDate(asset.disposal_date) }}</div>
+      <div class="grid grid-cols-2 gap-x-8 gap-y-1 md:grid-cols-3">
+        <div><span class="text-gray-400">Proceeds:</span> {{ formatCurrency(asset.disposal_amount) }}</div>
+        <div>
+          <span class="text-gray-400">{{ Number(asset.gain_loss_amount) >= 0 ? "Gain" : "Loss" }}:</span>
+          <span :class="Number(asset.gain_loss_amount) >= 0 ? 'text-green-700' : 'text-red-600'">
+            {{ formatCurrency(Math.abs(Number(asset.gain_loss_amount ?? 0))) }}
+          </span>
+        </div>
+      </div>
+    </div>
+
     <!-- meta -->
     <div class="mb-6 grid grid-cols-2 gap-x-8 gap-y-2 rounded-lg border border-gray-200 bg-white p-5 text-sm shadow-sm md:grid-cols-3">
       <div><span class="text-gray-400">Category:</span> {{ asset.category_name ?? "—" }}</div>
@@ -160,6 +348,28 @@ onMounted(fetchAsset);
       <div><span class="text-gray-400">Available for use:</span> {{ formatDate(asset.available_for_use_date) }}</div>
       <div><span class="text-gray-400">Opening accum. dep.:</span> {{ formatCurrency(asset.opening_accumulated_depreciation) }}</div>
     </div>
+
+    <!-- movement history -->
+    <template v-if="asset.movements.length">
+      <h2 class="mb-2 text-sm font-semibold uppercase tracking-wide text-gray-500">Movement History</h2>
+      <div class="mb-6 overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm">
+        <table class="min-w-full text-sm">
+          <thead class="bg-gray-50 text-left text-xs uppercase text-gray-500">
+            <tr>
+              <th class="px-4 py-2">Date</th><th class="px-4 py-2">From → To (location)</th>
+              <th class="px-4 py-2">From → To (custodian)</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="mv in asset.movements" :key="mv.id" class="border-t border-gray-100">
+              <td class="px-4 py-1.5">{{ formatDate(mv.movement_date) }}</td>
+              <td class="px-4 py-1.5 text-gray-500">{{ mv.from_location_name ?? "—" }} → {{ mv.to_location_name ?? "—" }}</td>
+              <td class="px-4 py-1.5 text-gray-500">{{ mv.from_custodian ?? "—" }} → {{ mv.to_custodian ?? "—" }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </template>
 
     <!-- schedule -->
     <h2 class="mb-2 text-sm font-semibold uppercase tracking-wide text-gray-500">Depreciation Schedule</h2>

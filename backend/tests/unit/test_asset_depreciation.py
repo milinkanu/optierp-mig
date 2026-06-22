@@ -6,7 +6,7 @@ from decimal import Decimal
 import pytest
 
 from app.core.exceptions import ValidationError
-from app.services.asset import add_months, straight_line_schedule
+from app.services.asset import add_months, straight_line_schedule, written_down_value_schedule
 
 
 def test_straight_line_60_months_zero_salvage():
@@ -107,3 +107,44 @@ def test_add_months_clamps_to_month_end():
     assert add_months(date(2026, 1, 31), 1) == date(2026, 2, 28)  # non-leap
     assert add_months(date(2028, 1, 31), 1) == date(2028, 2, 29)  # leap
     assert add_months(date(2026, 1, 15), 12) == date(2027, 1, 15)
+
+
+# --- Written Down Value (declining balance, Phase 2) -------------------------------
+
+
+def test_wdv_declining_balance_lands_on_salvage():
+    """WDV depreciates more early, less later, and ends exactly at salvage; the total
+    written off equals gross − salvage."""
+    rows = written_down_value_schedule(
+        gross=Decimal("120000"),
+        salvage=Decimal("12000"),  # 10%
+        opening_accumulated=Decimal("0"),
+        number_of_depreciations=5,
+        frequency_months=12,
+        start_date=date(2026, 4, 1),
+    )
+    amounts = [amount for _d, amount, _acc in rows]
+    assert len(rows) == 5
+    # declining: each period's charge is smaller than the previous
+    assert all(amounts[i] > amounts[i + 1] for i in range(len(amounts) - 1))
+    # first-year charge is the largest (≈ 36.9% of 120k)
+    assert amounts[0] > Decimal("40000")
+    # ends exactly on salvage; total written off = gross − salvage
+    assert rows[-1][2] == Decimal("108000.00")
+    assert sum(amounts) == Decimal("108000.00")
+
+
+def test_wdv_requires_positive_salvage():
+    with pytest.raises(ValidationError):
+        written_down_value_schedule(
+            gross=Decimal("100000"), salvage=Decimal("0"), opening_accumulated=Decimal("0"),
+            number_of_depreciations=5, frequency_months=12, start_date=date(2026, 4, 1),
+        )
+
+
+def test_wdv_steps_dates_by_frequency():
+    rows = written_down_value_schedule(
+        gross=Decimal("100000"), salvage=Decimal("10000"), opening_accumulated=Decimal("0"),
+        number_of_depreciations=3, frequency_months=12, start_date=date(2026, 4, 1),
+    )
+    assert [d for d, _a, _acc in rows] == [date(2027, 4, 1), date(2028, 4, 1), date(2029, 4, 1)]

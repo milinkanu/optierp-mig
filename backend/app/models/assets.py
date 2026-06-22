@@ -140,12 +140,31 @@ class Asset(Base, DocumentMixin, CompanyScopedMixin):
     )
     remarks: Mapped[str | None] = mapped_column(Text)
 
+    # Disposal (Phase 2) — set when the asset is sold/scrapped; depreciation then halts.
+    disposal_date: Mapped[date | None] = mapped_column(Date)
+    disposal_type: Mapped[str | None] = mapped_column(String(10))  # Sell | Scrap
+    disposal_amount: Mapped[Decimal] = mapped_column(
+        Numeric(21, 6), nullable=False, default=0, server_default=text("0")
+    )  # sale proceeds (0 for scrap)
+    gain_loss_amount: Mapped[Decimal | None] = mapped_column(
+        Numeric(21, 6)
+    )  # proceeds − book value: positive = gain, negative = loss
+    disposal_journal_entry_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("journal_entries.id")
+    )
+
     category = relationship("AssetCategory", lazy="joined", viewonly=True)
     location = relationship("Location", lazy="joined", viewonly=True)
     schedule: Mapped[list["AssetDepreciationSchedule"]] = relationship(
         back_populates="asset",
         cascade="all, delete-orphan",
         order_by="AssetDepreciationSchedule.idx",
+        lazy="selectin",
+    )
+    movements: Mapped[list["AssetMovement"]] = relationship(
+        back_populates="asset",
+        cascade="all, delete-orphan",
+        order_by="AssetMovement.movement_date.desc(), AssetMovement.creation.desc()",
         lazy="selectin",
     )
 
@@ -203,3 +222,38 @@ class AssetDepreciationSchedule(Base, DocumentMixin):
     )
 
     asset: Mapped[Asset] = relationship(back_populates="schedule")
+
+
+class AssetMovement(Base, DocumentMixin, CompanyScopedMixin):
+    """A transfer of an asset's location and/or custodian (no GL) — Phase 2.
+
+    A lightweight history row written each time an asset is moved; ERPNext's Asset
+    Movement with its multi-asset child grid is collapsed to one row per move (master §2).
+    """
+
+    __tablename__ = "asset_movements"
+
+    asset_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("assets.id", ondelete="CASCADE"), nullable=False
+    )
+    movement_date: Mapped[date] = mapped_column(Date, nullable=False)
+    from_location_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("locations.id")
+    )
+    to_location_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("locations.id")
+    )
+    from_custodian: Mapped[str | None] = mapped_column(String(140))
+    to_custodian: Mapped[str | None] = mapped_column(String(140))
+
+    asset: Mapped[Asset] = relationship(back_populates="movements")
+    from_location = relationship("Location", foreign_keys=[from_location_id], lazy="joined", viewonly=True)
+    to_location = relationship("Location", foreign_keys=[to_location_id], lazy="joined", viewonly=True)
+
+    @property
+    def from_location_name(self) -> str | None:
+        return self.from_location.location_name if self.from_location else None
+
+    @property
+    def to_location_name(self) -> str | None:
+        return self.to_location.location_name if self.to_location else None

@@ -862,8 +862,9 @@ register(
             FieldSpec("category_name", "Category Name", "Data", required=True, in_list=True, span=2,
                       unique=True, help="e.g. Vehicles, Computers, Plant & Machinery."),
             FieldSpec("depreciation_method", "Depreciation Method", "Select",
-                      options="Straight Line\nManual", required=True, in_list=True,
-                      help="Straight Line spreads cost evenly. Manual = you enter the rows."),
+                      options="Straight Line\nWritten Down Value\nManual", required=True, in_list=True,
+                      help="Straight Line spreads cost evenly; Written Down Value depreciates a fixed "
+                      "% of the falling book value (needs a salvage value); Manual = you enter rows."),
             FieldSpec("total_number_of_depreciations", "Number of Depreciations", "Int", required=True,
                       help="How many depreciation entries over the asset's life (e.g. 60)."),
             FieldSpec("frequency_of_depreciation_months", "Months Between Depreciations", "Int",

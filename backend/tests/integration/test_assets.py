@@ -137,6 +137,162 @@ async def test_cannot_cancel_after_depreciation(ctx):
     assert r.json()["status"] == "Cancelled"
 
 
+async def test_dispose_sell_books_gain_loss(ctx):
+    """Plan acceptance: a ₹120k asset with ₹72k book value sold for ₹50k books a ₹22k
+    loss vs book value, flips to Sold, and halts depreciation. (Book value reached via
+    ₹48k opening accumulated depreciation so the test needs only one fiscal year.)"""
+    client, company, headers = ctx
+    cat = await _category(client, company, headers, name="Vehicles")
+    fy_start = _fy_start(date.today())
+    asset = (
+        await client.post(
+            f"{API}/assets",
+            json={
+                "asset_name": "Delivery Van",
+                "asset_category_id": cat["id"],
+                "gross_purchase_amount": "120000",
+                "opening_accumulated_depreciation": "48000",
+                "available_for_use_date": str(fy_start),
+            },
+            headers=headers,
+        )
+    ).json()
+    await client.post(f"{API}/assets/{asset['id']}/submit", headers=headers)
+
+    cash = await coa_account(client, company, headers, "Cash")
+    gain_loss = await coa_account(client, company, headers, "Gain/Loss on Asset Disposal")
+    r = await client.post(
+        f"{API}/assets/{asset['id']}/dispose",
+        json={
+            "disposal_type": "Sell",
+            "disposal_date": str(date.today()),
+            "sale_amount": "50000",
+            "proceeds_account_id": cash["id"],
+            "gain_loss_account_id": gain_loss["id"],
+        },
+        headers=headers,
+    )
+    assert r.status_code == 200, r.text
+    disposed = r.json()
+    assert disposed["status"] == "Sold"
+    assert Decimal(disposed["gain_loss_amount"]) == Decimal("-22000.000000")  # ₹22k loss
+    assert Decimal(disposed["disposal_amount"]) == Decimal("50000.000000")
+
+    # the disposal Journal Entry is balanced and in the ledger
+    je = (
+        await client.get(f"{API}/journal-entries/{disposed['disposal_journal_entry_id']}", headers=headers)
+    ).json()
+    assert je["voucher_type"] == "Asset Disposal"
+    assert je["docstatus"] == 1
+    assert Decimal(je["total_debit"]) == Decimal("120000.000000")  # 48k accum + 50k cash + 22k loss
+    assert Decimal(je["total_credit"]) == Decimal("120000.000000")  # 120k fixed asset
+
+    # depreciation halts after disposal
+    r = await client.post(f"{API}/assets/{asset['id']}/depreciate", headers=headers)
+    assert r.json()["posted_count"] == 0
+    assert r.json()["detail"] == "Asset has been disposed"
+
+
+async def test_dispose_scrap_writes_off_book_value(ctx):
+    client, company, headers = ctx
+    cat = await _category(client, company, headers, name="Old Tools")
+    fy_start = _fy_start(date.today())
+    asset = (
+        await client.post(
+            f"{API}/assets",
+            json={
+                "asset_name": "Broken Drill",
+                "asset_category_id": cat["id"],
+                "gross_purchase_amount": "60000",
+                "available_for_use_date": str(fy_start),
+            },
+            headers=headers,
+        )
+    ).json()
+    await client.post(f"{API}/assets/{asset['id']}/submit", headers=headers)
+    gain_loss = await coa_account(client, company, headers, "Gain/Loss on Asset Disposal")
+    r = await client.post(
+        f"{API}/assets/{asset['id']}/dispose",
+        json={
+            "disposal_type": "Scrap",
+            "disposal_date": str(date.today()),
+            "gain_loss_account_id": gain_loss["id"],
+        },
+        headers=headers,
+    )
+    scrapped = r.json()
+    assert scrapped["status"] == "Scrapped"
+    assert Decimal(scrapped["gain_loss_amount"]) == Decimal("-60000.000000")  # full book value lost
+
+
+async def test_written_down_value_schedule(ctx):
+    """WDV category: declining charges that end exactly on the salvage value."""
+    client, company, headers = ctx
+    cat = await _category(
+        client, company, headers, name="WDV Machinery",
+        depreciation_method="Written Down Value", salvage_value_percent=10,
+        total_number_of_depreciations=5, frequency_of_depreciation_months=12,
+    )
+    fy_start = _fy_start(date.today())
+    asset = (
+        await client.post(
+            f"{API}/assets",
+            json={
+                "asset_name": "Lathe",
+                "asset_category_id": cat["id"],
+                "gross_purchase_amount": "120000",
+                "available_for_use_date": str(fy_start),
+            },
+            headers=headers,
+        )
+    ).json()
+    sched = asset["schedule"]
+    assert len(sched) == 5
+    amounts = [Decimal(r["depreciation_amount"]) for r in sched]
+    # declining balance: each charge smaller than the last
+    assert all(amounts[i] > amounts[i + 1] for i in range(len(amounts) - 1))
+    # ends exactly at gross − salvage (120k − 12k = 108k accumulated)
+    assert Decimal(sched[-1]["accumulated_depreciation"]) == Decimal("108000.000000")
+
+
+async def test_move_asset_records_history(ctx):
+    client, company, headers = ctx
+    cat = await _category(client, company, headers, name="Movable")
+    fy_start = _fy_start(date.today())
+    # two locations
+    loc_a = (await client.post(f"{API}/registry/location", json={"location_name": "Warehouse A"}, headers=headers)).json()
+    loc_b = (await client.post(f"{API}/registry/location", json={"location_name": "Warehouse B"}, headers=headers)).json()
+    asset = (
+        await client.post(
+            f"{API}/assets",
+            json={
+                "asset_name": "Pallet Jack",
+                "asset_category_id": cat["id"],
+                "gross_purchase_amount": "30000",
+                "available_for_use_date": str(fy_start),
+                "location_id": loc_a["id"],
+                "custodian": "Ravi",
+            },
+            headers=headers,
+        )
+    ).json()
+    await client.post(f"{API}/assets/{asset['id']}/submit", headers=headers)
+    r = await client.post(
+        f"{API}/assets/{asset['id']}/move",
+        json={"movement_date": str(date.today()), "to_location_id": loc_b["id"], "to_custodian": "Sita"},
+        headers=headers,
+    )
+    moved = r.json()
+    assert moved["location_id"] == loc_b["id"]
+    assert moved["custodian"] == "Sita"
+    assert len(moved["movements"]) == 1
+    mv = moved["movements"][0]
+    assert mv["from_location_name"] == "Warehouse A"
+    assert mv["to_location_name"] == "Warehouse B"
+    assert mv["from_custodian"] == "Ravi"
+    assert mv["to_custodian"] == "Sita"
+
+
 async def test_depreciation_blocked_without_category_accounts(ctx):
     """A category missing its depreciation accounts can't submit an asset."""
     client, company, headers = ctx
