@@ -13,7 +13,6 @@ invoice creation. Deferred-revenue recognition is out of scope for v1 (master §
 import calendar
 import uuid
 from datetime import date, timedelta
-from decimal import Decimal
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -223,8 +222,9 @@ async def generate_due_invoice(
         return GenerateInvoiceResult(generated=False, detail="Subscription has no plans")
     if sub.next_invoice_date > on_date:
         return GenerateInvoiceResult(generated=False, detail="Not due yet")
-    # already past the agreed end — nothing more to bill
-    if sub.end_date is not None and sub.next_invoice_date > sub.end_date:
+    # a period that would start on/after the end date is past the agreement — don't bill it.
+    # (end_date is the exclusive upper bound: a [start, start+1mo] monthly sub bills once.)
+    if sub.end_date is not None and sub.next_invoice_date >= sub.end_date:
         sub.status = "Completed"
         await db.commit()
         return GenerateInvoiceResult(generated=False, detail="Subscription completed")
@@ -237,7 +237,7 @@ async def generate_due_invoice(
     # advance the cursor now: it is flushed/committed atomically with the invoice below
     sub.next_invoice_date = new_cursor
     sub.last_invoice_date = period_date
-    if sub.end_date is not None and new_cursor > sub.end_date:
+    if sub.end_date is not None and new_cursor >= sub.end_date:
         sub.status = "Completed"
     sub.modified_by = user.id
 

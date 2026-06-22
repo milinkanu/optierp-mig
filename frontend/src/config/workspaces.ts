@@ -339,6 +339,8 @@ const ACCOUNTING: WorkspaceConfig = {
         { label: "Payment Reconciliation", to: "/payment-reconciliation" },
         { label: "Statement of Accounts", to: "/statements", icon: "🧾" },
         { label: "Payment Requests", to: "/payment-requests", icon: "💳" },
+        { label: "Subscriptions", to: "/subscriptions", icon: "🔁" },
+        { label: "Subscription Plan", to: "/m/subscription-plan" },
         { label: "Dunning (Reminders)", to: "/dunning", icon: "⏰" },
         { label: "Dunning Type", to: "/m/dunning-type" },
       ],

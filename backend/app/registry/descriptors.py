@@ -19,6 +19,7 @@ from app.models.accounts import (
     ModeOfPayment,
     PaymentTermsTemplate,
     PaymentTermsTemplateDetail,
+    SubscriptionPlan,
     TaxCategory,
     TaxWithholdingCategory,
 )
@@ -706,6 +707,40 @@ register(
             FieldSpec("disabled", "Disabled", "Check", in_list=True),
         ),
         list_fields=("dunning_type", "grace_period_days", "interest_rate", "disabled"),
+    )
+)
+
+
+# --- Accounts: Subscription Plan (recurring-billing plan, Phase 4) ------------
+register(
+    DocTypeDescriptor(
+        name="Subscription Plan",
+        slug="subscription-plan",
+        model=SubscriptionPlan,
+        title_field="plan_name",
+        naming="field:plan_name",
+        group="Accounts",
+        permission_name="Subscription Plan",
+        permissions={
+            "Accounts Manager": _ACCOUNTS_MANAGER,
+            "Accounts User": _ACCOUNTS_USER,
+            **_LINK_READERS,
+        },
+        fields=(
+            FieldSpec("plan_name", "Plan Name", "Data", required=True, in_list=True, span=2, unique=True,
+                      help="e.g. \"AMC — Premium (Monthly)\"."),
+            FieldSpec("item_id", "Item", "Link", options="item", required=True, in_list=True,
+                      help="The item billed each cycle (its income account is used for posting)."),
+            FieldSpec("price", "Price (per cycle)", "Currency", required=True, in_list=True),
+            FieldSpec("billing_interval", "Billing Interval", "Select",
+                      options="Day\nWeek\nMonth\nYear", required=True, in_list=True),
+            FieldSpec("interval_count", "Every (n intervals)", "Int", in_list=True,
+                      help="2 + Month = bill every 2 months; 3 + Month = quarterly."),
+            FieldSpec("currency", "Currency", "Data",
+                      help="3-letter code (e.g. INR). Blank = the company's default currency."),
+            FieldSpec("disabled", "Disabled", "Check", in_list=True),
+        ),
+        list_fields=("plan_name", "billing_interval", "interval_count", "price", "disabled"),
     )
 )
 

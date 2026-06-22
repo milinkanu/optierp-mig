@@ -18,6 +18,8 @@ logger = get_logger(__name__)
 
 # trigger kwargs follow APScheduler cron/interval semantics
 SCHEDULED_JOBS: list[dict[str, Any]] = [
+    # Generate due Subscription invoices (idempotent; never double-bills a period).
+    {"func": "app.jobs.subscription.process_subscriptions", "trigger": "cron", "hour": 2},
     # Populated by later modules, e.g.:
     # {"func": "app.jobs.stock.reorder_level_check", "trigger": "cron", "hour": 6},
     # {"func": "app.jobs.assets.auto_post_depreciation", "trigger": "cron", "day": 1},

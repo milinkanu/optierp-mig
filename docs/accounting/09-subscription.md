@@ -129,6 +129,11 @@ A monthly subscription created on the 1st generates exactly one submitted Sales 
 its cursor date, advances `next_invoice_date` correctly, never double‑bills on a re‑run (idempotent),
 and stops cleanly at `end_date` / on Cancel. Manual `generate-invoice` produces the same result on demand.
 
-> **Status:** designed during a command‑tool outage; **not yet implemented.** Execute after the Phase‑3
-> remainder (AR/AP summary + DSO reports, Payment Request) is verified. See [[document-delivery-plan]].
+> **Status:** ✅ **implemented** (2026‑06‑22). Migration `0049_subscription`; engine master
+> `Subscription Plan` (`/m/subscription-plan`); bespoke `Subscription` (`services/subscription.py`,
+> `api/v1/accounts/subscriptions.py`, `SubscriptionView.vue` at `/subscriptions`); daily job
+> `app.jobs.subscription.process_subscriptions` (registered in `SCHEDULED_JOBS`, 02:00). Idempotent
+> cursor‑advance rides the invoice's commit; integration tests in `tests/integration/test_subscription.py`
+> cover the monthly cycle, idempotent re‑run, and clean completion at `end_date`. Deferred revenue
+> remains out of scope (master §3.6). See [[document-delivery-plan]] and [[accounting-plan-status]].
 </content>
