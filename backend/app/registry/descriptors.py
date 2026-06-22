@@ -25,6 +25,7 @@ from app.models.accounts import (
     TaxCategory,
     TaxWithholdingCategory,
 )
+from app.models.assets import AssetCategory, Location
 from app.models.buying import Supplier, SupplierGroup
 from app.models.selling import (
     Address,
@@ -837,6 +838,69 @@ register(
                 ),
             ),
         ),
+    )
+)
+
+
+# --- Assets: Asset Category + Location (engine masters) -----------------------
+# Accounts roles manage assets (no separate Assets role at MSME scale, matching
+# ERPNext where Asset Category sits under Accounts).
+register(
+    DocTypeDescriptor(
+        name="Asset Category",
+        slug="asset-category",
+        model=AssetCategory,
+        title_field="category_name",
+        naming="field:category_name",
+        group="Assets",
+        permission_name="Asset Category",
+        permissions={
+            "Accounts Manager": _ACCOUNTS_MANAGER,
+            "Accounts User": _ACCOUNTS_USER,
+        },
+        fields=(
+            FieldSpec("category_name", "Category Name", "Data", required=True, in_list=True, span=2,
+                      unique=True, help="e.g. Vehicles, Computers, Plant & Machinery."),
+            FieldSpec("depreciation_method", "Depreciation Method", "Select",
+                      options="Straight Line\nManual", required=True, in_list=True,
+                      help="Straight Line spreads cost evenly. Manual = you enter the rows."),
+            FieldSpec("total_number_of_depreciations", "Number of Depreciations", "Int", required=True,
+                      help="How many depreciation entries over the asset's life (e.g. 60)."),
+            FieldSpec("frequency_of_depreciation_months", "Months Between Depreciations", "Int",
+                      help="1 = monthly, 3 = quarterly, 12 = yearly. So 60 × 1 = 5 years monthly."),
+            FieldSpec("salvage_value_percent", "Salvage Value (%)", "Float",
+                      help="Residual value as a % of cost; depreciation never goes below it. 0 = none."),
+            FieldSpec("fixed_asset_account_id", "Fixed Asset Account", "Link", options="account",
+                      help="Balance-sheet account the asset's cost sits in."),
+            FieldSpec("depreciation_expense_account_id", "Depreciation Expense Account", "Link",
+                      options="account", help="Expense account each depreciation entry debits."),
+            FieldSpec("accumulated_depreciation_account_id", "Accumulated Depreciation Account", "Link",
+                      options="account", help="Contra-asset account each depreciation entry credits."),
+            FieldSpec("disabled", "Disabled", "Check", in_list=True),
+        ),
+        list_fields=("category_name", "depreciation_method", "total_number_of_depreciations", "disabled"),
+    )
+)
+
+register(
+    DocTypeDescriptor(
+        name="Location",
+        slug="location",
+        model=Location,
+        title_field="location_name",
+        naming="field:location_name",
+        group="Assets",
+        permission_name="Location",
+        permissions={
+            "Accounts Manager": _ACCOUNTS_MANAGER,
+            "Accounts User": _ACCOUNTS_USER,
+        },
+        fields=(
+            FieldSpec("location_name", "Location Name", "Data", required=True, in_list=True, span=2,
+                      unique=True, help="Where assets physically sit, e.g. Head Office, Warehouse A."),
+            FieldSpec("disabled", "Disabled", "Check", in_list=True),
+        ),
+        list_fields=("location_name", "disabled"),
     )
 )
 

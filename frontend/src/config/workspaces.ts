@@ -493,9 +493,51 @@ const ACCOUNTING: WorkspaceConfig = {
   ],
 };
 
+// Assets module (Phase 1): the fixed-asset register + its two engine masters.
+// `/assets` is the register list itself (not a separate dashboard), so statsEndpoint
+// is unused until a workspace dashboard lands in a later phase.
+const ASSETS: WorkspaceConfig = {
+  key: "assets",
+  title: "Assets",
+  statsEndpoint: "/assets/workspace",
+  sidebar: [
+    {
+      items: [
+        { label: "Home", to: "/", icon: "⌂" },
+        { label: "Assets", to: "/assets", icon: "🏗" },
+      ],
+    },
+    {
+      title: "Setup",
+      items: [
+        { label: "Asset Category", to: "/m/asset-category" },
+        { label: "Location", to: "/m/location" },
+      ],
+    },
+    {
+      title: "Reports",
+      items: [
+        { label: "General Ledger", to: "/reports?tab=general-ledger" },
+        { label: "Financial Reports", to: "/reports" },
+      ],
+    },
+  ],
+  cards: [
+    {
+      title: "Assets",
+      links: [
+        { label: "Asset Register", to: "/assets" },
+        { label: "Asset Category", to: "/m/asset-category" },
+        { label: "Location", to: "/m/location" },
+      ],
+    },
+  ],
+};
+
 export const WORKSPACES: Record<string, WorkspaceConfig> = {
   selling: SELLING,
   buying: BUYING,
   stock: STOCK,
   accounting: ACCOUNTING,
+  assets: ASSETS,
 };
