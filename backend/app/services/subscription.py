@@ -20,6 +20,7 @@ from sqlalchemy.orm import selectinload
 
 from app.core.database import set_company_context
 from app.core.exceptions import NotFoundError, ValidationError
+from app.core.logging import get_logger
 from app.core.naming import get_next_name
 from app.core.security import CurrentUser
 from app.models.accounts import Subscription, SubscriptionPlan, SubscriptionPlanDetail
@@ -34,6 +35,8 @@ from app.services import sales_invoice
 from app.services.accounts_common import get_company, get_customer
 from app.services.audit import log_audit
 from app.services.pagination import paginate
+
+logger = get_logger(__name__)
 
 _SERIES = "ACC-SUB-.YY.-"
 _BILLABLE = ("Active", "Past Due")
@@ -160,6 +163,21 @@ async def create_subscription(
         user_id=user.id, company_id=company.id,
     )
     await db.commit()
+
+    # Auto-generate the first invoice when the first period is already due (ERPNext-style),
+    # so the customer is billed immediately rather than waiting for the next daily run.
+    # generate_due_invoice is a no-op for a future-dated start (returns "Not due yet").
+    # A failure here (e.g. posting date outside any fiscal year) must NOT fail subscription
+    # creation — the daily job will retry, or the user can bill manually.
+    created = await get_subscription(db, sub.id, company.id)
+    try:
+        result = await generate_due_invoice(db, created, on_date=date.today(), user=user)
+        if result.generated:
+            logger.info("subscription_first_invoice", subscription=str(sub.id),
+                        invoice=result.invoice_name)
+    except Exception:  # noqa: BLE001 — first-invoice failure must not abort creation
+        await db.rollback()
+        logger.exception("subscription_first_invoice_failed", subscription=str(sub.id))
     return await get_subscription(db, sub.id, company.id)
 
 

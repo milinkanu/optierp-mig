@@ -134,6 +134,8 @@ and stops cleanly at `end_date` / on Cancel. Manual `generate-invoice` produces 
 > `api/v1/accounts/subscriptions.py`, `SubscriptionView.vue` at `/subscriptions`); daily job
 > `app.jobs.subscription.process_subscriptions` (registered in `SCHEDULED_JOBS`, 02:00). Idempotent
 > cursor‑advance rides the invoice's commit; integration tests in `tests/integration/test_subscription.py`
-> cover the monthly cycle, idempotent re‑run, and clean completion at `end_date`. Deferred revenue
-> remains out of scope (master §3.6). See [[document-delivery-plan]] and [[accounting-plan-status]].
+> cover the monthly cycle, idempotent re‑run, and clean completion at `end_date`. The **first invoice
+> is auto‑generated on create** when the first period is already due (renewals run on the daily job);
+> a future‑dated start bills nothing until then. Deferred revenue remains out of scope (master §3.6).
+> See [[document-delivery-plan]] and [[accounting-plan-status]].
 </content>
