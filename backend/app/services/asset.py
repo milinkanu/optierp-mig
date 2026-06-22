@@ -42,7 +42,13 @@ from app.models.assets import (
     Location,
 )
 from app.models.base import DOCSTATUS_CANCELLED, DOCSTATUS_SUBMITTED
-from app.schemas.assets import AssetCreate, AssetDisposeIn, AssetMoveIn, DepreciateResult
+from app.schemas.assets import (
+    AssetCreate,
+    AssetDisposeIn,
+    AssetMoveIn,
+    AssetValueAdjustIn,
+    DepreciateResult,
+)
 from app.services import gl
 from app.services.accounts_common import NAMING_SERIES, get_company, require_draft, require_submitted
 from app.services.audit import log_audit
@@ -580,3 +586,167 @@ async def move_asset(
     )
     await db.commit()
     return await get_asset(db, asset.id, user.company_id)
+
+
+# --- value adjustment (revalue + reschedule) ---------------------------------------
+
+
+def _reschedule_unposted(asset: Asset, category: AssetCategory, new_book_value: Decimal) -> None:
+    """Recompute the *unposted* schedule rows so they depreciate ``new_book_value`` down to
+    salvage over the remaining periods, keeping their dates. Manual schedules are left as-is."""
+    unposted = [r for r in asset.schedule if not r.posted]
+    if not unposted or category.depreciation_method == "Manual":
+        return
+    salvage = (
+        asset.gross_purchase_amount * category.salvage_value_percent / Decimal("100")
+    ).quantize(TWOPLACES, rounding=ROUND_HALF_UP)
+    n = len(unposted)
+    depreciable = max(new_book_value - salvage, ZERO)
+
+    amounts: list[Decimal] = []
+    if category.depreciation_method == "Written Down Value" and depreciable > ZERO:
+        rate = Decimal(1) - (salvage / new_book_value) ** (Decimal(1) / Decimal(n))
+        book = new_book_value
+        for i in range(1, n + 1):
+            if i < n:
+                amt = (book * rate).quantize(TWOPLACES, rounding=ROUND_HALF_UP)
+                if book - amt < salvage:
+                    amt = book - salvage
+                if amt < ZERO:
+                    amt = ZERO
+            else:
+                amt = book - salvage
+            book -= amt
+            amounts.append(amt)
+    else:  # Straight Line (or nothing left to depreciate)
+        per = (depreciable / n).quantize(TWOPLACES, rounding=ROUND_HALF_UP) if depreciable > ZERO else ZERO
+        running = ZERO
+        for i in range(1, n + 1):
+            amt = per if i < n else (depreciable - running)
+            running += amt
+            amounts.append(amt)
+
+    accumulated_base = asset.accumulated_depreciation  # real accumulated (incl. this adjustment)
+    running = ZERO
+    for row, amt in zip(unposted, amounts):
+        running += amt
+        row.depreciation_amount = amt
+        row.accumulated_depreciation = accumulated_base + running
+
+
+async def adjust_asset_value(
+    db: AsyncSession, asset_id: uuid.UUID, payload: AssetValueAdjustIn, user: CurrentUser
+) -> Asset:
+    """Revalue an asset to a new book value: post the difference and reschedule the
+    remaining depreciation. Write-down (value falls): Dr difference account (impairment),
+    Cr Accumulated Depreciation. Write-up: the reverse."""
+    asset = await get_asset(db, asset_id, user.company_id)
+    require_submitted(asset.docstatus)
+    if asset.status in ("Sold", "Scrapped"):
+        raise ValidationError(f"Cannot revalue a {asset.status.lower()} asset", field="status")
+    category = await _get_category(db, asset.asset_category_id, asset.company_id)
+    if not category.accumulated_depreciation_account_id:
+        raise ValidationError(
+            f"Asset Category '{category.category_name}' needs an Accumulated Depreciation account",
+            field="asset_category_id",
+        )
+
+    current_book = asset.book_value
+    new_value = payload.new_asset_value
+    difference = current_book - new_value  # positive = write-down, negative = write-up
+    if difference == ZERO:
+        raise ValidationError("New value equals the current book value — nothing to adjust",
+                              field="new_asset_value")
+
+    if difference > ZERO:  # write-down
+        lines = [
+            (payload.difference_account_id, difference, ZERO),  # Dr impairment/expense
+            (category.accumulated_depreciation_account_id, ZERO, difference),  # Cr accum dep
+        ]
+    else:  # write-up
+        amt = -difference
+        lines = [
+            (category.accumulated_depreciation_account_id, amt, ZERO),  # Dr accum dep
+            (payload.difference_account_id, ZERO, amt),  # Cr surplus/income
+        ]
+
+    await set_company_context(db, asset.company_id)
+    remark = (
+        f"Value adjustment of {asset.asset_name} ({asset.name}): {current_book} → {new_value}"
+    )
+    je = await _post_journal(
+        db, company_id=asset.company_id, posting_date=payload.adjustment_date,
+        voucher_type="Asset Value Adjustment", lines=lines, remark=remark, actor=user,
+    )
+    asset.accumulated_depreciation_adjustment += difference
+    _reschedule_unposted(asset, category, new_value)
+    asset.modified_by = user.id
+    await db.flush()
+    await log_audit(
+        db, doctype="Asset", document_id=asset.id, action="UPDATE",
+        user_id=user.id, company_id=asset.company_id,
+    )
+    await db.commit()
+    logger.info("asset_value_adjusted", asset=str(asset.id), journal_entry=str(je.id))
+    return await get_asset(db, asset.id, user.company_id)
+
+
+# --- auto-create from a fixed-asset Purchase Invoice line --------------------------
+
+
+async def create_assets_from_purchase_invoice(db: AsyncSession, invoice, user: CurrentUser) -> int:
+    """Create one **draft** Asset per fixed-asset line on a submitted Purchase Invoice.
+
+    Decoupled from the invoice's own GL (the line already debits the item's account — point
+    that at the Fixed Asset COA account). The user reviews + submits the draft Asset to start
+    depreciation. Returns how many assets were created. Best-effort: the caller wraps this so
+    a failure here never rolls back the invoice.
+    """
+    from app.models.stock import Item
+
+    created = 0
+    for line in invoice.items:
+        if line.item_id is None:
+            continue
+        item = await db.get(Item, line.item_id)
+        if item is None or not item.is_fixed_asset or item.asset_category_id is None:
+            continue
+        category = await db.get(AssetCategory, item.asset_category_id)
+        if category is None or category.company_id != invoice.company_id:
+            continue
+        gross = Decimal(line.base_net_amount)
+        if gross <= ZERO:
+            continue
+        name = await get_next_name(db, _SERIES, invoice.company_id, on_date=invoice.posting_date)
+        asset = Asset(
+            id=uuid.uuid4(),
+            company_id=invoice.company_id,
+            name=name,
+            asset_name=item.item_name,
+            asset_category_id=category.id,
+            gross_purchase_amount=gross,
+            purchase_date=invoice.posting_date,
+            available_for_use_date=invoice.posting_date,
+            status="Draft",
+            remarks=f"Auto-created from Purchase Invoice {invoice.name}",
+            owner=user.id,
+            modified_by=user.id,
+        )
+        db.add(asset)
+        await db.flush()
+        payload = AssetCreate(
+            asset_name=item.item_name, asset_category_id=category.id,
+            gross_purchase_amount=gross, available_for_use_date=invoice.posting_date,
+        )
+        for row in _build_schedule_rows(asset, category, payload):
+            row.asset_id = asset.id
+            db.add(row)
+        await db.flush()
+        await log_audit(
+            db, doctype="Asset", document_id=asset.id, action="INSERT",
+            user_id=user.id, company_id=invoice.company_id,
+        )
+        created += 1
+    if created:
+        await db.commit()
+    return created

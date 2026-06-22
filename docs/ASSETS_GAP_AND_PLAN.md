@@ -2,10 +2,10 @@
 
 **Scope:** a new top-level **Assets** module for OptiReach ERP, modelled on ERPNext v15 Assets, with
 MSME simplifications (single appliance-distribution company, India GAAP, no multi-finance-book).
-**Status:** 🟢 **Phases 1–2 BUILT & verified** (2026-06-22/23, migrations 0051–0052) — Asset
-register + straight-line/WDV/manual depreciation + idempotent posting job (Phase 1), plus
-sell/scrap **disposal** (gain/loss JE, halts depreciation) and **movement** (location/custodian
-history) (Phase 2). Live end-to-end (UI + GL). Phases 3–4 remain. Started as a build plan.
+**Status:** 🟢 **Phases 1–3 BUILT & verified** (2026-06-22/23, migrations 0051–0053) — register +
+SL/WDV/manual depreciation + posting job (P1); disposal + movement (P2); **maintenance/repair
+logs, value adjustment (revalue→JE+reschedule), and auto-create-Asset-from-Purchase-Invoice** (P3).
+Live end-to-end (UI + GL). **Only Phase 4 (reports) remains.** Started as a build plan.
 **Designed:** 2026-06-22.
 
 > Mirrors the structure of [ACCOUNTING_GAP_AND_PLAN.md](ACCOUNTING_GAP_AND_PLAN.md): plain-language
@@ -195,9 +195,26 @@ to be completed. *MSME-lean:* ship **manual asset creation first**; auto-from-pu
 - **Tests:** +3 unit (WDV math) + 4 integration (sell acceptance, scrap, WDV schedule, move history).
   All green; ruff + vue-tsc clean.
 
-### Phase 3 — Maintenance, repair, value adjustment, auto-from-purchase
-- **Asset Maintenance** + **Asset Repair** (lean logs; repair can raise a normal JE), **Asset Value
-  Adjustment** (revalue + reschedule), and **auto-create Asset from a fixed-asset Purchase Invoice line**.
+### Phase 3 — Maintenance, repair, value adjustment, auto-from-purchase — ✅ DONE
+- ✅ **Asset Maintenance** + **Asset Repair** — engine masters (auto-numbered `ASSET-MNT-`/`ASSET-RPR-`,
+  Link to the Asset via the new `asset` LINK_SOURCES entry; pure logs, no GL — a repair that should hit
+  the books is a separate JE, kept uncoupled).
+- ✅ **Asset Value Adjustment** (`POST /assets/{id}/adjust-value`): revalue to a new book value — posts
+  the difference (Dr impairment / Cr Accumulated Depreciation for a write-down, reverse for a write-up)
+  via the shared `_post_journal`, tracks it on `accumulated_depreciation_adjustment` (part of book value),
+  and **reschedules the unposted rows** (SL/WDV) to depreciate the new value down to salvage.
+- ✅ **Auto-create Asset from a fixed-asset Purchase Invoice line**: `is_fixed_asset` + `asset_category_id`
+  on **Item** (the deferred-from-Phase-1 fields); on PI submit a best-effort post-commit hook creates one
+  **draft** Asset per fixed-asset line (gross = line net amount, dates = posting date). The PI debits the
+  item's expense account — point it at the Fixed Asset COA account — so **no change to PI GL logic**
+  (decoupled). The draft is reviewed + submitted to start depreciation.
+- ✅ Frontend: Revalue action on the asset detail; Maintenance/Repair in the Assets sidebar; `Fixed asset`
+  + Asset Category on the Item form.
+- *Acceptance met:* a ₹120k asset revalued to ₹80k books a ₹40k impairment and reschedules the remaining
+  rows; a fixed-asset PI line auto-creates a ₹200k draft Asset. Verified by integration tests + live UI
+  (a ₹100k asset revalued to ₹70k → ₹30k accumulated, ₹70k book value, rows rescheduled to ₹1,166.67).
+- **Tests:** +3 integration (value-adjustment, auto-from-PI, maintenance-link); 119 unit + 13 asset
+  integration + 8 module02 PI (no regression). ruff + vue-tsc clean.
 
 ### Phase 4 — Reports
 - **Fixed Asset Register / Net Block** (gross, accumulated dep, book value per asset/category),

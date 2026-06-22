@@ -83,6 +83,18 @@ const mDate = ref(today);
 const mLocation = ref("");
 const mCustodian = ref("");
 
+// revalue form
+const showRevalue = ref(false);
+const rDate = ref(today);
+const rNewValue = ref<number | null>(null);
+const rDiffAccount = ref("");
+
+function openForm(which: "dispose" | "move" | "revalue"): void {
+  showDispose.value = which === "dispose" ? !showDispose.value : false;
+  showMove.value = which === "move" ? !showMove.value : false;
+  showRevalue.value = which === "revalue" ? !showRevalue.value : false;
+}
+
 async function fetchAsset(): Promise<void> {
   loading.value = true;
   error.value = null;
@@ -166,6 +178,28 @@ async function dispose(): Promise<void> {
   }
 }
 
+async function adjustValue(): Promise<void> {
+  if (!rNewValue.value || !rDiffAccount.value) return;
+  busy.value = true;
+  error.value = null;
+  notice.value = null;
+  try {
+    await api.post(`/assets/${props.id}/adjust-value`, {
+      adjustment_date: rDate.value,
+      new_asset_value: rNewValue.value,
+      difference_account_id: rDiffAccount.value,
+    });
+    showRevalue.value = false;
+    rNewValue.value = null;
+    notice.value = "Asset revalued.";
+    await fetchAsset();
+  } catch (e) {
+    error.value = e as ErrorEnvelope;
+  } finally {
+    busy.value = false;
+  }
+}
+
 async function move(): Promise<void> {
   busy.value = true;
   error.value = null;
@@ -216,10 +250,13 @@ onMounted(async () => {
         >
           Depreciate now
         </button>
-        <button v-if="active" class="rounded-md border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50" :disabled="busy" @click="showMove = !showMove; showDispose = false">
+        <button v-if="active" class="rounded-md border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50" :disabled="busy" @click="openForm('move')">
           Move
         </button>
-        <button v-if="active" class="rounded-md border border-amber-300 px-3 py-1.5 text-sm font-medium text-amber-700 hover:bg-amber-50" :disabled="busy" @click="showDispose = !showDispose; showMove = false">
+        <button v-if="active" class="rounded-md border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50" :disabled="busy" @click="openForm('revalue')">
+          Revalue
+        </button>
+        <button v-if="active" class="rounded-md border border-amber-300 px-3 py-1.5 text-sm font-medium text-amber-700 hover:bg-amber-50" :disabled="busy" @click="openForm('dispose')">
           Dispose
         </button>
         <button
@@ -277,6 +314,36 @@ onMounted(async () => {
       </p>
       <div class="mt-3 flex justify-end">
         <button type="submit" class="btn-primary" :disabled="busy || !dGainLoss">Confirm disposal</button>
+      </div>
+    </form>
+
+    <!-- revalue form -->
+    <form v-if="showRevalue" class="mb-6 rounded-lg border border-gray-200 bg-white p-5 shadow-sm" @submit.prevent="adjustValue">
+      <h2 class="mb-3 text-sm font-semibold text-gray-700">Revalue asset</h2>
+      <div class="grid grid-cols-2 gap-4 md:grid-cols-3">
+        <div>
+          <label class="form-label">Date</label>
+          <input v-model="rDate" type="date" class="form-input" />
+        </div>
+        <div>
+          <label class="form-label">New book value</label>
+          <input v-model.number="rNewValue" type="number" min="0" step="any" class="form-input" :placeholder="asset.book_value" />
+        </div>
+        <div>
+          <label class="form-label">Difference account (impairment / surplus)</label>
+          <select v-model="rDiffAccount" class="form-input">
+            <option value="">Select…</option>
+            <option v-for="a in accounts" :key="a.value" :value="a.value">{{ a.label }}</option>
+          </select>
+        </div>
+      </div>
+      <p class="mt-2 text-xs text-gray-500">
+        Current book value is {{ formatCurrency(asset.book_value) }}. A lower new value books an impairment
+        (Dr difference / Cr Accumulated Depreciation); a higher value books a write-up. The remaining
+        depreciation is rescheduled to the new value.
+      </p>
+      <div class="mt-3 flex justify-end">
+        <button type="submit" class="btn-primary" :disabled="busy || !rNewValue || !rDiffAccount">Revalue</button>
       </div>
     </form>
 

@@ -167,6 +167,8 @@ async def create_item(db: AsyncSession, payload: ItemCreate, user: CurrentUser) 
         lead_time_days=payload.lead_time_days,
         brand=payload.brand,
         barcode=payload.barcode,
+        is_fixed_asset=payload.is_fixed_asset,
+        asset_category_id=payload.asset_category_id,
         owner=user.id,
         modified_by=user.id,
     )

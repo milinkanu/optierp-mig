@@ -572,6 +572,24 @@ async def submit_purchase_invoice(
         user_id=user.id, company_id=invoice.company_id,
     )
     await db.commit()
+
+    # Auto-create draft Assets for any fixed-asset lines (Assets module Phase 3). Runs
+    # after the invoice commits and is best-effort: a failure here must never roll back a
+    # posted invoice — the user can create the asset manually instead.
+    try:
+        from app.services import asset as asset_service
+
+        full = await get_purchase_invoice(db, invoice.id, user.company_id)
+        created = await asset_service.create_assets_from_purchase_invoice(db, full, user)
+        if created:
+            from app.core.logging import get_logger
+
+            get_logger(__name__).info(
+                "assets_created_from_invoice", invoice=str(invoice.id), count=created
+            )
+    except Exception:  # noqa: BLE001 — asset auto-creation must not fail the invoice
+        await db.rollback()
+
     return await get_purchase_invoice(db, invoice.id, user.company_id)
 
 

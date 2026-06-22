@@ -508,6 +508,13 @@ const ASSETS: WorkspaceConfig = {
       ],
     },
     {
+      title: "Maintenance",
+      items: [
+        { label: "Asset Maintenance", to: "/m/asset-maintenance" },
+        { label: "Asset Repair", to: "/m/asset-repair" },
+      ],
+    },
+    {
       title: "Setup",
       items: [
         { label: "Asset Category", to: "/m/asset-category" },
@@ -529,6 +536,13 @@ const ASSETS: WorkspaceConfig = {
         { label: "Asset Register", to: "/assets" },
         { label: "Asset Category", to: "/m/asset-category" },
         { label: "Location", to: "/m/location" },
+      ],
+    },
+    {
+      title: "Maintenance",
+      links: [
+        { label: "Asset Maintenance", to: "/m/asset-maintenance" },
+        { label: "Asset Repair", to: "/m/asset-repair" },
       ],
     },
   ],

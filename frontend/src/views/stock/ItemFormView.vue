@@ -57,8 +57,12 @@ const form = reactive({
   lead_time_days: 0,
   brand: "",
   barcode: "",
+  is_fixed_asset: false,
+  asset_category_id: "",
   disabled: false,
 });
+
+const assetCategories = ref<Array<{ id: string; category_name: string }>>([]);
 
 const incomeAccounts = computed(() =>
   accounts.leafAccounts.filter((a: AccountNode) => a.root_type === "Income"),
@@ -107,6 +111,8 @@ async function loadItem(): Promise<void> {
       lead_time_days: data.lead_time_days,
       brand: data.brand ?? "",
       barcode: data.barcode ?? "",
+      is_fixed_asset: data.is_fixed_asset ?? false,
+      asset_category_id: data.asset_category_id ?? "",
       disabled: data.disabled,
     });
     lastPurchaseRate.value = data.last_purchase_rate;
@@ -148,6 +154,8 @@ async function save(): Promise<void> {
         lead_time_days: form.lead_time_days || 0,
         brand: form.brand || null,
         barcode: form.barcode || null,
+        is_fixed_asset: form.is_fixed_asset,
+        asset_category_id: form.is_fixed_asset ? form.asset_category_id || null : null,
         disabled: form.disabled,
       });
       await loadItem();
@@ -179,6 +187,8 @@ async function save(): Promise<void> {
         lead_time_days: form.lead_time_days || 0,
         brand: form.brand || null,
         barcode: form.barcode || null,
+        is_fixed_asset: form.is_fixed_asset,
+        asset_category_id: form.is_fixed_asset ? form.asset_category_id || null : null,
       });
       router.push(`/items/${data.id}`);
     }
@@ -200,6 +210,9 @@ onMounted(async () => {
     api.get<{ items: Array<{ id: string; title: string }> }>("/registry/item-tax-template", {
       params: { page_size: 200 },
     }).then((r) => { itemTaxTemplates.value = r.data.items ?? []; }).catch(() => {}),
+    api.get<{ items: Array<{ id: string; category_name: string }> }>("/registry/asset-category", {
+      params: { page_size: 200 },
+    }).then((r) => { assetCategories.value = r.data.items ?? []; }).catch(() => {}),
   ]);
   await loadItem();
 });
@@ -314,10 +327,28 @@ onMounted(async () => {
           <input v-model="form.has_batch_no" type="checkbox" :disabled="isEdit" class="rounded border-gray-300" />
           Track batches (lots)
         </label>
+        <label class="flex items-center gap-2 text-sm text-gray-700">
+          <input v-model="form.is_fixed_asset" type="checkbox" class="rounded border-gray-300" />
+          Fixed asset
+        </label>
         <label v-if="isEdit" class="flex items-center gap-2 text-sm text-gray-700">
           <input v-model="form.disabled" type="checkbox" class="rounded border-gray-300" />
           Disabled
         </label>
+      </div>
+      <div v-if="form.is_fixed_asset" class="mt-3 grid grid-cols-3 gap-4">
+        <div>
+          <label class="form-label">Asset Category</label>
+          <select v-model="form.asset_category_id" class="form-input">
+            <option value="">—</option>
+            <option v-for="c in assetCategories" :key="c.id" :value="c.id">{{ c.category_name }}</option>
+          </select>
+        </div>
+        <p class="col-span-2 self-end text-xs text-gray-400">
+          A Purchase Invoice line for this item auto-creates a draft Asset under this category.
+          Set the Expense Account (under Purchasing) to the Fixed Asset ledger account so the
+          purchase debits the asset.
+        </p>
       </div>
     </section>
 

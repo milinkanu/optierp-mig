@@ -20,6 +20,7 @@ from app.schemas.assets import (
     AssetListItem,
     AssetMoveIn,
     AssetResponse,
+    AssetValueAdjustIn,
     DepreciateResult,
 )
 from app.schemas.common import ListResponse
@@ -131,3 +132,21 @@ async def move_asset(
     db: Annotated[AsyncSession, Depends(get_tenant_db)],
 ) -> AssetResponse:
     return AssetResponse.model_validate(await service.move_asset(db, asset_id, payload, current_user))
+
+
+@router.post(
+    "/{asset_id}/adjust-value",
+    response_model=AssetResponse,
+    summary="Revalue an asset",
+    description="Adjusts the asset to a new book value, posting the difference (impairment "
+    "or write-up) to a Journal Entry and rescheduling the remaining depreciation.",
+)
+async def adjust_value(
+    asset_id: uuid.UUID,
+    payload: AssetValueAdjustIn,
+    current_user: Annotated[CurrentUser, Depends(require_permission("Asset", "write"))],
+    db: Annotated[AsyncSession, Depends(get_tenant_db)],
+) -> AssetResponse:
+    return AssetResponse.model_validate(
+        await service.adjust_asset_value(db, asset_id, payload, current_user)
+    )

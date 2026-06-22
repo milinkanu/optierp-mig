@@ -49,6 +49,12 @@ class AssetMoveIn(BaseModel):
     to_custodian: str | None = None
 
 
+class AssetValueAdjustIn(BaseModel):
+    adjustment_date: date
+    new_asset_value: Decimal = Field(ge=0)  # the asset's new book value after revaluation
+    difference_account_id: uuid.UUID  # impairment/expense (write-down) or surplus (write-up)
+
+
 class AssetMovementResponse(ORMModel):
     id: uuid.UUID
     movement_date: date
