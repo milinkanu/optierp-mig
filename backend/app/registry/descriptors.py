@@ -25,7 +25,7 @@ from app.models.accounts import (
     TaxCategory,
     TaxWithholdingCategory,
 )
-from app.models.assets import AssetCategory, Location
+from app.models.assets import Asset, AssetCategory, AssetMaintenance, AssetRepair, Location
 from app.models.buying import Supplier, SupplierGroup
 from app.models.selling import (
     Address,
@@ -905,6 +905,62 @@ register(
     )
 )
 
+# Lean maintenance / repair logs (auto-numbered, no GL). A repair that should hit
+# the books is a separate Journal Entry — kept uncoupled (master §2).
+register(
+    DocTypeDescriptor(
+        name="Asset Maintenance",
+        slug="asset-maintenance",
+        model=AssetMaintenance,
+        title_field="name",
+        naming="series:ASSET-MNT-.YYYY.-",
+        group="Assets",
+        permission_name="Asset Maintenance",
+        permissions={
+            "Accounts Manager": _ACCOUNTS_MANAGER,
+            "Accounts User": _ACCOUNTS_USER,
+        },
+        fields=(
+            FieldSpec("asset_id", "Asset", "Link", options="asset", required=True, in_list=True),
+            FieldSpec("maintenance_type", "Type", "Select",
+                      options="Preventive\nCalibration\nInspection\nOther", in_list=True),
+            FieldSpec("maintenance_date", "Date", "Date", required=True, in_list=True),
+            FieldSpec("description", "Description", "Text", span=2),
+            FieldSpec("cost", "Cost", "Currency", in_list=True,
+                      help="Informational — post a Journal Entry if you need it in the books."),
+            FieldSpec("status", "Status", "Select", options="Planned\nCompleted\nCancelled", in_list=True),
+        ),
+        list_fields=("name", "asset_id", "maintenance_type", "maintenance_date", "status"),
+    )
+)
+
+register(
+    DocTypeDescriptor(
+        name="Asset Repair",
+        slug="asset-repair",
+        model=AssetRepair,
+        title_field="name",
+        naming="series:ASSET-RPR-.YYYY.-",
+        group="Assets",
+        permission_name="Asset Repair",
+        permissions={
+            "Accounts Manager": _ACCOUNTS_MANAGER,
+            "Accounts User": _ACCOUNTS_USER,
+        },
+        fields=(
+            FieldSpec("asset_id", "Asset", "Link", options="asset", required=True, in_list=True),
+            FieldSpec("repair_date", "Failure / Repair Date", "Date", required=True, in_list=True),
+            FieldSpec("description", "Problem / Work Done", "Text", span=2),
+            FieldSpec("repair_cost", "Repair Cost", "Currency", in_list=True,
+                      help="Informational — post a Journal Entry if you need it in the books."),
+            FieldSpec("downtime_hours", "Downtime (hours)", "Float"),
+            FieldSpec("status", "Status", "Select", options="Pending\nCompleted", in_list=True),
+            FieldSpec("completion_date", "Completion Date", "Date", depends_on="status"),
+        ),
+        list_fields=("name", "asset_id", "repair_date", "status"),
+    )
+)
+
 
 # --- Items & Pricing: Pricing Rule (Phase 3) ---------------------------------
 register(
@@ -1173,6 +1229,8 @@ LINK_SOURCES: dict[str, tuple[type, str, str]] = {
     "item": (Item, "item_code", "Item"),
     "item-group": (ItemGroup, "item_group_name", "Item Group"),
     "account": (Account, "account_name", "Account"),
+    # the bespoke Asset doc, so maintenance/repair logs can Link to it
+    "asset": (Asset, "asset_name", "Asset"),
 }
 
 

@@ -78,6 +78,8 @@ class ItemCreate(BaseModel):
     lead_time_days: int = 0
     brand: str | None = None
     barcode: str | None = None
+    is_fixed_asset: bool = False
+    asset_category_id: uuid.UUID | None = None
 
 
 class ItemUpdate(BaseModel):
@@ -100,6 +102,8 @@ class ItemUpdate(BaseModel):
     lead_time_days: int | None = None
     brand: str | None = None
     barcode: str | None = None
+    is_fixed_asset: bool | None = None
+    asset_category_id: uuid.UUID | None = None
     disabled: bool | None = None
 
 
@@ -132,6 +136,8 @@ class ItemResponse(DocumentMeta):
     lead_time_days: int
     brand: str | None
     barcode: str | None
+    is_fixed_asset: bool
+    asset_category_id: uuid.UUID | None
     disabled: bool
     company_id: uuid.UUID
 

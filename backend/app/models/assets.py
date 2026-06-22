@@ -133,6 +133,11 @@ class Asset(Base, DocumentMixin, CompanyScopedMixin):
     opening_accumulated_depreciation: Mapped[Decimal] = mapped_column(
         Numeric(21, 6), nullable=False, default=0, server_default=text("0")
     )
+    # net change to accumulated depreciation from Value Adjustments (Phase 3): a
+    # write-down adds (book value falls), a write-up subtracts. Part of book value.
+    accumulated_depreciation_adjustment: Mapped[Decimal] = mapped_column(
+        Numeric(21, 6), nullable=False, default=0, server_default=text("0")
+    )
     purchase_date: Mapped[date | None] = mapped_column(Date)
     available_for_use_date: Mapped[date] = mapped_column(Date, nullable=False)  # depreciation starts here
     status: Mapped[str] = mapped_column(
@@ -182,11 +187,13 @@ class Asset(Base, DocumentMixin, CompanyScopedMixin):
 
     @property
     def accumulated_depreciation(self) -> Decimal:
-        """Depreciation actually booked so far = opening + sum of posted rows."""
+        """Depreciation booked so far = opening + posted rows + value adjustments."""
         posted = sum(
             (r.depreciation_amount for r in self.schedule if r.posted), Decimal("0")
         )
-        return self.opening_accumulated_depreciation + posted
+        return (
+            self.opening_accumulated_depreciation + posted + self.accumulated_depreciation_adjustment
+        )
 
     @property
     def book_value(self) -> Decimal:
@@ -257,3 +264,52 @@ class AssetMovement(Base, DocumentMixin, CompanyScopedMixin):
     @property
     def to_location_name(self) -> str | None:
         return self.to_location.location_name if self.to_location else None
+
+
+# Phase 3 lean log masters (engine-served, no GL). ERPNext's maintenance teams /
+# tasks / SLAs and the repair-capitalization machinery are dropped (master §2): a
+# repair that should be expensed/capitalised is a normal Journal Entry, kept separate.
+MAINTENANCE_TYPES = ("Preventive", "Calibration", "Inspection", "Other")
+MAINTENANCE_STATUSES = ("Planned", "Completed", "Cancelled")
+REPAIR_STATUSES = ("Pending", "Completed")
+
+
+class AssetMaintenance(Base, DocumentMixin, CompanyScopedMixin):
+    """A maintenance log entry for an asset — engine master (auto-numbered, no GL)."""
+
+    __tablename__ = "asset_maintenances"
+    __table_args__ = (UniqueConstraint("company_id", "name", name="uq_asset_maintenance_name"),)
+
+    name: Mapped[str] = mapped_column(String(140), nullable=False)  # series doc number
+    asset_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("assets.id", ondelete="CASCADE"), nullable=False
+    )
+    maintenance_type: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="Preventive", server_default=text("'Preventive'")
+    )
+    maintenance_date: Mapped[date] = mapped_column(Date, nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    cost: Mapped[Decimal] = mapped_column(Numeric(21, 6), nullable=False, default=0, server_default=text("0"))
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="Planned", server_default=text("'Planned'")
+    )
+
+
+class AssetRepair(Base, DocumentMixin, CompanyScopedMixin):
+    """A breakdown-repair log entry for an asset — engine master (auto-numbered, no GL)."""
+
+    __tablename__ = "asset_repairs"
+    __table_args__ = (UniqueConstraint("company_id", "name", name="uq_asset_repair_name"),)
+
+    name: Mapped[str] = mapped_column(String(140), nullable=False)  # series doc number
+    asset_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("assets.id", ondelete="CASCADE"), nullable=False
+    )
+    repair_date: Mapped[date] = mapped_column(Date, nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    repair_cost: Mapped[Decimal] = mapped_column(Numeric(21, 6), nullable=False, default=0, server_default=text("0"))
+    downtime_hours: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, default=0, server_default=text("0"))
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="Pending", server_default=text("'Pending'")
+    )
+    completion_date: Mapped[date | None] = mapped_column(Date)

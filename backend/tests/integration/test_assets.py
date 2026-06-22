@@ -293,6 +293,134 @@ async def test_move_asset_records_history(ctx):
     assert mv["to_custodian"] == "Sita"
 
 
+async def test_value_adjustment_writedown_and_reschedule(ctx):
+    """Revaluing a ₹120k asset down to ₹80k books a ₹40k impairment, raises accumulated
+    depreciation, and reschedules the remaining 60 rows to depreciate ₹80k."""
+    client, company, headers = ctx
+    cat = await _category(client, company, headers, name="Impairable")
+    fy_start = _fy_start(date.today())
+    asset = (
+        await client.post(
+            f"{API}/assets",
+            json={
+                "asset_name": "Server Rack",
+                "asset_category_id": cat["id"],
+                "gross_purchase_amount": "120000",
+                "available_for_use_date": str(fy_start),
+            },
+            headers=headers,
+        )
+    ).json()
+    await client.post(f"{API}/assets/{asset['id']}/submit", headers=headers)
+
+    impairment = await coa_account(client, company, headers, "Impairment")
+    r = await client.post(
+        f"{API}/assets/{asset['id']}/adjust-value",
+        json={
+            "adjustment_date": str(date.today()),
+            "new_asset_value": "80000",
+            "difference_account_id": impairment["id"],
+        },
+        headers=headers,
+    )
+    assert r.status_code == 200, r.text
+    adjusted = r.json()
+    assert Decimal(adjusted["book_value"]) == Decimal("80000.000000")
+    assert Decimal(adjusted["accumulated_depreciation"]) == Decimal("40000.000000")
+    # remaining 60 rows now depreciate 80k → 1333.33/row, ending accumulated at 120k
+    first = adjusted["schedule"][0]
+    assert Decimal(first["depreciation_amount"]) == Decimal("1333.330000")
+    assert Decimal(adjusted["schedule"][-1]["accumulated_depreciation"]) == Decimal("120000.000000")
+
+    # the impairment Journal Entry is balanced (Dr Impairment 40k / Cr Accum Dep 40k)
+    je = (
+        await client.get(
+            f"{API}/journal-entries", params={"docstatus": 1}, headers=headers
+        )
+    ).json()["items"]
+    assert any(j["voucher_type"] == "Asset Value Adjustment" and Decimal(j["total_debit"]) == Decimal("40000.000000") for j in je)
+
+
+async def test_auto_create_asset_from_purchase_invoice(ctx):
+    """A Purchase Invoice line for a fixed-asset item auto-creates a draft Asset."""
+    client, company, headers = ctx
+    cat = await _category(client, company, headers, name="IT Equipment")
+    fixed = await coa_account(client, company, headers, "Plants and Machineries")
+    # a fixed-asset item whose expense account is the Fixed Asset COA account
+    item = (
+        await client.post(
+            f"{API}/items",
+            json={
+                "item_code": "SERVER-X1",
+                "item_name": "Server X1",
+                "is_stock_item": False,
+                "is_fixed_asset": True,
+                "asset_category_id": cat["id"],
+                "expense_account_id": fixed["id"],
+            },
+            headers=headers,
+        )
+    ).json()
+    assert item["is_fixed_asset"] is True
+
+    supplier_id = (
+        await client.post(f"{API}/suppliers", json={"supplier_name": "TechVendor"}, headers=headers)
+    ).json()["id"]
+    inv = (
+        await client.post(
+            f"{API}/purchase-invoices",
+            json={
+                "supplier_id": supplier_id,
+                "posting_date": str(_fy_start(date.today())),
+                "items": [{
+                    "item_id": item["id"], "item_code": "SERVER-X1", "item_name": "Server X1",
+                    "qty": 1, "rate": 200000,
+                }],
+            },
+            headers=headers,
+        )
+    ).json()
+    r = await client.post(f"{API}/purchase-invoices/{inv['id']}/submit", headers=headers)
+    assert r.status_code == 200, r.text
+
+    # a draft Asset now exists for the purchased server
+    assets = (await client.get(f"{API}/assets", params={"page_size": 100}, headers=headers)).json()["items"]
+    server = next((a for a in assets if a["asset_name"] == "Server X1"), None)
+    assert server is not None, "expected an auto-created asset"
+    assert server["status"] == "Draft"
+    assert Decimal(server["gross_purchase_amount"]) == Decimal("200000.000000")
+
+
+async def test_maintenance_log_links_to_asset(ctx):
+    """The Asset Maintenance engine master accepts an asset link and auto-numbers."""
+    client, company, headers = ctx
+    cat = await _category(client, company, headers, name="Serviceable")
+    fy_start = _fy_start(date.today())
+    asset = (
+        await client.post(
+            f"{API}/assets",
+            json={
+                "asset_name": "Generator",
+                "asset_category_id": cat["id"],
+                "gross_purchase_amount": "90000",
+                "available_for_use_date": str(fy_start),
+            },
+            headers=headers,
+        )
+    ).json()
+    r = await client.post(
+        f"{API}/registry/asset-maintenance",
+        json={
+            "asset_id": asset["id"], "maintenance_type": "Preventive",
+            "maintenance_date": str(date.today()), "description": "Oil change", "cost": 1500,
+            "status": "Completed",
+        },
+        headers=headers,
+    )
+    assert r.status_code == 201, r.text
+    assert r.json()["name"].startswith("ASSET-MNT-")
+
+
 async def test_depreciation_blocked_without_category_accounts(ctx):
     """A category missing its depreciation accounts can't submit an asset."""
     client, company, headers = ctx
