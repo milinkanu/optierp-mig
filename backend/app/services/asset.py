@@ -34,9 +34,15 @@ from app.core.logging import get_logger
 from app.core.naming import get_next_name
 from app.core.security import CurrentUser
 from app.models.accounts import JournalEntry, JournalEntryAccount
-from app.models.assets import Asset, AssetCategory, AssetDepreciationSchedule, Location
+from app.models.assets import (
+    Asset,
+    AssetCategory,
+    AssetDepreciationSchedule,
+    AssetMovement,
+    Location,
+)
 from app.models.base import DOCSTATUS_CANCELLED, DOCSTATUS_SUBMITTED
-from app.schemas.assets import AssetCreate, DepreciateResult
+from app.schemas.assets import AssetCreate, AssetDisposeIn, AssetMoveIn, DepreciateResult
 from app.services import gl
 from app.services.accounts_common import NAMING_SERIES, get_company, require_draft, require_submitted
 from app.services.audit import log_audit
@@ -102,6 +108,63 @@ def straight_line_schedule(
     return rows
 
 
+def written_down_value_schedule(
+    *,
+    gross: Decimal,
+    salvage: Decimal,
+    opening_accumulated: Decimal,
+    number_of_depreciations: int,
+    frequency_months: int,
+    start_date: date,
+) -> list[tuple[date, Decimal, Decimal]]:
+    """Declining-balance schedule. Each period writes down a fixed **rate** of the
+    *opening book value*, so early years depreciate more than later ones. The rate is
+    derived from the salvage ratio over the life (ERPNext: ``1 − (salvage/gross)^(1/n)``);
+    the last row lands book value exactly on salvage. Returns ``(date, amount, accumulated)``.
+
+    WDV needs a salvage value > 0 — a declining balance can never reach zero, so a 0%
+    salvage is rejected (use Straight Line for assets that fully depreciate).
+    """
+    if number_of_depreciations <= 0:
+        raise ValidationError(
+            "Asset Category needs a positive 'number of depreciations'",
+            field="total_number_of_depreciations",
+        )
+    if salvage <= ZERO:
+        raise ValidationError(
+            "Written Down Value needs a salvage value above 0% (declining balance never "
+            "reaches zero) — use Straight Line for fully-depreciating assets",
+            field="salvage_value_percent",
+        )
+    if salvage >= gross:
+        raise ValidationError(
+            "Salvage value must be below the asset's gross value", field="gross_purchase_amount"
+        )
+    opening_book = gross - opening_accumulated
+    if opening_book <= salvage:
+        raise ValidationError(
+            "Asset is already at or below its salvage value", field="opening_accumulated_depreciation"
+        )
+    n = number_of_depreciations
+    rate = Decimal(1) - (salvage / gross) ** (Decimal(1) / Decimal(n))
+    rows: list[tuple[date, Decimal, Decimal]] = []
+    book = opening_book
+    accumulated = opening_accumulated
+    for i in range(1, n + 1):
+        if i < n:
+            amount = (book * rate).quantize(TWOPLACES, rounding=ROUND_HALF_UP)
+            if book - amount < salvage:  # never depreciate below salvage
+                amount = book - salvage
+            if amount < ZERO:
+                amount = ZERO
+        else:
+            amount = book - salvage  # final row lands exactly on salvage
+        book -= amount
+        accumulated += amount
+        rows.append((add_months(start_date, i * frequency_months), amount, accumulated))
+    return rows
+
+
 def _build_schedule_rows(
     asset: Asset, category: AssetCategory, payload: AssetCreate
 ) -> list[AssetDepreciationSchedule]:
@@ -127,27 +190,30 @@ def _build_schedule_rows(
             )
         return out
 
-    if category.depreciation_method == "Straight Line":
-        triples = straight_line_schedule(
-            gross=asset.gross_purchase_amount,
-            salvage=salvage,
-            opening_accumulated=asset.opening_accumulated_depreciation,
-            number_of_depreciations=category.total_number_of_depreciations,
-            frequency_months=category.frequency_of_depreciation_months,
-            start_date=asset.available_for_use_date,
+    generators = {
+        "Straight Line": straight_line_schedule,
+        "Written Down Value": written_down_value_schedule,
+    }
+    generator = generators.get(category.depreciation_method)
+    if generator is None:
+        raise ValidationError(
+            f"Unknown depreciation method '{category.depreciation_method}'",
+            field="depreciation_method",
         )
-        return [
-            AssetDepreciationSchedule(
-                idx=idx, schedule_date=d, depreciation_amount=amt, accumulated_depreciation=acc,
-            )
-            for idx, (d, amt, acc) in enumerate(triples, start=1)
-        ]
-
-    raise ValidationError(
-        f"Depreciation method '{category.depreciation_method}' is not available yet "
-        "(Written Down Value ships in Phase 2)",
-        field="depreciation_method",
+    triples = generator(
+        gross=asset.gross_purchase_amount,
+        salvage=salvage,
+        opening_accumulated=asset.opening_accumulated_depreciation,
+        number_of_depreciations=category.total_number_of_depreciations,
+        frequency_months=category.frequency_of_depreciation_months,
+        start_date=asset.available_for_use_date,
     )
+    return [
+        AssetDepreciationSchedule(
+            idx=idx, schedule_date=d, depreciation_amount=amt, accumulated_depreciation=acc,
+        )
+        for idx, (d, amt, acc) in enumerate(triples, start=1)
+    ]
 
 
 # --- CRUD --------------------------------------------------------------------------
@@ -165,7 +231,7 @@ async def _get_category(db: AsyncSession, category_id: uuid.UUID, company_id: uu
 async def get_asset(db: AsyncSession, asset_id: uuid.UUID, company_id: uuid.UUID | None) -> Asset:
     asset = await db.scalar(
         select(Asset)
-        .options(selectinload(Asset.schedule))
+        .options(selectinload(Asset.schedule), selectinload(Asset.movements))
         .where(Asset.id == asset_id, Asset.company_id == company_id)
     )
     if asset is None:
@@ -298,55 +364,36 @@ def _update_status(asset: Asset) -> None:
         asset.status = "Submitted"
 
 
-async def _post_depreciation_je(
-    db: AsyncSession, asset: Asset, category: AssetCategory,
-    row: AssetDepreciationSchedule, actor: CurrentUser,
+async def _post_journal(
+    db: AsyncSession, *, company_id: uuid.UUID, posting_date: date, voucher_type: str,
+    lines: list[tuple[uuid.UUID, Decimal, Decimal]], remark: str, actor: CurrentUser,
 ) -> JournalEntry:
-    """Write one balanced Depreciation Journal Entry + its GL rows (flush only — the
-    caller commits, so the schedule row's posted flag rides the same transaction)."""
-    amount = row.depreciation_amount
-    dr = category.depreciation_expense_account_id
-    cr = category.accumulated_depreciation_account_id
-    remark = f"Depreciation for {asset.asset_name} ({asset.name}) — {row.schedule_date.isoformat()}"
-
-    name = await get_next_name(db, NAMING_SERIES["Journal Entry"], asset.company_id, on_date=row.schedule_date)
+    """Write one balanced Journal Entry + its GL rows in the caller's transaction (flush
+    only — the caller commits). ``lines`` is ``(account_id, debit, credit)`` per row. The
+    GL voucher_type is always "Journal Entry" (so reversal works), while the JE carries the
+    business label (``voucher_type``), exactly like the Journal Entry service."""
+    total_debit = sum((d for _a, d, _c in lines), ZERO)
+    total_credit = sum((c for _a, _d, c in lines), ZERO)
+    name = await get_next_name(db, NAMING_SERIES["Journal Entry"], company_id, on_date=posting_date)
     je = JournalEntry(
-        id=uuid.uuid4(),
-        company_id=asset.company_id,
-        name=name,
-        posting_date=row.schedule_date,
-        voucher_type="Depreciation Entry",
-        remarks=remark,
-        total_debit=amount,
-        total_credit=amount,
-        docstatus=DOCSTATUS_SUBMITTED,
-        owner=actor.id,
-        modified_by=actor.id,
+        id=uuid.uuid4(), company_id=company_id, name=name, posting_date=posting_date,
+        voucher_type=voucher_type, remarks=remark, total_debit=total_debit,
+        total_credit=total_credit, docstatus=DOCSTATUS_SUBMITTED, owner=actor.id, modified_by=actor.id,
     )
     db.add(je)
     await db.flush()
-    db.add(JournalEntryAccount(
-        journal_entry_id=je.id, idx=1, account_id=dr,
-        debit=amount, credit=ZERO, debit_in_account_currency=amount, credit_in_account_currency=ZERO,
-    ))
-    db.add(JournalEntryAccount(
-        journal_entry_id=je.id, idx=2, account_id=cr,
-        debit=ZERO, credit=amount, debit_in_account_currency=ZERO, credit_in_account_currency=amount,
-    ))
+    gl_rows: list[gl.GLRow] = []
+    for idx, (account_id, debit, credit) in enumerate(lines, start=1):
+        db.add(JournalEntryAccount(
+            journal_entry_id=je.id, idx=idx, account_id=account_id,
+            debit=debit, credit=credit,
+            debit_in_account_currency=debit, credit_in_account_currency=credit,
+        ))
+        gl_rows.append(gl.GLRow(account_id=account_id, debit=debit, credit=credit, remarks=remark))
     await db.flush()
     await gl.make_gl_entries(
-        db,
-        company_id=asset.company_id,
-        voucher_type="Journal Entry",
-        voucher_id=je.id,
-        voucher_no=je.name,
-        posting_date=row.schedule_date,
-        rows=[
-            gl.GLRow(account_id=dr, debit=amount, remarks=remark),
-            gl.GLRow(account_id=cr, credit=amount, remarks=remark),
-        ],
-        user_id=actor.id,
-        remarks=remark,
+        db, company_id=company_id, voucher_type="Journal Entry", voucher_id=je.id,
+        voucher_no=je.name, posting_date=posting_date, rows=gl_rows, user_id=actor.id, remarks=remark,
     )
     return je
 
@@ -363,6 +410,9 @@ async def depreciate_due(
     if asset.docstatus != DOCSTATUS_SUBMITTED:
         return DepreciateResult(asset_id=asset.id, posted_count=0, status=asset.status,
                                 detail="Asset is not submitted")
+    if asset.status in ("Sold", "Scrapped"):
+        return DepreciateResult(asset_id=asset.id, posted_count=0, status=asset.status,
+                                detail="Asset has been disposed")
     category = await _get_category(db, asset.asset_category_id, asset.company_id)
     _require_accounts(category)
     await set_company_context(db, asset.company_id)
@@ -371,7 +421,18 @@ async def depreciate_due(
     je_ids: list[uuid.UUID] = []
     for row in due:
         try:
-            je = await _post_depreciation_je(db, asset, category, row, actor)
+            remark = (
+                f"Depreciation for {asset.asset_name} ({asset.name}) — {row.schedule_date.isoformat()}"
+            )
+            je = await _post_journal(
+                db, company_id=asset.company_id, posting_date=row.schedule_date,
+                voucher_type="Depreciation Entry",
+                lines=[
+                    (category.depreciation_expense_account_id, row.depreciation_amount, ZERO),
+                    (category.accumulated_depreciation_account_id, ZERO, row.depreciation_amount),
+                ],
+                remark=remark, actor=actor,
+            )
             row.posted = True
             row.posted_date = on_date
             row.journal_entry_id = je.id
@@ -401,3 +462,121 @@ async def depreciate_asset(
     """Manual trigger: post one asset's due depreciation now (same logic as the job)."""
     asset = await get_asset(db, asset_id, user.company_id)
     return await depreciate_due(db, asset, on_date=on_date or date.today(), actor=user)
+
+
+# --- disposal (sell / scrap) -------------------------------------------------------
+
+
+async def dispose_asset(
+    db: AsyncSession, asset_id: uuid.UUID, payload: AssetDisposeIn, user: CurrentUser
+) -> Asset:
+    """Sell or scrap an asset: remove its cost + accumulated depreciation and book the
+    gain/loss vs book value as a Journal Entry. Depreciation then halts (the job/manual
+    trigger skip Sold/Scrapped assets).
+
+    Sale:   Dr Accumulated Dep, Dr Bank (proceeds), Cr Fixed Asset, ± Gain/Loss (plug).
+    Scrap:  Dr Accumulated Dep, Dr Gain/Loss (the loss = book value), Cr Fixed Asset.
+    """
+    asset = await get_asset(db, asset_id, user.company_id)
+    require_submitted(asset.docstatus)
+    if asset.status in ("Sold", "Scrapped"):
+        raise ValidationError(f"Asset is already {asset.status.lower()}", field="status")
+    if payload.disposal_type not in ("Sell", "Scrap"):
+        raise ValidationError("disposal_type must be 'Sell' or 'Scrap'", field="disposal_type")
+
+    category = await _get_category(db, asset.asset_category_id, asset.company_id)
+    if not category.fixed_asset_account_id or not category.accumulated_depreciation_account_id:
+        raise ValidationError(
+            f"Asset Category '{category.category_name}' needs a Fixed Asset + Accumulated "
+            "Depreciation account to dispose",
+            field="asset_category_id",
+        )
+
+    if payload.disposal_type == "Sell":
+        if payload.sale_amount <= ZERO:
+            raise ValidationError("A sale needs a sale amount above 0", field="sale_amount")
+        if payload.proceeds_account_id is None:
+            raise ValidationError(
+                "A sale needs a proceeds account (the bank/cash account that received the money)",
+                field="proceeds_account_id",
+            )
+        proceeds = payload.sale_amount
+    else:  # Scrap
+        proceeds = ZERO
+
+    accumulated = asset.accumulated_depreciation  # opening + posted rows
+    book_value = asset.gross_purchase_amount - accumulated
+    gain_loss = proceeds - book_value  # positive = gain, negative = loss
+
+    lines: list[tuple[uuid.UUID, Decimal, Decimal]] = []
+    if accumulated > ZERO:
+        lines.append((category.accumulated_depreciation_account_id, accumulated, ZERO))  # Dr
+    if proceeds > ZERO:
+        lines.append((payload.proceeds_account_id, proceeds, ZERO))  # Dr bank/cash
+    lines.append((category.fixed_asset_account_id, ZERO, asset.gross_purchase_amount))  # Cr asset
+    if gain_loss > ZERO:
+        lines.append((payload.gain_loss_account_id, ZERO, gain_loss))  # Cr gain (income)
+    elif gain_loss < ZERO:
+        lines.append((payload.gain_loss_account_id, -gain_loss, ZERO))  # Dr loss
+
+    await set_company_context(db, asset.company_id)
+    remark = (
+        f"Disposal ({payload.disposal_type}) of {asset.asset_name} ({asset.name}) — "
+        f"book value {book_value}, proceeds {proceeds}"
+    )
+    je = await _post_journal(
+        db, company_id=asset.company_id, posting_date=payload.disposal_date,
+        voucher_type="Asset Disposal", lines=lines, remark=remark, actor=user,
+    )
+    asset.status = "Sold" if payload.disposal_type == "Sell" else "Scrapped"
+    asset.disposal_date = payload.disposal_date
+    asset.disposal_type = payload.disposal_type
+    asset.disposal_amount = proceeds
+    asset.gain_loss_amount = gain_loss
+    asset.disposal_journal_entry_id = je.id
+    asset.modified_by = user.id
+    await db.flush()
+    await log_audit(
+        db, doctype="Asset", document_id=asset.id, action="UPDATE",
+        user_id=user.id, company_id=asset.company_id,
+    )
+    await db.commit()
+    return await get_asset(db, asset.id, user.company_id)
+
+
+# --- movement (location / custodian transfer, no GL) -------------------------------
+
+
+async def move_asset(
+    db: AsyncSession, asset_id: uuid.UUID, payload: AssetMoveIn, user: CurrentUser
+) -> Asset:
+    """Record a location/custodian transfer and update the asset (no GL)."""
+    asset = await get_asset(db, asset_id, user.company_id)
+    require_submitted(asset.docstatus)
+    if asset.status in ("Sold", "Scrapped", "Cancelled"):
+        raise ValidationError(f"Cannot move a {asset.status.lower()} asset", field="status")
+    if payload.to_location_id is not None:
+        loc = await db.get(Location, payload.to_location_id)
+        if loc is None or loc.company_id != asset.company_id:
+            raise NotFoundError("Location not found")
+
+    # append via the relationship (not a bare db.add) so the asset's already-loaded
+    # movements collection reflects the new row in the response after commit
+    asset.movements.append(AssetMovement(
+        company_id=asset.company_id,
+        movement_date=payload.movement_date,
+        from_location_id=asset.location_id,
+        to_location_id=payload.to_location_id,
+        from_custodian=asset.custodian,
+        to_custodian=payload.to_custodian,
+    ))
+    asset.location_id = payload.to_location_id
+    asset.custodian = payload.to_custodian
+    asset.modified_by = user.id
+    await db.flush()
+    await log_audit(
+        db, doctype="Asset", document_id=asset.id, action="UPDATE",
+        user_id=user.id, company_id=asset.company_id,
+    )
+    await db.commit()
+    return await get_asset(db, asset.id, user.company_id)

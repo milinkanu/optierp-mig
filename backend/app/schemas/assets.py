@@ -35,6 +35,29 @@ class AssetCreate(BaseModel):
     manual_schedule: list[ManualScheduleRowIn] | None = None
 
 
+class AssetDisposeIn(BaseModel):
+    disposal_type: str  # Sell | Scrap
+    disposal_date: date
+    sale_amount: Decimal = Field(ge=0, default=Decimal("0"))  # required > 0 for Sell
+    proceeds_account_id: uuid.UUID | None = None  # bank/cash/receivable — required for Sell
+    gain_loss_account_id: uuid.UUID  # Gain/Loss on Asset Disposal account
+
+
+class AssetMoveIn(BaseModel):
+    movement_date: date
+    to_location_id: uuid.UUID | None = None
+    to_custodian: str | None = None
+
+
+class AssetMovementResponse(ORMModel):
+    id: uuid.UUID
+    movement_date: date
+    from_location_name: str | None
+    to_location_name: str | None
+    from_custodian: str | None
+    to_custodian: str | None
+
+
 class AssetScheduleRowResponse(ORMModel):
     id: uuid.UUID
     idx: int
@@ -63,8 +86,14 @@ class AssetResponse(DocumentMeta):
     available_for_use_date: date
     status: str
     remarks: str | None
+    disposal_date: date | None
+    disposal_type: str | None
+    disposal_amount: Decimal
+    gain_loss_amount: Decimal | None
+    disposal_journal_entry_id: uuid.UUID | None
     company_id: uuid.UUID
     schedule: list[AssetScheduleRowResponse]
+    movements: list[AssetMovementResponse]
 
 
 class AssetListItem(ORMModel):

@@ -2,9 +2,10 @@
 
 **Scope:** a new top-level **Assets** module for OptiReach ERP, modelled on ERPNext v15 Assets, with
 MSME simplifications (single appliance-distribution company, India GAAP, no multi-finance-book).
-**Status:** 🟢 **Phase 1 BUILT & verified** (2026-06-22, migration 0051) — Asset register +
-straight-line/manual depreciation engine + idempotent posting job, live end-to-end (UI + GL).
-Phases 2–4 remain. This started as a build plan, not a gap analysis.
+**Status:** 🟢 **Phases 1–2 BUILT & verified** (2026-06-22/23, migrations 0051–0052) — Asset
+register + straight-line/WDV/manual depreciation + idempotent posting job (Phase 1), plus
+sell/scrap **disposal** (gain/loss JE, halts depreciation) and **movement** (location/custodian
+history) (Phase 2). Live end-to-end (UI + GL). Phases 3–4 remain. Started as a build plan.
 **Designed:** 2026-06-22.
 
 > Mirrors the structure of [ACCOUNTING_GAP_AND_PLAN.md](ACCOUNTING_GAP_AND_PLAN.md): plain-language
@@ -175,11 +176,24 @@ to be completed. *MSME-lean:* ship **manual asset creation first**; auto-from-pu
   (auto-create-from-purchase), where the flag is actually consumed — avoids dead columns + touching the
   Item form before there's logic behind it. The depreciation core needs no Item change.
 
-### Phase 2 — Disposal + movement + WDV
-- **Asset Disposal** (sell/scrap → gain/loss JE, stops depreciation), **Asset Movement** (location/custodian),
-  and the **Written Down Value** method.
-- *Acceptance:* disposing the Phase-1 asset after 24 months at ₹50k books the correct gain/loss vs its
-  ₹72k book value and halts further depreciation.
+### Phase 2 — Disposal + movement + WDV — ✅ DONE
+- ✅ **Written Down Value** (declining-balance) method: per-period = rate × opening book value, rate
+  `1 − (salvage/gross)^(1/n)`, last row lands exactly on salvage. Needs salvage > 0 (rejected otherwise —
+  a declining balance can't reach zero; use Straight Line for that). Added to the Asset Category method
+  Select; the schedule generator dispatches SL / WDV / Manual.
+- ✅ **Disposal** as a lean endpoint (`POST /assets/{id}/dispose`, no separate document): **Sell** (Dr
+  Accumulated Dep, Dr proceeds account, Cr Fixed Asset, ± Gain/Loss) or **Scrap** (Dr Accumulated Dep,
+  Dr Gain/Loss = book value, Cr Fixed Asset). Posts one balanced "Asset Disposal" JE via the shared
+  `_post_journal` helper, stamps `disposal_*`/`gain_loss_amount` on the asset → status Sold/Scrapped, and
+  **halts depreciation** (the job + manual trigger skip disposed assets).
+- ✅ **Movement** (`POST /assets/{id}/move`): updates location/custodian and appends an `asset_movements`
+  history row (no GL).
+- ✅ *Acceptance met:* a ₹120k asset at ₹72k book value (via ₹48k opening accumulated dep) sold for ₹50k
+  books a ₹22k loss vs book value; the disposal JE is balanced (48k + 50k + 22k = 120k); depreciation
+  halts. Verified by integration test + live UI (a ₹1.16L-book-value asset sold for ₹60k showed a ₹56k
+  loss, status Sold, actions removed, movement history retained).
+- **Tests:** +3 unit (WDV math) + 4 integration (sell acceptance, scrap, WDV schedule, move history).
+  All green; ruff + vue-tsc clean.
 
 ### Phase 3 — Maintenance, repair, value adjustment, auto-from-purchase
 - **Asset Maintenance** + **Asset Repair** (lean logs; repair can raise a normal JE), **Asset Value
