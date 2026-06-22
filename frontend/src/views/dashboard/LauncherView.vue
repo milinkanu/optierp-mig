@@ -18,6 +18,7 @@ const tiles: Tile[] = [
   { label: "Purchases", to: "/buying", icon: "🛍" },
   { label: "Inventory", to: "/stock", icon: "📦" },
   { label: "Accounting", to: "/accounting", icon: "📊" },
+  { label: "Assets", to: "/assets", icon: "🏗" },
   { label: "Setup", to: "/companies", icon: "⚙" },
   { label: "Reports", to: "/reports", icon: "📈" },
 ];

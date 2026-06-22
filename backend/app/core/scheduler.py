@@ -20,9 +20,10 @@ logger = get_logger(__name__)
 SCHEDULED_JOBS: list[dict[str, Any]] = [
     # Generate due Subscription invoices (idempotent; never double-bills a period).
     {"func": "app.jobs.subscription.process_subscriptions", "trigger": "cron", "hour": 2},
+    # Post due asset depreciation (idempotent; never double-books a period).
+    {"func": "app.jobs.assets.process_depreciation", "trigger": "cron", "hour": 3},
     # Populated by later modules, e.g.:
     # {"func": "app.jobs.stock.reorder_level_check", "trigger": "cron", "hour": 6},
-    # {"func": "app.jobs.assets.auto_post_depreciation", "trigger": "cron", "day": 1},
     # {"func": "app.jobs.support.sla_breach_check", "trigger": "interval", "minutes": 15},
 ]
 

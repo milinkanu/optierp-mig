@@ -1,0 +1,90 @@
+"""Assets module schemas.
+
+Asset Category and Location are served by the metadata engine (no schemas here);
+these cover the bespoke Asset document, its depreciation schedule rows, and the result
+of a (manual or scheduled) depreciation-posting run.
+"""
+
+import uuid
+from datetime import date
+from decimal import Decimal
+
+from pydantic import BaseModel, Field
+
+from app.schemas.common import DocumentMeta, ORMModel
+
+
+class ManualScheduleRowIn(BaseModel):
+    """One user-supplied depreciation row (Manual method only)."""
+
+    schedule_date: date
+    depreciation_amount: Decimal = Field(ge=0)
+
+
+class AssetCreate(BaseModel):
+    asset_name: str = Field(min_length=1)
+    asset_category_id: uuid.UUID
+    location_id: uuid.UUID | None = None
+    custodian: str | None = None
+    gross_purchase_amount: Decimal = Field(gt=0)
+    opening_accumulated_depreciation: Decimal = Field(ge=0, default=Decimal("0"))
+    purchase_date: date | None = None
+    available_for_use_date: date
+    remarks: str | None = None
+    # required only when the category's method is Manual
+    manual_schedule: list[ManualScheduleRowIn] | None = None
+
+
+class AssetScheduleRowResponse(ORMModel):
+    id: uuid.UUID
+    idx: int
+    schedule_date: date
+    depreciation_amount: Decimal
+    accumulated_depreciation: Decimal
+    posted: bool
+    posted_date: date | None
+    journal_entry_id: uuid.UUID | None
+
+
+class AssetResponse(DocumentMeta):
+    name: str
+    asset_name: str
+    asset_category_id: uuid.UUID
+    category_name: str | None
+    location_id: uuid.UUID | None
+    location_name: str | None
+    depreciation_method: str | None
+    custodian: str | None
+    gross_purchase_amount: Decimal
+    opening_accumulated_depreciation: Decimal
+    accumulated_depreciation: Decimal
+    book_value: Decimal
+    purchase_date: date | None
+    available_for_use_date: date
+    status: str
+    remarks: str | None
+    company_id: uuid.UUID
+    schedule: list[AssetScheduleRowResponse]
+
+
+class AssetListItem(ORMModel):
+    id: uuid.UUID
+    name: str
+    asset_name: str
+    category_name: str | None
+    location_name: str | None
+    gross_purchase_amount: Decimal
+    accumulated_depreciation: Decimal
+    book_value: Decimal
+    status: str
+    available_for_use_date: date
+
+
+class DepreciateResult(BaseModel):
+    """Outcome of posting an asset's due depreciation rows."""
+
+    asset_id: uuid.UUID
+    posted_count: int
+    journal_entry_ids: list[uuid.UUID] = Field(default_factory=list)
+    status: str
+    detail: str | None = None

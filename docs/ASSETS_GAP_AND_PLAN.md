@@ -2,8 +2,9 @@
 
 **Scope:** a new top-level **Assets** module for OptiReach ERP, modelled on ERPNext v15 Assets, with
 MSME simplifications (single appliance-distribution company, India GAAP, no multi-finance-book).
-**Status:** 🔴 greenfield — **zero asset code today** (the "asset" hits in the repo are just Chart-of-Accounts
-asset *accounts* + report sections). This is a build plan, not a gap analysis.
+**Status:** 🟢 **Phase 1 BUILT & verified** (2026-06-22, migration 0051) — Asset register +
+straight-line/manual depreciation engine + idempotent posting job, live end-to-end (UI + GL).
+Phases 2–4 remain. This started as a build plan, not a gap analysis.
 **Designed:** 2026-06-22.
 
 > Mirrors the structure of [ACCOUNTING_GAP_AND_PLAN.md](ACCOUNTING_GAP_AND_PLAN.md): plain-language
@@ -153,15 +154,26 @@ to be completed. *MSME-lean:* ship **manual asset creation first**; auto-from-pu
 
 ## 6. Phased build plan
 
-### Phase 1 — Asset register + straight-line depreciation *(the gating core)*
-- **Asset Category** (engine master) + **Location** (engine master) + `is_fixed_asset`/`asset_category` on Item.
-- **Asset** bespoke doc: create/submit/cancel; schedule generation (Straight Line + Manual); book value.
-- **`process_depreciation`** scheduled job (Dr Depreciation / Cr Accum. Dep.), idempotent, + a manual
-  "depreciate now" endpoint.
-- Acquisition via a manual JE or a fixed-asset Purchase Invoice line.
-- Frontend: Asset Category/Location engine forms; a bespoke Asset list+detail (with the schedule + book value).
-- *Acceptance:* a ₹120k asset, 60-month SL life, ₹0 salvage → 60 monthly entries of ₹2,000; book value
-  declines correctly; the job never double-posts; asset flips to Fully Depreciated on the final row.
+### Phase 1 — Asset register + straight-line depreciation *(the gating core)* — ✅ DONE
+- ✅ **Asset Category** (engine master: method + number/frequency of depreciations + salvage% + 3 GL
+  accounts) + **Location** (engine master). Group `Assets`; managed by Accounts roles.
+- ✅ **Asset** bespoke doc: create (auto-generates the schedule for preview) / submit / cancel; schedule
+  generation (Straight Line + Manual); derived book value.
+- ✅ **`process_depreciation`** scheduled job (daily 03:00, cross-company, Dr Depreciation /
+  Cr Accumulated Depreciation as a **Depreciation Entry** Journal Entry), idempotent (posted flag set in
+  the same transaction as the JE) + a manual `POST /assets/{id}/depreciate` "depreciate now" endpoint.
+- ✅ Acquisition via a manual JE or a fixed-asset Purchase Invoice line (unchanged; the module does not
+  post acquisition).
+- ✅ Frontend: Asset Category/Location engine forms; a bespoke Asset list + detail (schedule + book-value
+  cards + Submit/Depreciate/Cancel). New **Assets** module: launcher tile + sidebar workspace.
+- ✅ *Acceptance met:* a ₹120k asset, 60-month SL life, ₹0 salvage → 60 monthly entries of ₹2,000; book
+  value declines correctly; the job never double-posts (verified by UI + integration test); asset flips
+  Submitted → Partially → Fully Depreciated as rows post.
+- **Tests:** 8 unit (pure schedule math incl. rounding/salvage/opening/quarterly) + 3 integration
+  (full register→submit→depreciate→GL→idempotency). All green; ruff + vue-tsc clean.
+- **Deferred from this phase →** `is_fixed_asset`/`asset_category` on **Item** moved to **Phase 3**
+  (auto-create-from-purchase), where the flag is actually consumed — avoids dead columns + touching the
+  Item form before there's logic behind it. The depreciation core needs no Item change.
 
 ### Phase 2 — Disposal + movement + WDV
 - **Asset Disposal** (sell/scrap → gain/loss JE, stops depreciation), **Asset Movement** (location/custodian),
