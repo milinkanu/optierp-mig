@@ -19,6 +19,8 @@ import type {
   PartyLedgerSummaryRow,
   PartyOutstandingSummaryRow,
   RegisterReport,
+  ShareBalanceRow,
+  ShareLedgerRow,
   StatementRow,
   TrialBalanceRow,
 } from "@/types/accounts";
@@ -39,7 +41,9 @@ type Tab =
   | "ap-summary"
   | "collection"
   | "gross-profit"
-  | "budget-variance";
+  | "budget-variance"
+  | "share-balance"
+  | "share-ledger";
 const route = useRoute();
 const tab = ref<Tab>("trial-balance");
 
@@ -92,6 +96,8 @@ const budgetVariance = ref<BudgetVarianceRow[]>([]);
 const arSummary = ref<PartyOutstandingSummaryRow[]>([]);
 const apSummary = ref<PartyOutstandingSummaryRow[]>([]);
 const collection = ref<CollectionSummaryRow[]>([]);
+const shareBalance = ref<ShareBalanceRow[]>([]);
+const shareLedger = ref<ShareLedgerRow[]>([]);
 const error = ref<ErrorEnvelope | null>(null);
 const loading = ref(false);
 
@@ -179,6 +185,16 @@ async function run(): Promise<void> {
           params: { from_date: fromDate.value, to_date: toDate.value },
         })
       ).data;
+    } else if (tab.value === "share-balance") {
+      shareBalance.value = (
+        await api.get<ShareBalanceRow[]>("/reports/share-balance", { params: { as_of: asOf.value } })
+      ).data;
+    } else if (tab.value === "share-ledger") {
+      shareLedger.value = (
+        await api.get<ShareLedgerRow[]>("/reports/share-ledger", {
+          params: { from_date: fromDate.value, to_date: toDate.value },
+        })
+      ).data;
     }
   } catch (e) {
     error.value = e as ErrorEnvelope;
@@ -248,6 +264,8 @@ const tabs: Array<{ key: Tab; label: string }> = [
   { key: "supplier-ledger", label: "Supplier Ledger" },
   { key: "gross-profit", label: "Gross Profit" },
   { key: "budget-variance", label: "Budget Variance" },
+  { key: "share-balance", label: "Share Balance" },
+  { key: "share-ledger", label: "Share Ledger" },
 ];
 </script>
 
@@ -288,7 +306,7 @@ const tabs: Array<{ key: Tab; label: string }> = [
           </select>
         </div>
       </template>
-      <template v-else-if="['profit-loss', 'sales-register', 'purchase-register', 'customer-ledger', 'supplier-ledger', 'gross-profit', 'collection'].includes(tab)">
+      <template v-else-if="['profit-loss', 'sales-register', 'purchase-register', 'customer-ledger', 'supplier-ledger', 'gross-profit', 'collection', 'share-ledger'].includes(tab)">
         <div><label class="form-label">From</label><input v-model="fromDate" type="date" class="form-input" /></div>
         <div><label class="form-label">To</label><input v-model="toDate" type="date" class="form-input" /></div>
       </template>
@@ -681,6 +699,61 @@ const tabs: Array<{ key: Tab; label: string }> = [
       <p v-if="budgetVariance.length" class="border-t border-gray-100 px-4 py-2 text-xs text-gray-400">
         Positive variance (green) = under budget. Negative (red) = over budget.
       </p>
+    </div>
+
+    <!-- Share Balance (cap table) -->
+    <div v-else-if="tab === 'share-balance'"
+         class="overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm">
+      <table class="min-w-full text-sm">
+        <thead class="bg-gray-50 text-left text-xs uppercase text-gray-500">
+          <tr>
+            <th class="px-4 py-2">Shareholder</th><th class="px-4 py-2">Share Type</th>
+            <th class="px-4 py-2 text-right">Shares</th><th class="px-4 py-2 text-right">% Held</th>
+            <th class="px-4 py-2 text-right">Nominal Value</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="row in shareBalance" :key="row.shareholder_id + row.share_type_id" class="border-t border-gray-100">
+            <td class="px-4 py-1.5 font-medium text-gray-900">{{ row.shareholder_name }}</td>
+            <td class="px-4 py-1.5">{{ row.share_type_name }}</td>
+            <td class="px-4 py-1.5 text-right">{{ row.no_of_shares }}</td>
+            <td class="px-4 py-1.5 text-right">{{ Number(row.percent_of_type).toFixed(2) }}%</td>
+            <td class="px-4 py-1.5 text-right">{{ formatCurrency(row.nominal_value, companyCurrency) }}</td>
+          </tr>
+          <tr v-if="!shareBalance.length"><td colspan="5" class="px-4 py-8 text-center text-gray-400">
+            No shareholdings yet. Issue shares under Share Transfer to populate the cap table.
+          </td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Share Ledger -->
+    <div v-else-if="tab === 'share-ledger'"
+         class="overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm">
+      <table class="min-w-full text-sm">
+        <thead class="bg-gray-50 text-left text-xs uppercase text-gray-500">
+          <tr>
+            <th class="px-4 py-2">Date</th><th class="px-4 py-2">Transfer</th>
+            <th class="px-4 py-2">Type</th><th class="px-4 py-2">Share Type</th>
+            <th class="px-4 py-2">From → To</th><th class="px-4 py-2 text-right">Shares</th>
+            <th class="px-4 py-2 text-right">Amount</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="row in shareLedger" :key="row.id" class="border-t border-gray-100">
+            <td class="px-4 py-1.5 text-gray-500">{{ formatDate(row.transfer_date) }}</td>
+            <td class="px-4 py-1.5">{{ row.name }}</td>
+            <td class="px-4 py-1.5">{{ row.transfer_type }}</td>
+            <td class="px-4 py-1.5">{{ row.share_type_name ?? "—" }}</td>
+            <td class="px-4 py-1.5 text-gray-500">{{ row.from_shareholder_name ?? "—" }} → {{ row.to_shareholder_name ?? "—" }}</td>
+            <td class="px-4 py-1.5 text-right">{{ row.no_of_shares }}</td>
+            <td class="px-4 py-1.5 text-right">{{ formatCurrency(row.amount, companyCurrency) }}</td>
+          </tr>
+          <tr v-if="!shareLedger.length"><td colspan="7" class="px-4 py-8 text-center text-gray-400">
+            No submitted share transfers in this period.
+          </td></tr>
+        </tbody>
+      </table>
     </div>
   </div>
 </template>

@@ -14,6 +14,7 @@ from app.api.v1.accounts import (
     purchase_invoices,
     reports as accounts_reports,
     sales_invoices,
+    share_transfers,
     subscriptions,
     workspace as accounts_workspace,
 )
@@ -70,6 +71,7 @@ api_v1_router.include_router(payment_entries.router)
 api_v1_router.include_router(payment_reconciliation.router)
 api_v1_router.include_router(payment_requests.router)
 api_v1_router.include_router(subscriptions.router)
+api_v1_router.include_router(share_transfers.router)
 api_v1_router.include_router(bank_reconciliation.router)
 api_v1_router.include_router(budgets.router)
 api_v1_router.include_router(accounts_reports.router)

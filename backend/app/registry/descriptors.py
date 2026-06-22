@@ -19,6 +19,8 @@ from app.models.accounts import (
     ModeOfPayment,
     PaymentTermsTemplate,
     PaymentTermsTemplateDetail,
+    Shareholder,
+    ShareType,
     SubscriptionPlan,
     TaxCategory,
     TaxWithholdingCategory,
@@ -707,6 +709,62 @@ register(
             FieldSpec("disabled", "Disabled", "Check", in_list=True),
         ),
         list_fields=("dunning_type", "grace_period_days", "interest_rate", "disabled"),
+    )
+)
+
+
+# --- Accounts: Share Management (cap table, Phase 4) --------------------------
+register(
+    DocTypeDescriptor(
+        name="Share Type",
+        slug="share-type",
+        model=ShareType,
+        title_field="share_type_name",
+        naming="field:share_type_name",
+        group="Accounts",
+        permission_name="Share Type",
+        permissions={
+            "Accounts Manager": _ACCOUNTS_MANAGER,
+            "Accounts User": _ACCOUNTS_USER,
+            **_LINK_READERS,
+        },
+        fields=(
+            FieldSpec("share_type_name", "Share Type", "Data", required=True, in_list=True, span=2,
+                      unique=True, help="e.g. Equity, Preference."),
+            FieldSpec("par_value", "Par Value (per share)", "Currency", in_list=True,
+                      help="Nominal/face value per share — informational."),
+            FieldSpec("currency", "Currency", "Data",
+                      help="3-letter code (e.g. INR). Blank = the company's default currency."),
+            FieldSpec("disabled", "Disabled", "Check", in_list=True),
+        ),
+        list_fields=("share_type_name", "par_value", "currency", "disabled"),
+    )
+)
+
+
+register(
+    DocTypeDescriptor(
+        name="Shareholder",
+        slug="shareholder",
+        model=Shareholder,
+        title_field="shareholder_name",
+        naming="field:shareholder_name",
+        group="Accounts",
+        permission_name="Shareholder",
+        permissions={
+            "Accounts Manager": _ACCOUNTS_MANAGER,
+            "Accounts User": _ACCOUNTS_USER,
+            **_LINK_READERS,
+        },
+        fields=(
+            FieldSpec("shareholder_name", "Shareholder", "Data", required=True, in_list=True, span=2,
+                      unique=True),
+            FieldSpec("contact_id", "Contact", "Link", options="contact",
+                      help="Optional linked contact (phone/email)."),
+            FieldSpec("folio_no", "Folio No", "Data", in_list=True),
+            FieldSpec("disabled", "Disabled", "Check", in_list=True),
+        ),
+        list_fields=("shareholder_name", "folio_no", "disabled"),
     )
 )
 

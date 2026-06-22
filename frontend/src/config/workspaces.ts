@@ -379,6 +379,15 @@ const ACCOUNTING: WorkspaceConfig = {
       ],
     },
     {
+      title: "Share Management",
+      items: [
+        { label: "Share Transfer", to: "/share-transfers", icon: "📜" },
+        { label: "Cap Table", to: "/reports?tab=share-balance" },
+        { label: "Share Type", to: "/m/share-type" },
+        { label: "Shareholder", to: "/m/shareholder" },
+      ],
+    },
+    {
       title: "Accounts Setup",
       items: [
         { label: "Fiscal Year", to: "/m/fiscal-year" },
@@ -467,11 +476,19 @@ const ACCOUNTING: WorkspaceConfig = {
     },
     {
       title: "Share Management",
-      links: [{ label: "Shareholders & transfers", planned: true }],
+      links: [
+        { label: "Share Transfer", to: "/share-transfers" },
+        { label: "Cap Table", to: "/reports?tab=share-balance" },
+        { label: "Share Type", to: "/m/share-type" },
+        { label: "Shareholder", to: "/m/shareholder" },
+      ],
     },
     {
       title: "Subscription",
-      links: [{ label: "Recurring billing", planned: true }],
+      links: [
+        { label: "Subscriptions", to: "/subscriptions" },
+        { label: "Subscription Plan", to: "/m/subscription-plan" },
+      ],
     },
   ],
 };

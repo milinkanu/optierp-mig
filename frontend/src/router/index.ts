@@ -130,6 +130,11 @@ const routes: RouteRecordRaw[] = [
         component: () => import("@/views/accounts/SubscriptionView.vue"),
       },
       {
+        path: "share-transfers",
+        name: "share-transfers",
+        component: () => import("@/views/accounts/ShareTransferView.vue"),
+      },
+      {
         path: "budgets",
         name: "budgets",
         component: () => import("@/views/accounts/BudgetView.vue"),

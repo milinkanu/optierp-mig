@@ -68,6 +68,13 @@ from app.models.accounts.subscription import (
     SubscriptionPlan,
     SubscriptionPlanDetail,
 )
+from app.models.accounts.share import (
+    SHARE_TRANSFER_STATUSES,
+    TRANSFER_TYPES,
+    ShareTransfer,
+    ShareType,
+    Shareholder,
+)
 
 __all__ = [
     "CHARGE_TYPES", "INVOICE_STATUSES", "PARTY_TYPES", "REPORT_TYPES",
@@ -85,4 +92,6 @@ __all__ = [
     "Budget", "BudgetAccount", "PeriodClosingVoucher",
     "Subscription", "SubscriptionPlan", "SubscriptionPlanDetail",
     "BILLING_INTERVALS", "GENERATE_AT", "SUBSCRIPTION_STATUSES",
+    "ShareType", "Shareholder", "ShareTransfer",
+    "TRANSFER_TYPES", "SHARE_TRANSFER_STATUSES",
 ]

@@ -422,3 +422,27 @@ export interface GeneralLedgerReport {
   total_credit: string;
   closing_balance: string;
 }
+
+export interface ShareBalanceRow {
+  shareholder_id: string;
+  shareholder_name: string;
+  share_type_id: string;
+  share_type_name: string;
+  no_of_shares: number;
+  par_value: string;
+  nominal_value: string;
+  percent_of_type: string;
+}
+
+export interface ShareLedgerRow {
+  id: string;
+  name: string;
+  transfer_date: string;
+  transfer_type: string;
+  share_type_name: string | null;
+  from_shareholder_name: string | null;
+  to_shareholder_name: string | null;
+  no_of_shares: number;
+  rate: string;
+  amount: string;
+}

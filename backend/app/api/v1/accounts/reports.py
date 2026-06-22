@@ -28,12 +28,14 @@ from app.schemas.accounts import (
     PeriodClosingCreate,
     PeriodClosingResponse,
     RegisterReport,
+    ShareBalanceRow,
+    ShareLedgerRow,
     StatementOfAccounts,
     TrialBalanceRow,
 )
 from app.schemas.printing import EmailSendResult
 from app.services import financial_reports as reports
-from app.services import dunning, period_closing, statements
+from app.services import dunning, period_closing, share_transfer, statements
 
 router = APIRouter(prefix="/reports", tags=["accounts: reports"])
 
@@ -42,6 +44,47 @@ def _company(current_user: CurrentUser) -> uuid.UUID:
     if current_user.company_id is None:
         raise ValidationError("An active company is required")
     return current_user.company_id
+
+
+@router.get(
+    "/share-balance",
+    response_model=list[ShareBalanceRow],
+    summary="Share Balance (cap table)",
+    description="Each shareholder's holding per share type, with % of that type's total "
+    "issued — derived from submitted Share Transfers as of the given date.",
+)
+async def share_balance(
+    current_user: Annotated[CurrentUser, Depends(require_permission("Share Transfer", "report"))],
+    db: Annotated[AsyncSession, Depends(get_tenant_db)],
+    as_of: date | None = None,
+    shareholder_id: uuid.UUID | None = None,
+    share_type_id: uuid.UUID | None = None,
+) -> list[ShareBalanceRow]:
+    return await share_transfer.shareholder_balances(
+        db, _company(current_user), as_of=as_of or date.today(),
+        shareholder_id=shareholder_id, share_type_id=share_type_id,
+    )
+
+
+@router.get(
+    "/share-ledger",
+    response_model=list[ShareLedgerRow],
+    summary="Share Ledger",
+    description="Chronological list of submitted share transfers, optionally filtered by "
+    "date window, shareholder or share type.",
+)
+async def share_ledger(
+    current_user: Annotated[CurrentUser, Depends(require_permission("Share Transfer", "report"))],
+    db: Annotated[AsyncSession, Depends(get_tenant_db)],
+    from_date: date | None = None,
+    to_date: date | None = None,
+    shareholder_id: uuid.UUID | None = None,
+    share_type_id: uuid.UUID | None = None,
+) -> list[ShareLedgerRow]:
+    return await share_transfer.share_ledger(
+        db, _company(current_user), from_date=from_date, to_date=to_date,
+        shareholder_id=shareholder_id, share_type_id=share_type_id,
+    )
 
 
 @router.get(

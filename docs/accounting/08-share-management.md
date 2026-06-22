@@ -123,6 +123,14 @@ Issue 1,000 equity shares to A, transfer 200 A→B → balances A=800, B=200, to
 ledger lists both transfers; cancelling the transfer restores A=1,000/B=0 with no reversal rows
 (balance is derived). A Buyback of 100 from A leaves A=700 and total issued 900.
 
-> **Status:** designed during a command‑tool outage; **not implemented.** Lowest priority — build after
-> Subscription and only on real need. See [[document-delivery-plan]].
+> **Status:** ✅ **implemented** (2026‑06‑22). Migration `0050_share_management`; engine masters
+> `Share Type` (`/m/share-type`) + `Shareholder` (`/m/shareholder`); bespoke `Share Transfer`
+> (`services/share_transfer.py`, `api/v1/accounts/share_transfers.py`, `ShareTransferView.vue` at
+> `/share-transfers`); **no GL**. Balances are **derived** from submitted transfers (no stored
+> balance) — cancel just flips `docstatus` and the cap table recomputes. Cap Table + Share Ledger are
+> read‑only ReportsView tabs (`/reports/share-balance`, `/reports/share-ledger`); UI lives in a new
+> "Share Management" group under the Accounting workspace. Integration tests in
+> `tests/integration/test_share_management.py` cover issue → transfer → cap‑table % → cancel‑restores,
+> buyback reducing total issued, and the insufficient‑shares / transfer‑type guards. Share capital still
+> hits the GL via a normal Journal Entry, separately. See [[document-delivery-plan]] and [[accounting-plan-status]].
 </content>
