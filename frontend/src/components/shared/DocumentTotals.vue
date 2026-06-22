@@ -18,11 +18,17 @@ const props = defineProps<{
   taxes: TotalsTax[];
   discount: TotalsDiscount;
   currency: string;
+  // Optional India withholding preview (TCS on sales / TDS on purchase): a % of
+  // net total shown as a separate line + the resulting net payable/receivable.
+  withholding?: { label: string; rate: number; sign: number; netLabel: string };
 }>();
 
 const t = computed(() => computeTotals(props.items, props.taxes, props.discount));
 const inWords = computed(() => amountInWords(t.value.roundedTotal, props.currency));
 const money = (v: number): string => formatCurrency(v, props.currency);
+const withholdingAmount = computed(() =>
+  props.withholding ? Math.round(t.value.netTotal * props.withholding.rate) / 100 : 0,
+);
 </script>
 
 <template>
@@ -53,6 +59,16 @@ const money = (v: number): string => formatCurrency(v, props.currency);
         <dt>Rounded Total</dt>
         <dd class="tabular-nums">{{ money(t.roundedTotal) }}</dd>
       </div>
+      <template v-if="withholding && withholdingAmount > 0">
+        <div class="flex justify-between text-gray-500">
+          <dt>{{ withholding.label }} ({{ withholding.rate }}%)</dt>
+          <dd class="tabular-nums">{{ withholding.sign > 0 ? "+" : "−" }}{{ money(withholdingAmount) }}</dd>
+        </div>
+        <div class="flex justify-between border-t border-gray-200 pt-1 font-semibold text-gray-900">
+          <dt>{{ withholding.netLabel }}</dt>
+          <dd class="tabular-nums">{{ money(t.roundedTotal + withholding.sign * withholdingAmount) }}</dd>
+        </div>
+      </template>
       <div class="pt-1 text-right text-xs italic text-gray-400">{{ inWords }}</div>
     </dl>
   </div>

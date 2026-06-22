@@ -23,6 +23,7 @@ import asyncio
 import os
 import random
 import sys
+import uuid
 from datetime import date, timedelta
 from decimal import Decimal
 
@@ -79,11 +80,18 @@ from app.core.database import async_session_factory, engine, set_company_context
 from app.core.security import CurrentUser  # noqa: E402
 from app.models.accounts import (  # noqa: E402
     Account,
+    BankAccount,
+    BankTransaction,
     FiscalYear,
+    ItemTaxTemplate,
+    ItemTaxTemplateDetail,
+    DunningType,
     JournalEntry,
+    JournalEntryAccount,
     PaymentEntry,
     PurchaseInvoice,
     SalesInvoice,
+    TaxWithholdingCategory,
 )
 from app.models.core import Company, User  # noqa: E402
 from app.schemas.accounts import (  # noqa: E402
@@ -120,10 +128,13 @@ from app.schemas.stock import (  # noqa: E402
     ItemGroupCreate,
     MaterialRequestCreate,
     MaterialRequestItemIn,
+    PurchaseReceiptChargeIn,
     PurchaseReceiptCreate,
     PurchaseReceiptItemIn,
     StockEntryCreate,
     StockEntryItemIn,
+    StockReconciliationCreate,
+    StockReconciliationItemIn,
     WarehouseCreate,
 )
 from app.services import accounts_masters as masters  # noqa: E402
@@ -141,8 +152,11 @@ from app.services import sales_invoice as si_service  # noqa: E402
 from app.services import sales_order as so_service  # noqa: E402
 from app.services import stock_entry as se_service  # noqa: E402
 from app.services import stock_masters  # noqa: E402
+from app.services import stock_reconciliation as recon_service  # noqa: E402
+from app.services import registry as registry_service  # noqa: E402
 from app.services.company import create_company  # noqa: E402
 from app.services.user import create_user  # noqa: E402
+from app.registry import get_descriptor  # noqa: E402
 from scripts.seed import seed_admin, seed_masters, seed_permissions  # noqa: E402
 
 rng = random.Random(ARGS.seed)
@@ -281,6 +295,68 @@ def _run_migrations() -> None:
     command.upgrade(config, "head")
 
 
+async def seed_extra_masters(db: AsyncSession, actor, company) -> dict[str, uuid.UUID]:
+    """Masters added in the parity work — Terms Templates, Payment Terms
+    Templates (+ installments), Cost Centers, and the selling 'More Info'
+    masters. Created through the metadata-engine service so naming, scoping and
+    child rows all run for real. Returns the ids the demo documents reference."""
+
+    async def mk(slug: str, payload: dict) -> uuid.UUID:
+        doc = await registry_service.create_document(db, get_descriptor(slug), payload, actor)
+        return uuid.UUID(str(doc["id"]))
+
+    # Terms & Conditions (boilerplate text the Terms tab can pull in)
+    await mk("terms-template", {
+        "template_name": "Standard 30-Day",
+        "terms": ("1. Payment due within 30 days of the invoice date.\n"
+                  "2. Goods remain our property until paid in full.\n"
+                  "3. Warranty: 12 months from delivery."),
+    })
+    await mk("terms-template", {
+        "template_name": "Net 45 (Wholesale)",
+        "terms": "Payment due within 45 days. Wholesale / bulk orders only. Returns accepted within 7 days.",
+    })
+
+    # Payment Terms Templates (the payment split shown as a due-date breakdown)
+    net30 = await mk("payment-terms-template", {
+        "template_name": "Net 30",
+        "terms": [{"description": "Full payment", "invoice_portion": 100, "credit_days": 30}],
+    })
+    adv5050 = await mk("payment-terms-template", {
+        "template_name": "50% Advance / 50% on Delivery",
+        "terms": [
+            {"description": "Advance", "invoice_portion": 50, "credit_days": 0},
+            {"description": "Balance on delivery", "invoice_portion": 50, "credit_days": 30},
+        ],
+    })
+    split3060 = await mk("payment-terms-template", {
+        "template_name": "Net 30/60 (split)",
+        "terms": [
+            {"description": "First half", "invoice_portion": 50, "credit_days": 30},
+            {"description": "Second half", "invoice_portion": 50, "credit_days": 60},
+        ],
+    })
+
+    # Cost centers (flat) — give the invoice per-line Cost Center picker options
+    cc_sales = await mk("cost-center", {"cost_center_name": "Sales & Marketing", "is_group": False})
+    cc_ops = await mk("cost-center", {"cost_center_name": "Operations", "is_group": False})
+
+    # Selling "More Info" masters
+    campaign = await mk("campaign", {"campaign_name": "Diwali Festival Sale"})
+    territory = await mk("territory", {"territory_name": "West Zone"})
+    customer_group = await mk("customer-group", {"customer_group_name": "Retail"})
+    sales_partner = await mk("sales-partner", {"partner_name": "Channel Partner A"})
+
+    print("Extra masters: 2 terms templates, 3 payment terms templates, 2 cost centers, "
+          "+ campaign/territory/customer-group/sales-partner")
+    return {
+        "ptt_net30": net30, "ptt_5050": adv5050, "ptt_split": split3060,
+        "cc_sales": cc_sales, "cc_ops": cc_ops,
+        "campaign": campaign, "territory": territory,
+        "customer_group": customer_group, "sales_partner": sales_partner,
+    }
+
+
 async def main() -> None:  # noqa: PLR0915 — linear demo scenario, clearer unsplit
     async with async_session_factory() as db:
         # --- base seed (idempotent) + admin ------------------------------------
@@ -379,6 +455,19 @@ async def main() -> None:  # noqa: PLR0915 — linear demo scenario, clearer uns
         icici = await masters.create_account(
             db, AccountCreate(account_name="ICICI Savings", parent_account_id=bank_group.id,
                               account_type="Bank"), actor)
+        # Bank Account masters (link the company's real bank accounts to their GL
+        # ledger accounts) — required by the Bank Reconciliation tool.
+        hdfc_ba = BankAccount(
+            id=uuid.uuid4(), company_id=company.id, account_name="HDFC Current A/C",
+            gl_account_id=hdfc.id, account_number="500100123456",
+            is_company_account=True, is_default=True,
+        )
+        icici_ba = BankAccount(
+            id=uuid.uuid4(), company_id=company.id, account_name="ICICI Savings A/C",
+            gl_account_id=icici.id, account_number="002701555000", is_company_account=True,
+        )
+        db.add_all([hdfc_ba, icici_ba])
+        await db.flush()
         out_cgst = await masters.create_account(
             db, AccountCreate(account_name="Output CGST", parent_account_id=duties.id,
                               account_type="Tax"), actor)
@@ -391,6 +480,70 @@ async def main() -> None:  # noqa: PLR0915 — linear demo scenario, clearer uns
         in_gst = await masters.create_account(
             db, AccountCreate(account_name="Input GST", parent_account_id=duties.id,
                               account_type="Tax"), actor)
+        # India withholding: TDS payable (purchase side) + TCS payable (sales side)
+        tds_payable = await masters.create_account(
+            db, AccountCreate(account_name="TDS Payable", parent_account_id=duties.id,
+                              account_type="Tax"), actor)
+        tcs_payable = await masters.create_account(
+            db, AccountCreate(account_name="TCS Payable", parent_account_id=duties.id,
+                              account_type="Tax"), actor)
+        # standard India TDS sections + TCS sections
+        _twc = [
+            ("TDS 194C - Contractor (Company) 2%", "TDS", 2, 30_000, tds_payable.id),
+            ("TDS 194C - Contractor (Individual/HUF) 1%", "TDS", 1, 30_000, tds_payable.id),
+            ("TDS 194H - Commission/Brokerage 5%", "TDS", 5, 15_000, tds_payable.id),
+            ("TDS 194I - Rent: Plant & Machinery 2%", "TDS", 2, 240_000, tds_payable.id),
+            ("TDS 194I - Rent: Land/Building 10%", "TDS", 10, 240_000, tds_payable.id),
+            ("TDS 194J - Professional/Technical 10%", "TDS", 10, 30_000, tds_payable.id),
+            ("TDS 194Q - Purchase of Goods 0.1%", "TDS", 0.1, 5_000_000, tds_payable.id),
+            ("TCS 206C - Scrap 1%", "TCS", 1, 0, tcs_payable.id),
+            ("TCS 206C(1H) - Sale of Goods 0.1%", "TCS", 0.1, 5_000_000, tcs_payable.id),
+            ("TCS 206C - Motor Vehicle (>10L) 1%", "TCS", 1, 1_000_000, tcs_payable.id),
+        ]
+        db.add_all([
+            TaxWithholdingCategory(
+                id=uuid.uuid4(), company_id=company.id, category_name=name, kind=kind,
+                rate=_d(rate), threshold=_d(thr), account_id=acct,
+            )
+            for name, kind, rate, thr, acct in _twc
+        ])
+        await db.flush()
+
+        # Dunning tiers — escalate by days overdue (grace), interest % p.a., flat fee
+        db.add_all([
+            DunningType(
+                id=uuid.uuid4(), company_id=company.id, dunning_type=name,
+                grace_period_days=grace, interest_rate=_d(rate), dunning_fee=_d(fee),
+                letter_intro=intro,
+            )
+            for name, grace, rate, fee, intro in [
+                ("Payment Reminder", 7, 0, 0,
+                 "We notice the following invoices are just past due. This is a friendly reminder — "
+                 "please arrange payment at your convenience."),
+                ("First Notice", 30, 12, 0,
+                 "The following invoices remain unpaid past their due date. Interest has been applied. "
+                 "Kindly settle the amount due to avoid further charges."),
+                ("Final Notice", 60, 18, 500,
+                 "Despite earlier reminders, the following invoices are significantly overdue. Please "
+                 "treat this as a final notice and remit the full amount due immediately."),
+            ]
+        ])
+        await db.flush()
+
+        # Item Tax Templates per GST slab — each carries CGST+SGST (intra), IGST
+        # (inter) and Input GST (purchase) rows so the per-item override applies on
+        # any invoice type. Set on an Item, it drives that line's GST rate.
+        for slab in (0, 5, 12, 18, 28):
+            itt = ItemTaxTemplate(id=uuid.uuid4(), company_id=company.id, title=f"GST {slab}%")
+            db.add(itt)
+            await db.flush()
+            db.add_all([
+                ItemTaxTemplateDetail(id=uuid.uuid4(), template_id=itt.id, account_head_id=out_cgst.id, rate=_d(slab) / 2, idx=1),
+                ItemTaxTemplateDetail(id=uuid.uuid4(), template_id=itt.id, account_head_id=out_sgst.id, rate=_d(slab) / 2, idx=2),
+                ItemTaxTemplateDetail(id=uuid.uuid4(), template_id=itt.id, account_head_id=out_igst.id, rate=_d(slab), idx=3),
+                ItemTaxTemplateDetail(id=uuid.uuid4(), template_id=itt.id, account_head_id=in_gst.id, rate=_d(slab), idx=4),
+            ])
+        await db.flush()
         cash = await _leaf_account(db, company.id, ["Cash"], "Asset", account_type="Cash")
         # explicit income/expense accounts on every invoice line keeps the
         # seeder independent of per-template company defaults
@@ -401,6 +554,8 @@ async def main() -> None:  # noqa: PLR0915 — linear demo scenario, clearer uns
         # --- tax categories + templates (sales auto-resolution by party) --------
         in_state = await masters.create_tax_category(db, TaxCategoryCreate(title="In-State"), actor)
         out_state = await masters.create_tax_category(db, TaxCategoryCreate(title="Out-of-State"), actor)
+        out_state.is_inter_state = True  # GST derives intra/inter from the GSTIN state code
+        await db.flush()
         category_ids = {"In-State": in_state.id, "Out-of-State": out_state.id, None: None}
 
         await masters.create_tax_template(
@@ -428,7 +583,7 @@ async def main() -> None:  # noqa: PLR0915 — linear demo scenario, clearer uns
         purchase_template = await masters.create_tax_template(
             db,
             TaxTemplateCreate(
-                title="GST 18% (Purchase)", kind="purchase",
+                title="GST 18% (Purchase)", kind="purchase", is_default=True,
                 details=[TaxRowIn(charge_type="On Net Total", rate=_d(18),
                                   account_head_id=in_gst.id, description="Input GST @ 18%")],
             ),
@@ -436,9 +591,13 @@ async def main() -> None:  # noqa: PLR0915 — linear demo scenario, clearer uns
         )
 
         # --- parties -------------------------------------------------------------
+        # GSTIN state code drives auto place-of-supply: company is 27 (Maharashtra),
+        # so In-State parties get a 27 GSTIN (→ CGST+SGST), Out-of-State get 29
+        # (Karnataka → IGST). Parties with no category get no GSTIN (manual fallback).
+        gstin_state = {"In-State": "27", "Out-of-State": "29"}
         customers = []
-        for name, category, credit_limit in CUSTOMERS:
-            customers.append(await masters.create_customer(
+        for i, (name, category, credit_limit) in enumerate(CUSTOMERS):
+            cust = await masters.create_customer(
                 db,
                 CustomerCreate(
                     customer_name=name,
@@ -446,24 +605,55 @@ async def main() -> None:  # noqa: PLR0915 — linear demo scenario, clearer uns
                     credit_limit=_d(credit_limit) if credit_limit else None,
                 ),
                 actor,
-            ))
+            )
+            state = gstin_state.get(category)
+            if state:
+                cust.tax_id = f"{state}AAAAA{i:04d}A1Z5"  # 15-char GSTIN (only state code matters here)
+            slug = "".join(ch for ch in name.lower() if ch.isalnum()) or f"cust{i + 1}"
+            cust.email_id = f"{slug}@example.com"  # demo inbox (Mailhog catches all dev mail)
+            customers.append(cust)
+        await db.flush()
         suppliers = []
-        for name, category in SUPPLIERS:
-            suppliers.append(await masters.create_supplier(
-                db, SupplierCreate(supplier_name=name, tax_category_id=category_ids[category]), actor))
+        for j, (name, category) in enumerate(SUPPLIERS):
+            sup = await masters.create_supplier(
+                db, SupplierCreate(supplier_name=name, tax_category_id=category_ids[category]), actor)
+            slug = "".join(ch for ch in name.lower() if ch.isalnum()) or f"supp{j + 1}"
+            sup.email_id = f"{slug}@example.com"
+            suppliers.append(sup)
+        await db.flush()
         print(f"Parties: {len(customers)} customers, {len(suppliers)} suppliers")
 
+        # --- parity-feature masters + party defaults ----------------------------
+        extras = await seed_extra_masters(db, actor, company)
+        # default payment terms on a couple of parties; group/territory on a customer
+        customers[0].payment_terms_template_id = extras["ptt_net30"]
+        customers[3].payment_terms_template_id = extras["ptt_5050"]
+        customers[0].customer_group_id = extras["customer_group"]
+        customers[0].territory_id = extras["territory"]
+        suppliers[0].payment_terms_template_id = extras["ptt_net30"]
+        suppliers[3].payment_terms_template_id = extras["ptt_split"]
+        await db.commit()
+
         def sales_items(max_lines: int = 3) -> list[InvoiceItemIn]:
+            # sprinkle per-line discounts + cost centers so those columns have data
             return [
-                InvoiceItemIn(item_name=item, qty=_d(rng.randint(1, 8)), rate=_d(rate),
-                              account_id=income_account.id)
+                InvoiceItemIn(
+                    item_name=item, qty=_d(rng.randint(1, 8)), rate=_d(rate),
+                    account_id=income_account.id,
+                    discount_percentage=_d(rng.choice([0, 0, 0, 5, 10])),
+                    cost_center_id=extras["cc_sales"] if rng.random() < 0.3 else None,
+                )
                 for item, rate in rng.sample(SALES_ITEMS, rng.randint(1, max_lines))
             ]
 
         def purchase_items(max_lines: int = 3) -> list[InvoiceItemIn]:
             return [
-                InvoiceItemIn(item_name=item, qty=_d(rng.randint(10, 120)), rate=_d(rate),
-                              account_id=expense_account.id)
+                InvoiceItemIn(
+                    item_name=item, qty=_d(rng.randint(10, 120)), rate=_d(rate),
+                    account_id=expense_account.id,
+                    discount_percentage=_d(rng.choice([0, 0, 0, 5])),
+                    cost_center_id=extras["cc_ops"] if rng.random() < 0.3 else None,
+                )
                 for item, rate in rng.sample(PURCHASE_ITEMS, rng.randint(1, max_lines))
             ]
 
@@ -510,6 +700,7 @@ async def main() -> None:  # noqa: PLR0915 — linear demo scenario, clearer uns
                     posting_date=posting,
                     due_date=posting + timedelta(days=rng.choice([7, 15, 30])),
                     items=sales_items(),
+                    payment_terms_template_id=extras["ptt_net30"] if rng.random() < 0.35 else None,
                     remarks=f"Demo order #{1000 + n}",
                 ),
                 actor,
@@ -612,6 +803,7 @@ async def main() -> None:  # noqa: PLR0915 — linear demo scenario, clearer uns
                     bill_date=posting,
                     items=purchase_items(),
                     tax_template_id=purchase_template.id if rng.random() < 0.7 else None,
+                    payment_terms_template_id=extras["ptt_split"] if rng.random() < 0.35 else None,
                 ),
                 actor,
             )
@@ -708,6 +900,29 @@ async def main() -> None:  # noqa: PLR0915 — linear demo scenario, clearer uns
             (admin_exp, 8_200, "Stationery and couriers"),
         ]
         journal_entries = []
+        # opening bank balance so HDFC stays positive (Dr bank / Cr equity), cleared
+        # at go-live — otherwise the demo bank is all outflows and reads as an overdraft.
+        shf = await db.scalar(
+            select(Account).where(
+                Account.company_id == company.id, Account.account_name == "Shareholders Funds"
+            )
+        )
+        if shf is not None:
+            opening_bank = await je_service.create_journal_entry(
+                db,
+                JournalEntryCreate(
+                    posting_date=prior_end - timedelta(days=60),
+                    remarks="Opening bank balance",
+                    accounts=[
+                        JournalEntryAccountIn(account_id=hdfc.id, debit=_d(1_000_000)),
+                        JournalEntryAccountIn(account_id=shf.id, credit=_d(1_000_000)),
+                    ],
+                ),
+                actor,
+            )
+            await je_service.submit_journal_entry(db, opening_bank.id, actor)
+            await je_service.set_clearance_date(
+                db, opening_bank.id, prior_end - timedelta(days=60), actor)
         # one entry in the prior FY: feeds the opening balances
         prior_rent = await je_service.create_journal_entry(
             db,
@@ -800,7 +1015,78 @@ async def main() -> None:  # noqa: PLR0915 — linear demo scenario, clearer uns
             actor,
         )
 
-        await seed_supply_chain(db, actor, customers, suppliers, income_account, recent)
+        # --- demo bank statement, kept COHERENT with the books -------------------
+        # The bank's view = one line for each UNCLEARED payment touching HDFC (so
+        # every line matches its voucher), MINUS the oldest one (an outstanding
+        # cheque the bank hasn't shown yet — a realistic residual in "Uncleared
+        # Items"), PLUS a couple of bank-only lines (charges/interest) with no
+        # voucher (the create-from-unmatched path). Manual journal entries against
+        # the bank are opening/adjustment items, so they're marked cleared at
+        # go-live rather than left to bloat the uncleared report.
+        from app.core.naming import get_next_name  # noqa: PLC0415
+
+        async def _btn(bank_account, on_date, desc, ref, deposit, withdrawal):
+            name = await get_next_name(db, "ACC-BTN-.YYYY.-", company.id, on_date=on_date)
+            db.add(BankTransaction(
+                id=uuid.uuid4(), company_id=company.id, name=name,
+                bank_account_id=bank_account.id, date=on_date, description=desc,
+                reference_number=ref, deposit=deposit, withdrawal=withdrawal,
+                status="Unreconciled",
+            ))
+
+        hdfc_jes = (await db.execute(
+            select(JournalEntry).where(
+                JournalEntry.company_id == company.id,
+                JournalEntry.docstatus == 1,
+                JournalEntry.clearance_date.is_(None),
+                JournalEntry.id.in_(
+                    select(JournalEntryAccount.journal_entry_id).where(
+                        JournalEntryAccount.account_id == hdfc.id
+                    )
+                ),
+            )
+        )).scalars().all()
+        for je in hdfc_jes:
+            je.clearance_date = je.posting_date  # opening/adjustment — cleared at go-live
+
+        hdfc_pes = (await db.execute(
+            select(PaymentEntry).where(
+                PaymentEntry.company_id == company.id,
+                PaymentEntry.docstatus == 1,
+                PaymentEntry.clearance_date.is_(None),
+                (PaymentEntry.paid_from_id == hdfc.id) | (PaymentEntry.paid_to_id == hdfc.id),
+            ).order_by(PaymentEntry.posting_date)
+        )).scalars().all()
+        for pe in hdfc_pes[1:]:  # leave the oldest uncleared as an outstanding cheque
+            if pe.paid_to_id == hdfc.id:
+                await _btn(hdfc_ba, pe.posting_date, f"Inward {pe.reference_no or 'transfer'}",
+                           pe.reference_no, pe.received_amount, _d(0))
+            else:
+                await _btn(hdfc_ba, pe.posting_date, f"Outward {pe.reference_no or 'payment'}",
+                           pe.reference_no, _d(0), pe.paid_amount)
+        await _btn(hdfc_ba, recent(2), "Bank charges - quarterly", "CHG-Q1", _d(0), _d(354))
+        await _btn(hdfc_ba, recent(5), "Savings interest credit", "INT-APR", _d(1180), _d(0))
+        await db.flush()
+
+        await seed_supply_chain(db, actor, customers, suppliers, income_account, recent, extras)
+
+        # assign GST slabs to the seeded items (default 18%, a few overrides for the
+        # mix). Self-contained SQL after a commit so the just-seeded items are visible.
+        await db.commit()
+        await db.execute(
+            text("UPDATE items SET item_tax_template_id = (SELECT id FROM item_tax_templates "
+                 "WHERE title='GST 18%' AND company_id=items.company_id) WHERE company_id=:cid"),
+            {"cid": str(company.id)},
+        )
+        for code, title in (("AIR-FRYER-45L", "GST 5%"), ("HAND-BLENDER-TURBO", "GST 12%"),
+                            ("WET-GRINDER-2L", "GST 28%")):
+            await db.execute(
+                text("UPDATE items SET item_tax_template_id = (SELECT id FROM item_tax_templates "
+                     "WHERE title=:title AND company_id=items.company_id) "
+                     "WHERE company_id=:cid AND item_code=:code"),
+                {"cid": str(company.id), "title": title, "code": code},
+            )
+        await db.commit()
 
         # --- summary -------------------------------------------------------------
         async def count(model, *where) -> int:
@@ -839,9 +1125,14 @@ async def main() -> None:  # noqa: PLR0915 — linear demo scenario, clearer uns
     await engine.dispose()
 
 
-async def seed_supply_chain(db, actor, customers, suppliers, income_account, recent) -> None:
+async def seed_supply_chain(db, actor, customers, suppliers, income_account, recent, extras=None) -> None:
     """Modules 03-05 demo data: items, warehouses, stock, the procurement chain
-    (MR -> RFQ -> SQ -> PO -> PR -> PI) and the sales chain (QTN -> SO -> DN -> SI)."""
+    (MR -> RFQ -> SQ -> PO -> PR -> PI) and the sales chain (QTN -> SO -> DN -> SI).
+
+    ``extras`` (parity masters) is optional so the legacy --phase3-topup path
+    still works; when present, the cycle documents showcase per-line discounts,
+    payment terms and the selling More-Info fields."""
+    pt = extras or {}
     # --- warehouses + item groups ---------------------------------------
     main_store = await stock_masters.create_warehouse(
         db, WarehouseCreate(warehouse_name="Main Store"), actor)
@@ -869,6 +1160,12 @@ async def seed_supply_chain(db, actor, customers, suppliers, income_account, rec
     raw_items = []
     for name, rate in PURCHASE_ITEMS:
         code = "RM-" + name.upper().replace(" ", "-")[:26]
+        # Multi-UOM (Phase 4) example: cartons are bought in Box-of-25, stocked in Nos
+        uom_kwargs: dict = (
+            {"purchase_uom": "Box", "purchase_uom_factor": _d(25)}
+            if name == "Packaging Carton L"
+            else {}
+        )
         raw_items.append(await stock_masters.create_item(
             db,
             ItemCreate(
@@ -876,6 +1173,7 @@ async def seed_supply_chain(db, actor, customers, suppliers, income_account, rec
                 valuation_rate=_d(rate), is_sales_item=False,
                 default_warehouse_id=main_store.id,
                 reorder_level=_d(50), reorder_qty=_d(200),
+                **uom_kwargs,
             ),
             actor,
         ))
@@ -925,6 +1223,23 @@ async def seed_supply_chain(db, actor, customers, suppliers, income_account, rec
         actor,
     )
     await se_service.submit_stock_entry(db, damaged.id, actor)
+
+    # --- physical count: a stock reconciliation adjusts to counted qty -------
+    recon = await recon_service.create_stock_reconciliation(
+        db,
+        StockReconciliationCreate(
+            purpose="Stock Reconciliation", posting_date=recent(7),
+            set_warehouse_id=main_store.id,
+            remarks="Quarterly physical count adjustment",
+            items=[
+                # counted qty differs from the books -> posts a difference
+                StockReconciliationItemIn(item_id=finished_items[1].id, qty=_d(40)),
+                StockReconciliationItemIn(item_id=raw_items[1].id, qty=_d(250)),
+            ],
+        ),
+        actor,
+    )
+    await recon_service.submit_stock_reconciliation(db, recon.id, actor)
 
     # --- procurement: MR -> RFQ -> Supplier Quotation -> PO -> PR -> PI --
     mr = await mr_service.create_material_request(
@@ -977,9 +1292,10 @@ async def seed_supply_chain(db, actor, customers, suppliers, income_account, rec
             supplier_id=suppliers[0].id, posting_date=recent(16),
             schedule_date=recent(16) + timedelta(days=7),
             supplier_quotation_id=sq.id,
+            payment_terms_template_id=pt.get("ptt_net30"),
             items=[
                 OrderItemIn(item_id=raw_items[0].id, qty=_d(100),
-                            rate=_d(PURCHASE_ITEMS[0][1] * 0.97),
+                            rate=_d(PURCHASE_ITEMS[0][1] * 0.97), discount_percentage=_d(5),
                             material_request_item_id=mr.items[0].id),
                 OrderItemIn(item_id=raw_items[4].id, qty=_d(150),
                             rate=_d(PURCHASE_ITEMS[4][1] * 0.98),
@@ -1007,6 +1323,7 @@ async def seed_supply_chain(db, actor, customers, suppliers, income_account, rec
         PurchaseInvoiceCreate(
             supplier_id=suppliers[0].id, posting_date=recent(7),
             due_date=recent(7) + timedelta(days=30), bill_no="VEND-PO-1",
+            payment_terms_template_id=pt.get("ptt_net30"),
             items=[
                 InvoiceItemIn(
                     item_name=row.item_name or "", qty=row.qty, rate=row.rate,
@@ -1072,7 +1389,10 @@ async def seed_supply_chain(db, actor, customers, suppliers, income_account, rec
         db,
         QuotationCreate(
             customer_id=customers[0].id, posting_date=recent(15),
-            items=[OrderItemIn(item_id=finished_items[0].id, qty=_d(10)),
+            campaign_id=pt.get("campaign"), territory_id=pt.get("territory"),
+            customer_group_id=pt.get("customer_group"), sales_partner_id=pt.get("sales_partner"),
+            payment_terms_template_id=pt.get("ptt_split"),
+            items=[OrderItemIn(item_id=finished_items[0].id, qty=_d(10), discount_percentage=_d(10)),
                    OrderItemIn(item_id=finished_items[3].id, qty=_d(12))],
         ),
         actor,
@@ -1085,6 +1405,8 @@ async def seed_supply_chain(db, actor, customers, suppliers, income_account, rec
             customer_id=customers[0].id, posting_date=recent(13),
             delivery_date=recent(13) + timedelta(days=7),
             quotation_id=qtn2.id,
+            campaign_id=pt.get("campaign"), territory_id=pt.get("territory"),
+            payment_terms_template_id=pt.get("ptt_net30"),
             items=[
                 OrderItemIn(item_id=row.item_id, qty=row.qty, rate=row.rate,
                             quotation_item_id=row.id)
@@ -1112,10 +1434,11 @@ async def seed_supply_chain(db, actor, customers, suppliers, income_account, rec
         SalesInvoiceCreate(
             customer_id=customers[0].id, posting_date=recent(6),
             due_date=recent(6) + timedelta(days=15),
+            payment_terms_template_id=pt.get("ptt_net30"),
             items=[
                 InvoiceItemIn(
                     item_name=row.item_name or "", qty=row.qty, rate=row.rate,
-                    item_id=row.item_id,
+                    item_id=row.item_id, cost_center_id=pt.get("cc_sales"),
                     sales_order_item_id=row.sales_order_item_id,
                     delivery_note_item_id=row.id,
                 )
@@ -1158,7 +1481,80 @@ async def seed_supply_chain(db, actor, customers, suppliers, income_account, rec
         ),
         actor,
     )
-    print("Cycles: PO->PR->PI and QTN->SO->DN->SI seeded (plus partials and drafts)")
+
+    # --- Phase 3 depth: returns, accepted/rejected split, landed cost -----
+    company_id = suppliers[0].company_id
+    # Sales return: the customer sends 2 units of DN #1 back (stock back in, COGS
+    # reversed at the original delivery value, SO delivered_qty nets down).
+    sret = await dn_service.create_delivery_note(
+        db,
+        DeliveryNoteCreate(
+            customer_id=customers[0].id, posting_date=recent(3),
+            is_return=True, return_against_id=dn1.id,
+            items=[DeliveryNoteItemIn(
+                item_id=dn1.items[0].item_id, qty=_d(2),
+                warehouse_id=dn1.items[0].warehouse_id,
+                sales_order_item_id=dn1.items[0].sales_order_item_id,
+            )],
+        ),
+        actor,
+    )
+    await dn_service.submit_delivery_note(db, sret.id, actor)
+
+    # Purchase return: send 5 units of PR #1 back to the supplier (stock out at the
+    # original receipt rate, SRBNB reversed, PO received_qty nets down).
+    pret = await pr_service.create_purchase_receipt(
+        db,
+        PurchaseReceiptCreate(
+            supplier_id=suppliers[0].id, posting_date=recent(3),
+            is_return=True, return_against_id=pr1.id, supplier_delivery_note="SDN-RET-001",
+            items=[PurchaseReceiptItemIn(
+                item_id=pr1.items[0].item_id, qty=_d(5),
+                warehouse_id=pr1.items[0].warehouse_id,
+                purchase_order_item_id=pr1.items[0].purchase_order_item_id,
+            )],
+        ),
+        actor,
+    )
+    await pr_service.submit_purchase_receipt(db, pret.id, actor)
+
+    # QC split: receive 40 good + 5 rejected; rejected lands in the Showroom warehouse.
+    pr_qc = await pr_service.create_purchase_receipt(
+        db,
+        PurchaseReceiptCreate(
+            supplier_id=suppliers[2].id, posting_date=recent(2),
+            items=[PurchaseReceiptItemIn(
+                item_id=raw_items[2].id, qty=_d(40), rate=_d(PURCHASE_ITEMS[2][1]),
+                warehouse_id=main_store.id,
+                rejected_qty=_d(5), rejected_warehouse_id=showroom.id,
+            )],
+        ),
+        actor,
+    )
+    await pr_service.submit_purchase_receipt(db, pr_qc.id, actor)
+
+    # Landed cost: a receipt with inbound freight folded into the incoming valuation.
+    eiv = await _leaf_account(
+        db, company_id, ["Expenses Included In Valuation"],
+        account_type="Expenses Included In Valuation", root_type="Expense",
+    )
+    pr_lc = await pr_service.create_purchase_receipt(
+        db,
+        PurchaseReceiptCreate(
+            supplier_id=suppliers[1].id, posting_date=recent(2),
+            items=[PurchaseReceiptItemIn(
+                item_id=raw_items[3].id, qty=_d(50), rate=_d(PURCHASE_ITEMS[3][1]),
+                warehouse_id=main_store.id,
+            )],
+            charges=[PurchaseReceiptChargeIn(
+                description="Inbound Freight", account_id=eiv.id, amount=_d(1500),
+            )],
+        ),
+        actor,
+    )
+    await pr_service.submit_purchase_receipt(db, pr_lc.id, actor)
+
+    print("Cycles: PO->PR->PI and QTN->SO->DN->SI seeded (plus returns, QC split, landed cost)")
 
 
 async def topup_main() -> None:

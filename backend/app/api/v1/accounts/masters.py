@@ -1,6 +1,7 @@
 """Module 02 master endpoints: accounts, customers, suppliers, fiscal years,
 tax categories, tax templates."""
 
+import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query
@@ -11,18 +12,23 @@ from app.core.security import CurrentUser, get_tenant_db
 from app.schemas.accounts import (
     AccountCreate,
     AccountResponse,
+    AccountUpdate,
     CustomerCreate,
     CustomerResponse,
+    OpeningInvoiceResult,
+    OpeningInvoiceTool,
     SupplierCreate,
     SupplierResponse,
     TaxCategoryCreate,
     TaxCategoryResponse,
     TaxTemplateCreate,
     TaxTemplateResponse,
+    TaxTemplateUpdate,
 )
 from app.schemas.common import ListResponse
 from app.schemas.core import FiscalYearResponse
 from app.services import accounts_masters as masters
+from app.services import opening_invoice
 
 router = APIRouter(tags=["accounts: masters"])
 
@@ -42,6 +48,25 @@ async def create_account(
     db: Annotated[AsyncSession, Depends(get_tenant_db)],
 ) -> AccountResponse:
     return AccountResponse.model_validate(await masters.create_account(db, payload, current_user))
+
+
+@router.patch(
+    "/accounts/{account_id}",
+    response_model=AccountResponse,
+    summary="Update an account",
+    description="Partial update: rename (cascades the path to child accounts), account "
+    "number/type/currency, and freeze/disable. Structural fields (root type, parent, "
+    "is-group) are not editable here.",
+)
+async def update_account(
+    account_id: uuid.UUID,
+    payload: AccountUpdate,
+    current_user: Annotated[CurrentUser, Depends(require_permission("Account", "write"))],
+    db: Annotated[AsyncSession, Depends(get_tenant_db)],
+) -> AccountResponse:
+    return AccountResponse.model_validate(
+        await masters.update_account(db, account_id, payload, current_user)
+    )
 
 
 @router.post(
@@ -162,6 +187,25 @@ async def list_tax_categories(
 
 
 @router.post(
+    "/opening-invoices",
+    response_model=OpeningInvoiceResult,
+    status_code=201,
+    summary="Opening Invoice Creation Tool",
+    description="Bulk-create submitted opening invoices for outstanding receivables/payables "
+    "at go-live. Each row posts its amount against the company's Temporary Opening account "
+    "(no income/expense, no tax) and shows up in AR/AP aging. Example: "
+    "`{'invoice_type': 'sales', 'posting_date': '2026-03-31', 'rows': [{'party_id': '<customer>', "
+    "'outstanding_amount': 50000}]}`",
+)
+async def create_opening_invoices(
+    payload: OpeningInvoiceTool,
+    current_user: Annotated[CurrentUser, Depends(require_permission("Account", "create"))],
+    db: Annotated[AsyncSession, Depends(get_tenant_db)],
+) -> OpeningInvoiceResult:
+    return await opening_invoice.create_opening_invoices(db, payload, current_user)
+
+
+@router.post(
     "/tax-templates",
     response_model=TaxTemplateResponse,
     status_code=201,
@@ -194,3 +238,36 @@ async def list_tax_templates(
 ) -> list[TaxTemplateResponse]:
     templates = await masters.list_tax_templates(db, current_user.company_id, kind)
     return [TaxTemplateResponse.model_validate(t) for t in templates]
+
+
+@router.patch(
+    "/tax-templates/{template_id}",
+    response_model=TaxTemplateResponse,
+    summary="Update a tax template",
+    description="Replaces the template header and rows (kind is not editable). Existing "
+    "documents keep the tax rows they copied at creation, so edits only affect future use.",
+)
+async def update_tax_template(
+    template_id: uuid.UUID,
+    payload: TaxTemplateUpdate,
+    current_user: Annotated[CurrentUser, Depends(require_permission("Tax Template", "write"))],
+    db: Annotated[AsyncSession, Depends(get_tenant_db)],
+) -> TaxTemplateResponse:
+    return TaxTemplateResponse.model_validate(
+        await masters.update_tax_template(db, template_id, payload, current_user)
+    )
+
+
+@router.delete(
+    "/tax-templates/{template_id}",
+    status_code=204,
+    summary="Delete a tax template",
+    description="Removes the template and its rows. Safe for posted documents (they hold "
+    "their own copied tax rows).",
+)
+async def delete_tax_template(
+    template_id: uuid.UUID,
+    current_user: Annotated[CurrentUser, Depends(require_permission("Tax Template", "delete"))],
+    db: Annotated[AsyncSession, Depends(get_tenant_db)],
+) -> None:
+    await masters.delete_tax_template(db, template_id, current_user)

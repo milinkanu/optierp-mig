@@ -71,3 +71,10 @@ export async function openPdf(path: string): Promise<void> {
   window.open(url, "_blank");
   setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
+
+/** Fetch protected HTML (a document preview) with auth, as a string for an iframe srcdoc.
+ *  The bearer token can't ride a raw iframe navigation, so we fetch then inject. */
+export async function fetchPrintHtml(path: string): Promise<string> {
+  const resp = await api.get(path, { responseType: "text", transformResponse: (d) => d });
+  return resp.data as string;
+}

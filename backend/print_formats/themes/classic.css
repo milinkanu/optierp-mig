@@ -1,0 +1,14 @@
+/* Classic — formal, serif headings, deep-navy accent, ruled tables. */
+:root {
+  --accent: #1e3a8a;
+  --head-bg: #eef2ff;
+  --zebra: #ffffff;
+  --font: Georgia, "Times New Roman", serif;
+  --title: 18px;
+  --ink: #1a1a2e;
+}
+.ph-header { border-bottom-width: 3px; }
+.ph-company { letter-spacing: .01em; }
+table.ph-items { border: 1px solid var(--line); }
+table.ph-items th { color: var(--accent); border-bottom: 2px solid var(--accent); }
+table.ph-items td { border-right: 1px solid var(--line); }

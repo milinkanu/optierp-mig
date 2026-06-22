@@ -35,6 +35,7 @@ class Supplier(Base, DocumentMixin, CompanyScopedMixin):
         String(20), nullable=False, default="Company", server_default=text("'Company'")
     )
     tax_id: Mapped[str | None] = mapped_column(String(80))
+    email_id: Mapped[str | None] = mapped_column(String(140))  # for emailing POs/documents
     default_currency: Mapped[str | None] = mapped_column(String(3))
     # Overrides the company default payable account when set
     payable_account_id: Mapped[uuid.UUID | None] = mapped_column(
@@ -233,6 +234,10 @@ class PurchaseOrder(Base, DocumentMixin, CompanyScopedMixin, VoucherMixin, Total
     )
     contact_person_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("contacts.id", ondelete="SET NULL")
+    )
+    payment_terms_template_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("payment_terms_templates.id", use_alter=True, name="fk_po_payment_terms", ondelete="SET NULL"),
     )
 
     items: Mapped[list["PurchaseOrderItem"]] = relationship(

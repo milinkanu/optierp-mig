@@ -25,6 +25,7 @@ from app.schemas.stock import (
     PriceListResponse,
     WarehouseCreate,
     WarehouseResponse,
+    WarehouseUpdate,
 )
 from app.services import stock_masters as service
 
@@ -75,6 +76,31 @@ async def list_warehouses(
         WarehouseResponse.model_validate(w)
         for w in await service.list_warehouses(db, current_user.company_id)
     ]
+
+
+@router.get("/warehouses/{warehouse_id}", response_model=WarehouseResponse,
+            summary="Get a Warehouse", description="Full warehouse record.")
+async def get_warehouse(
+    warehouse_id: uuid.UUID,
+    current_user: Annotated[CurrentUser, Depends(require_permission("Warehouse", "read"))],
+    db: Annotated[AsyncSession, Depends(get_tenant_db)],
+) -> WarehouseResponse:
+    return WarehouseResponse.model_validate(
+        await service.get_warehouse_by_id(db, warehouse_id, current_user.company_id)
+    )
+
+
+@router.patch("/warehouses/{warehouse_id}", response_model=WarehouseResponse,
+              summary="Update a Warehouse", description="Partial update (name, type, account, parent, disabled).")
+async def update_warehouse(
+    warehouse_id: uuid.UUID,
+    payload: WarehouseUpdate,
+    current_user: Annotated[CurrentUser, Depends(require_permission("Warehouse", "write"))],
+    db: Annotated[AsyncSession, Depends(get_tenant_db)],
+) -> WarehouseResponse:
+    return WarehouseResponse.model_validate(
+        await service.update_warehouse(db, warehouse_id, payload, current_user)
+    )
 
 
 @router.post("/items", response_model=ItemResponse, status_code=201,

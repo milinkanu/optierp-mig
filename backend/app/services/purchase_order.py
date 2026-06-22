@@ -23,7 +23,13 @@ from app.models.accounts import TaxTemplate
 from app.schemas.accounts import TaxRowIn
 from app.schemas.buying import PurchaseOrderCreate
 from app.services import gl  # noqa: F401  (kept for parity; POs post no GL)
-from app.services.accounts_common import get_company, get_supplier, require_draft, require_submitted
+from app.services.accounts_common import (
+    get_company,
+    get_supplier,
+    item_tax_rates,
+    require_draft,
+    require_submitted,
+)
 from app.services.audit import log_audit
 from app.services.material_request import set_material_request_status
 from app.services.pagination import paginate
@@ -31,6 +37,7 @@ from app.services.stock_common import (
     STOCK_NAMING_SERIES,
     get_items,
     get_warehouse,
+    resolve_conversion_factor,
     resolve_item_rate,
 )
 from app.services.stock_ledger import update_ordered_qty
@@ -55,7 +62,7 @@ async def _load_tax_rows(db: AsyncSession, payload: PurchaseOrderCreate, supplie
         from app.services.accounts_masters import resolve_tax_template
 
         template = await resolve_tax_template(
-            db, supplier.company_id, "purchase", supplier.tax_category_id
+            db, supplier.company_id, "purchase", supplier.tax_category_id, party_gstin=supplier.tax_id
         )
         if template is None:
             return []
@@ -64,6 +71,7 @@ async def _load_tax_rows(db: AsyncSession, payload: PurchaseOrderCreate, supplie
             charge_type=d.charge_type, rate=d.rate, tax_amount=d.tax_amount, row_id=d.row_id,
             account_head_id=d.account_head_id, cost_center_id=d.cost_center_id,
             description=d.description, add_deduct_tax=d.add_deduct_tax, category=d.category,
+            included_in_print_rate=d.included_in_print_rate,
         )
         for d in template.details
     ]
@@ -81,6 +89,9 @@ async def _validate_mr_links(
     ]
     if not pairs:
         return
+    link_items = await get_items(
+        db, {row.item_id for _, row in pairs}, company_id, allow_disabled=True
+    )
     mr_items = {
         m.id: m
         for m in (
@@ -118,14 +129,18 @@ async def _validate_mr_links(
                 f"Material Request {mr.name}: linked row is for a different item",
                 field="items",
             )
-        requested[link_id] = requested.get(link_id, ZERO) + row.qty
+        # cumulative ordered qty is tracked in stock units (MR may be in a
+        # different UOM than the PO, e.g. demand in Nos, ordered in Box)
+        po_item = link_items[row.item_id]
+        stock_qty = row.qty * resolve_conversion_factor(po_item, row.uom or po_item.stock_uom)
+        requested[link_id] = requested.get(link_id, ZERO) + stock_qty
     for link_id, qty in requested.items():
         mr_item = mr_items[link_id]
-        if mr_item.ordered_qty + qty > mr_item.qty + Decimal("0.000001"):
+        if mr_item.ordered_qty + qty > mr_item.stock_qty + Decimal("0.000001"):
             mr = parents[mr_item.material_request_id]
             raise ValidationError(
-                f"Material Request {mr.name}: ordering {qty} exceeds the unordered "
-                f"quantity {mr_item.qty - mr_item.ordered_qty}",
+                f"Material Request {mr.name}: ordering {qty} (stock) exceeds the unordered "
+                f"quantity {mr_item.stock_qty - mr_item.ordered_qty}",
                 field="items",
             )
 
@@ -185,13 +200,23 @@ async def create_purchase_order(
             rates.append(rate)
 
     tax_rows_in = await _load_tax_rows(db, payload, supplier)
+    item_rates = await item_tax_rates(db, payload.items)  # per-item GST overrides
     engine_items = [
-        ItemRow(qty=row.qty, rate=rate) for row, rate in zip(payload.items, rates)
+        ItemRow(
+            qty=row.qty,
+            rate=(row.price_list_rate if row.price_list_rate is not None else rate),
+            price_list_rate=(row.price_list_rate if row.price_list_rate is not None else rate),
+            discount_percentage=row.discount_percentage,
+            discount_amount=row.discount_amount,
+            item_tax_rate=item_rates.get(row.item_id, {}),
+        )
+        for row, rate in zip(payload.items, rates)
     ]
     engine_taxes = [
         TaxRow(
             charge_type=t.charge_type, rate=t.rate, tax_amount=t.tax_amount, row_id=t.row_id,
             add_deduct_tax=t.add_deduct_tax, category=t.category,
+            account_head_id=t.account_head_id, included_in_print_rate=t.included_in_print_rate,
         )
         for t in tax_rows_in
     ]
@@ -216,6 +241,7 @@ async def create_purchase_order(
         supplier_address_id=payload.supplier_address_id,
         shipping_address_id=payload.shipping_address_id,
         contact_person_id=payload.contact_person_id,
+        payment_terms_template_id=payload.payment_terms_template_id,
         set_warehouse_id=payload.set_warehouse_id,
         supplier_quotation_id=payload.supplier_quotation_id,
         currency=currency,
@@ -255,6 +281,8 @@ async def create_purchase_order(
             raise ValidationError(
                 f"Item '{item.item_code}' is not a purchase item", field="items"
             )
+        uom = row.uom or item.stock_uom
+        factor = resolve_conversion_factor(item, uom)
         db.add(
             PurchaseOrderItem(
                 order_id=po.id,
@@ -264,7 +292,13 @@ async def create_purchase_order(
                 item_name=item.item_name,
                 description=row.description or item.description,
                 qty=engine_item.qty,
-                uom=row.uom or item.stock_uom,
+                uom=uom,
+                conversion_factor=factor,
+                stock_qty=engine_item.qty * factor,
+                price_list_rate=engine_item.price_list_rate or engine_item.rate,
+                base_price_list_rate=engine_item.base_price_list_rate,
+                discount_percentage=engine_item.discount_percentage,
+                discount_amount=engine_item.discount_amount,
                 rate=engine_item.rate,
                 amount=engine_item.amount,
                 base_rate=engine_item.base_rate,
@@ -290,6 +324,7 @@ async def create_purchase_order(
                 description=tax_in.description,
                 add_deduct_tax=engine_tax.add_deduct_tax,
                 category=engine_tax.category,
+                included_in_print_rate=engine_tax.included_in_print_rate,
                 tax_amount=engine_tax.tax_amount,
                 total=engine_tax.total,
                 base_tax_amount=engine_tax.base_tax_amount,
@@ -352,7 +387,7 @@ async def _refresh_material_requests(db: AsyncSession, po: PurchaseOrder, sign: 
         mr_item = mr_items.get(row.material_request_item_id)
         if mr_item is None:
             continue
-        mr_item.ordered_qty = max(ZERO, mr_item.ordered_qty + sign * row.qty)
+        mr_item.ordered_qty = max(ZERO, mr_item.ordered_qty + sign * row.stock_qty)
         touched_mr_ids.add(mr_item.material_request_id)
     for mr_id in touched_mr_ids:
         mr = await db.scalar(
@@ -374,7 +409,7 @@ async def submit_purchase_order(
     for row in po.items:
         item = items.get(row.item_id)
         if item is not None and item.is_stock_item and row.warehouse_id is not None:
-            await update_ordered_qty(db, po.company_id, row.item_id, row.warehouse_id, row.qty)
+            await update_ordered_qty(db, po.company_id, row.item_id, row.warehouse_id, row.stock_qty)
 
     await _refresh_material_requests(db, po, sign=1)
 
@@ -403,7 +438,7 @@ async def cancel_purchase_order(
     for row in po.items:
         item = items.get(row.item_id)
         if item is not None and item.is_stock_item and row.warehouse_id is not None:
-            await update_ordered_qty(db, po.company_id, row.item_id, row.warehouse_id, -row.qty)
+            await update_ordered_qty(db, po.company_id, row.item_id, row.warehouse_id, -row.stock_qty)
 
     await _refresh_material_requests(db, po, sign=-1)
 

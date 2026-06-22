@@ -23,6 +23,9 @@ export interface InvoiceItemIn {
   qty: number;
   uom?: string | null;
   rate: number;
+  price_list_rate?: number | null;
+  discount_percentage?: number | null;
+  discount_amount?: number | null;
   account_id?: string | null;
   // Module 03-05 cycle links
   item_id?: string | null;
@@ -42,6 +45,35 @@ export interface TaxRowIn {
   description?: string | null;
   add_deduct_tax?: string;
   category?: string;
+  included_in_print_rate?: boolean;
+}
+
+export interface TaxTemplateDetail {
+  charge_type: string;
+  rate: string;
+  tax_amount: string;
+  row_id: number | null;
+  account_head_id: string;
+  cost_center_id: string | null;
+  description: string | null;
+  add_deduct_tax: string;
+  category: string;
+  included_in_print_rate: boolean;
+}
+
+export interface TaxTemplate {
+  id: string;
+  title: string;
+  kind: string; // "sales" | "purchase"
+  is_default: boolean;
+  tax_category_id: string | null;
+  details: TaxTemplateDetail[];
+}
+
+export interface CostCenter {
+  id: string;
+  cost_center_name: string;
+  is_group: boolean;
 }
 
 export interface InvoiceListItem {
@@ -70,11 +102,13 @@ export interface InvoiceDetail extends DocumentMeta {
   rounded_total: string;
   rounding_adjustment: string;
   outstanding_amount: string;
+  tax_withholding_amount: string;
   status: string;
   is_return: boolean;
   po_no?: string | null;
   po_date?: string | null;
   terms?: string | null;
+  payment_terms_template_id?: string | null;
   customer_address_id?: string | null;
   supplier_address_id?: string | null;
   shipping_address_id?: string | null;
@@ -84,6 +118,8 @@ export interface InvoiceDetail extends DocumentMeta {
     idx: number;
     item_name: string;
     qty: string;
+    price_list_rate?: string;
+    discount_percentage?: string;
     rate: string;
     amount: string;
     net_amount: string;
@@ -142,6 +178,60 @@ export interface PaymentEntryListItem {
   docstatus: number;
 }
 
+export interface PaymentReferenceRow {
+  idx: number;
+  reference_doctype: string; // Sales Invoice | Purchase Invoice
+  reference_id: string;
+  reference_name: string | null;
+  total_amount: string;
+  outstanding_amount: string;
+  allocated_amount: string;
+}
+
+export interface PaymentEntryDetail {
+  id: string;
+  name: string;
+  posting_date: string;
+  payment_type: string;
+  party_type: string | null;
+  party_id: string | null;
+  paid_from_id: string;
+  paid_to_id: string;
+  paid_amount: string;
+  received_amount: string;
+  total_allocated_amount: string;
+  unallocated_amount: string;
+  reference_no: string | null;
+  reference_date: string | null;
+  clearance_date: string | null;
+  status: string;
+  remarks: string | null;
+  references: PaymentReferenceRow[];
+}
+
+export interface JournalEntryAccountRow {
+  idx: number;
+  account_id: string;
+  debit: string;
+  credit: string;
+  party_type: string | null;
+  party_id: string | null;
+  cost_center_id: string | null;
+  user_remark: string | null;
+}
+
+export interface JournalEntryDetail {
+  id: string;
+  name: string;
+  posting_date: string;
+  voucher_type: string;
+  total_debit: string;
+  total_credit: string;
+  clearance_date: string | null;
+  remarks: string | null;
+  accounts: JournalEntryAccountRow[];
+}
+
 export interface TrialBalanceRow {
   account_id: string;
   account_name: string;
@@ -176,6 +266,24 @@ export interface AgingRow {
   bucket_31_60: string;
   bucket_61_90: string;
   bucket_90_plus: string;
+}
+
+export interface PartyOutstandingSummaryRow {
+  party_id: string;
+  party_name: string;
+  outstanding_amount: string;
+  bucket_0_30: string;
+  bucket_31_60: string;
+  bucket_61_90: string;
+  bucket_90_plus: string;
+}
+
+export interface CollectionSummaryRow {
+  party_id: string;
+  party_name: string;
+  paid_invoices: number;
+  avg_days_to_pay: number;
+  total_collected: string;
 }
 
 export interface FiscalYearInfo extends DocumentMeta {
@@ -234,4 +342,83 @@ export interface BankReconciliationReport {
   uncleared_amount: string;
   balance_per_bank: string;
   uncleared_entries: BankReconUnclearedRow[];
+}
+
+export interface RegisterRow {
+  voucher_id: string;
+  name: string;
+  posting_date: string;
+  party_name: string | null;
+  net_total: string;
+  total_taxes_and_charges: string;
+  grand_total: string;
+  outstanding_amount: string;
+  status: string;
+}
+
+export interface RegisterReport {
+  rows: RegisterRow[];
+  total_net: string;
+  total_tax: string;
+  total_grand: string;
+  total_outstanding: string;
+}
+
+export interface PartyLedgerSummaryRow {
+  party_id: string;
+  party_name: string;
+  opening: string;
+  debit: string;
+  credit: string;
+  closing: string;
+}
+
+export interface GrossProfitRow {
+  item_code: string | null;
+  item_name: string;
+  qty: string;
+  selling: string;
+  cogs: string;
+  gross_profit: string;
+  margin_pct: string;
+}
+
+export interface GrossProfitReport {
+  rows: GrossProfitRow[];
+  total_selling: string;
+  total_cogs: string;
+  total_gross_profit: string;
+  margin_pct: string;
+}
+
+export interface BudgetVarianceRow {
+  account_id: string;
+  account_name: string;
+  budget: string;
+  actual: string;
+  variance: string;
+  variance_pct: string;
+}
+
+export interface GeneralLedgerEntry {
+  id: string;
+  posting_date: string;
+  account_id: string;
+  party_type: string | null;
+  party_id: string | null;
+  debit: string;
+  credit: string;
+  voucher_type: string;
+  voucher_no: string;
+  against: string | null;
+  is_cancellation: boolean;
+  remarks: string | null;
+}
+
+export interface GeneralLedgerReport {
+  opening_balance: string;
+  entries: GeneralLedgerEntry[];
+  total_debit: string;
+  total_credit: string;
+  closing_balance: string;
 }

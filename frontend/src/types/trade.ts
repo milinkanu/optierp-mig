@@ -6,6 +6,9 @@ export interface OrderItemIn {
   item_id: string;
   qty: number;
   rate?: number | null;
+  price_list_rate?: number | null;
+  discount_percentage?: number | null;
+  discount_amount?: number | null;
   uom?: string | null;
   description?: string | null;
   warehouse_id?: string | null;
@@ -13,6 +16,7 @@ export interface OrderItemIn {
   delivery_date?: string | null;
   material_request_item_id?: string | null;
   quotation_item_id?: string | null;
+  _uomOptions?: { value: string; label: string }[]; // client-only per-row UOM options
   _rowKey?: string; // client-only editable-grid key (ignored by the backend)
 }
 
@@ -40,6 +44,11 @@ export interface OrderItemDetail {
   description: string | null;
   qty: string;
   uom: string | null;
+  conversion_factor?: string;
+  stock_qty?: string;
+  price_list_rate?: string;
+  discount_percentage?: string;
+  discount_amount?: string;
   rate: string;
   amount: string;
   warehouse_id?: string | null;
@@ -94,6 +103,7 @@ export interface OrderDetail extends DocumentMeta {
   // shared
   per_billed?: string;
   valid_till?: string | null;
+  payment_terms_template_id?: string | null;
 }
 
 export interface RFQListItem {

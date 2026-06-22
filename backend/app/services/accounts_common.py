@@ -21,6 +21,7 @@ NAMING_SERIES = {
     "Purchase Invoice": "ACC-PINV-.YYYY.-",
     "Payment Entry": "ACC-PAY-.YYYY.-",
     "Period Closing Voucher": "ACC-PCV-.YYYY.-",
+    "Bank Transaction": "ACC-BTN-.YYYY.-",
 }
 
 
@@ -67,6 +68,45 @@ def get_payable_account(company: Company, supplier: Supplier) -> uuid.UUID:
             "No payable account configured (supplier or company default)", field="credit_to_id"
         )
     return account_id
+
+
+from sqlalchemy import select  # noqa: E402
+
+
+async def item_tax_rates(db: AsyncSession, payload_items: list) -> dict[uuid.UUID, dict]:
+    """Map each invoice line's item to its Item Tax Template rates
+    ({item_id: {tax_account_head_id: rate}}), so the taxes engine can apply a
+    per-item GST rate. Items without a template are absent (use the row rate)."""
+    from app.models.accounts import ItemTaxTemplateDetail
+    from app.models.stock import Item
+
+    item_ids = {i.item_id for i in payload_items if getattr(i, "item_id", None) is not None}
+    if not item_ids:
+        return {}
+    tmpl_by_item = dict(
+        (
+            await db.execute(
+                select(Item.id, Item.item_tax_template_id).where(
+                    Item.id.in_(item_ids), Item.item_tax_template_id.isnot(None)
+                )
+            )
+        ).all()
+    )
+    if not tmpl_by_item:
+        return {}
+    rates_by_tmpl: dict[uuid.UUID, dict] = {}
+    rows = (
+        await db.execute(
+            select(
+                ItemTaxTemplateDetail.template_id,
+                ItemTaxTemplateDetail.account_head_id,
+                ItemTaxTemplateDetail.rate,
+            ).where(ItemTaxTemplateDetail.template_id.in_(set(tmpl_by_item.values())))
+        )
+    ).all()
+    for tid, account_head_id, rate in rows:
+        rates_by_tmpl.setdefault(tid, {})[account_head_id] = Decimal(rate)
+    return {iid: rates_by_tmpl.get(tid, {}) for iid, tid in tmpl_by_item.items()}
 
 
 def base_payable_total(invoice: SalesInvoice | PurchaseInvoice) -> Decimal:

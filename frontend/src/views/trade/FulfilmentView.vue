@@ -6,6 +6,8 @@ import { useRouter } from "vue-router";
 import DataTable, { type Column } from "@/components/shared/DataTable.vue";
 import PaginationFooter from "@/components/shared/PaginationFooter.vue";
 import StatusBadge from "@/components/shared/StatusBadge.vue";
+import PrintButton from "@/components/shared/PrintButton.vue";
+import SendEmailButton from "@/components/shared/SendEmailButton.vue";
 import { useList } from "@/composables/useList";
 import { useCompanyCurrency } from "@/composables/useCompanyCurrency";
 import { api } from "@/api/client";
@@ -23,6 +25,10 @@ const CONFIG = {
 } as const;
 
 const cfg = computed(() => CONFIG[props.kind]);
+// Singular print-registry doctype key (cfg.title is plural for the list heading).
+const printDoctype = computed(() =>
+  props.kind === "delivery-note" ? "Delivery Note" : "Purchase Receipt",
+);
 const { items, total, page, pageSize, loading, filters, fetchList, goToPage, reset } =
   useList<FulfilmentListItem>(() => cfg.value.endpoint);
 
@@ -42,6 +48,17 @@ const columns = computed<Column[]>(() => [
 ]);
 
 const docPartyName = computed(() => doc.value?.customer_name ?? doc.value?.supplier_name ?? "");
+
+// Purchase Receipts can carry a rejected-qty split; show the column when relevant.
+const showRejected = computed(
+  () =>
+    props.kind === "purchase-receipt" &&
+    (doc.value?.items ?? []).some((i) => Number(i.rejected_qty ?? 0) > 0),
+);
+// Serialised lines carry their serial numbers; show the column when any do.
+const showSerials = computed(() => (doc.value?.items ?? []).some((i) => i.serial_nos));
+// Batched lines carry a lot batch_no; show the column when any do.
+const showBatch = computed(() => (doc.value?.items ?? []).some((i) => i.batch_no));
 
 async function applyStatus(): Promise<void> {
   filters.value = statusFilter.value ? { status: statusFilter.value } : {};
@@ -74,6 +91,11 @@ function createInvoice(): void {
   } else {
     void router.push({ name: "purchase-invoice-new", query: { purchase_receipt_id: doc.value.id } });
   }
+}
+
+function makeReturn(): void {
+  if (!doc.value) return;
+  void router.push(`${cfg.value.endpoint}/new?return_against=${doc.value.id}`);
 }
 
 onMounted(async () => {
@@ -111,10 +133,16 @@ watch(
           <p class="text-sm text-gray-500">{{ doc.name }}</p>
         </div>
         <div class="flex items-center gap-3">
+          <span v-if="doc.is_return"
+                class="rounded-full bg-rose-100 px-2 py-0.5 text-xs font-medium text-rose-700">Return</span>
           <StatusBadge :status="doc.status" />
+          <PrintButton :path="`/print/${encodeURIComponent(printDoctype)}/${doc.id}`" :title="`${doc.name} — Preview`" />
+          <SendEmailButton :doctype="printDoctype" :doc-id="doc.id" :doc-name="doc.name" />
           <button v-if="doc.docstatus === 0" class="btn-primary" @click="action('submit')">Submit</button>
-          <button v-if="doc.docstatus === 1 && Number(doc.per_billed) < 99.999"
+          <button v-if="doc.docstatus === 1 && !doc.is_return && Number(doc.per_billed) < 99.999"
                   class="btn-primary" @click="createInvoice">Create Invoice</button>
+          <button v-if="doc.docstatus === 1 && !doc.is_return"
+                  class="btn-secondary" @click="makeReturn">Make Return</button>
           <button v-if="doc.docstatus === 1" class="btn-secondary" @click="action('cancel')">Cancel</button>
           <button class="btn-secondary" @click="router.push(cfg.endpoint)">Back to list</button>
         </div>
@@ -148,9 +176,12 @@ watch(
             <tr>
               <th class="px-4 py-2">#</th><th class="px-4 py-2">Item</th>
               <th class="px-4 py-2 text-right">Qty</th>
+              <th v-if="showRejected" class="px-4 py-2 text-right">Rejected</th>
               <th class="px-4 py-2 text-right">Billed Qty</th>
               <th class="px-4 py-2 text-right">Rate</th>
               <th class="px-4 py-2 text-right">Amount</th>
+              <th v-if="showBatch" class="px-4 py-2">Batch</th>
+              <th v-if="showSerials" class="px-4 py-2">Serials</th>
             </tr>
           </thead>
           <tbody>
@@ -160,9 +191,12 @@ watch(
                 {{ item.item_code ? `${item.item_code} — ` : "" }}{{ item.item_name }}
               </td>
               <td class="px-4 py-2 text-right">{{ formatQty(item.qty) }}</td>
+              <td v-if="showRejected" class="px-4 py-2 text-right">{{ formatQty(item.rejected_qty ?? "0") }}</td>
               <td class="px-4 py-2 text-right">{{ formatQty(item.billed_qty) }}</td>
               <td class="px-4 py-2 text-right">{{ formatCurrency(item.rate, doc.currency ?? companyCurrency) }}</td>
               <td class="px-4 py-2 text-right">{{ formatCurrency(item.amount, doc.currency ?? companyCurrency) }}</td>
+              <td v-if="showBatch" class="px-4 py-2 font-mono text-xs text-gray-600">{{ item.batch_no || "—" }}</td>
+              <td v-if="showSerials" class="whitespace-pre-line px-4 py-2 font-mono text-xs text-gray-600">{{ item.serial_nos || "—" }}</td>
             </tr>
           </tbody>
         </table>

@@ -21,13 +21,20 @@ from app.models.base import DOCSTATUS_CANCELLED, DOCSTATUS_SUBMITTED
 from app.models.selling import Quotation, QuotationItem, SalesOrder, SalesOrderItem, SalesOrderTax
 from app.schemas.accounts import TaxRowIn
 from app.schemas.selling import SalesOrderCreate
-from app.services.accounts_common import get_company, get_customer, require_draft, require_submitted
+from app.services.accounts_common import (
+    get_company,
+    get_customer,
+    item_tax_rates,
+    require_draft,
+    require_submitted,
+)
 from app.services.audit import log_audit
 from app.services.pagination import paginate
 from app.services.stock_common import (
     STOCK_NAMING_SERIES,
     get_items,
     get_warehouse,
+    resolve_conversion_factor,
     resolve_item_rate,
 )
 from app.services.blanket import blanket_rate
@@ -83,7 +90,7 @@ async def _load_tax_rows(db: AsyncSession, payload: SalesOrderCreate, customer) 
         from app.services.accounts_masters import resolve_tax_template
 
         template = await resolve_tax_template(
-            db, customer.company_id, "sales", customer.tax_category_id
+            db, customer.company_id, "sales", customer.tax_category_id, party_gstin=customer.tax_id
         )
         if template is None:
             return []
@@ -91,7 +98,7 @@ async def _load_tax_rows(db: AsyncSession, payload: SalesOrderCreate, customer) 
         TaxRowIn(
             charge_type=d.charge_type, rate=d.rate, tax_amount=d.tax_amount, row_id=d.row_id,
             account_head_id=d.account_head_id, cost_center_id=d.cost_center_id,
-            description=d.description,
+            description=d.description, included_in_print_rate=d.included_in_print_rate,
         )
         for d in template.details
     ]
@@ -166,9 +173,23 @@ async def create_sales_order(
         ship_row = await shipping_tax_row(db, company.id, payload.shipping_rule_id, subtotal)
         if ship_row is not None:
             tax_rows_in = [*tax_rows_in, ship_row]
-    engine_items = [ItemRow(qty=row.qty, rate=rate) for row, rate in zip(payload.items, rates)]
+    item_rates = await item_tax_rates(db, payload.items)  # per-item GST overrides
+    engine_items = [
+        ItemRow(
+            qty=row.qty,
+            rate=(row.price_list_rate if row.price_list_rate is not None else rate),
+            price_list_rate=(row.price_list_rate if row.price_list_rate is not None else rate),
+            discount_percentage=row.discount_percentage,
+            discount_amount=row.discount_amount,
+            item_tax_rate=item_rates.get(row.item_id, {}),
+        )
+        for row, rate in zip(payload.items, rates)
+    ]
     engine_taxes = [
-        TaxRow(charge_type=t.charge_type, rate=t.rate, tax_amount=t.tax_amount, row_id=t.row_id)
+        TaxRow(
+            charge_type=t.charge_type, rate=t.rate, tax_amount=t.tax_amount, row_id=t.row_id,
+            account_head_id=t.account_head_id, included_in_print_rate=t.included_in_print_rate,
+        )
         for t in tax_rows_in
     ]
     totals = calculate_taxes_and_totals(
@@ -194,6 +215,12 @@ async def create_sales_order(
         customer_address_id=payload.customer_address_id,
         shipping_address_id=payload.shipping_address_id,
         contact_person_id=payload.contact_person_id,
+        campaign_id=payload.campaign_id,
+        source_id=payload.source_id,
+        territory_id=payload.territory_id,
+        customer_group_id=payload.customer_group_id,
+        sales_partner_id=payload.sales_partner_id,
+        payment_terms_template_id=payload.payment_terms_template_id,
         set_warehouse_id=payload.set_warehouse_id,
         quotation_id=payload.quotation_id,
         currency=currency,
@@ -231,6 +258,8 @@ async def create_sales_order(
             )
         if warehouse_id is not None:
             await get_warehouse(db, warehouse_id, company.id)
+        uom = row.uom or item.stock_uom
+        factor = resolve_conversion_factor(item, uom)
         db.add(
             SalesOrderItem(
                 order_id=so.id,
@@ -240,7 +269,13 @@ async def create_sales_order(
                 item_name=item.item_name,
                 description=row.description or item.description,
                 qty=engine_item.qty,
-                uom=row.uom or item.stock_uom,
+                uom=uom,
+                conversion_factor=factor,
+                stock_qty=engine_item.qty * factor,
+                price_list_rate=engine_item.price_list_rate or engine_item.rate,
+                base_price_list_rate=engine_item.base_price_list_rate,
+                discount_percentage=engine_item.discount_percentage,
+                discount_amount=engine_item.discount_amount,
                 rate=engine_item.rate,
                 amount=engine_item.amount,
                 base_rate=engine_item.base_rate,
@@ -264,6 +299,7 @@ async def create_sales_order(
                 account_head_id=tax_in.account_head_id,
                 cost_center_id=tax_in.cost_center_id,
                 description=tax_in.description,
+                included_in_print_rate=engine_tax.included_in_print_rate,
                 tax_amount=engine_tax.tax_amount,
                 total=engine_tax.total,
                 base_tax_amount=engine_tax.base_tax_amount,
@@ -358,7 +394,7 @@ async def submit_sales_order(
     for row in so.items:
         item = items.get(row.item_id)
         if item is not None and item.is_stock_item and row.warehouse_id is not None:
-            await update_reserved_qty(db, so.company_id, row.item_id, row.warehouse_id, row.qty)
+            await update_reserved_qty(db, so.company_id, row.item_id, row.warehouse_id, row.stock_qty)
 
     if so.quotation_id is not None:
         quotation = await db.get(Quotation, so.quotation_id)
@@ -390,7 +426,7 @@ async def cancel_sales_order(
     for row in so.items:
         item = items.get(row.item_id)
         if item is not None and item.is_stock_item and row.warehouse_id is not None:
-            await update_reserved_qty(db, so.company_id, row.item_id, row.warehouse_id, -row.qty)
+            await update_reserved_qty(db, so.company_id, row.item_id, row.warehouse_id, -row.stock_qty)
 
     if so.quotation_id is not None:
         quotation = await db.get(Quotation, so.quotation_id)

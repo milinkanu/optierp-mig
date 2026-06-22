@@ -20,6 +20,7 @@ interface StatCard {
 interface Stats {
   currency: string;
   chart_title: string;
+  trend_format?: "int" | "currency";
   cards: StatCard[];
   trend: { label: string; value: number }[];
 }
@@ -56,7 +57,13 @@ function display(card: StatCard, currency: string): string {
     <div class="mb-4 rounded-lg border border-gray-200 bg-white p-5 shadow-sm">
       <h2 class="mb-3 text-sm font-semibold text-gray-700">{{ stats?.chart_title ?? "Trends" }}</h2>
       <p v-if="loading" class="py-12 text-center text-sm text-gray-400">Loading…</p>
-      <TrendChart v-else-if="stats" :points="stats.trend" :height="220" />
+      <TrendChart
+        v-else-if="stats"
+        :points="stats.trend"
+        :height="220"
+        :value-format="stats.trend_format ?? 'int'"
+        :currency="stats.currency"
+      />
       <p v-else class="py-12 text-center text-sm text-gray-400">No data available</p>
     </div>
 

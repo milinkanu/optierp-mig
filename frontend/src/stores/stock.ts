@@ -59,5 +59,22 @@ export const useStockStore = defineStore("stock", {
       const resp = await api.get<ItemRate>(`/items/${itemId}/rate`, { params: { buying } });
       return resp.data;
     },
+    // Multi-UOM (Phase 4): the UOMs an item allows on a line (stock + buy + sell),
+    // and the stock-units-per-1 conversion factor for a chosen UOM.
+    uomOptionsFor(itemId: string): { value: string; label: string }[] {
+      const it = this.items.find((i) => i.id === itemId);
+      if (!it) return [];
+      const seen = new Set<string>();
+      return [it.stock_uom, it.purchase_uom, it.sales_uom]
+        .filter((u): u is string => !!u && !seen.has(u) && !!seen.add(u))
+        .map((u) => ({ value: u, label: u }));
+    },
+    uomFactor(itemId: string, uom: string | null | undefined): number {
+      const it = this.items.find((i) => i.id === itemId);
+      if (!it || !uom || uom === it.stock_uom) return 1;
+      if (it.purchase_uom && uom === it.purchase_uom) return Number(it.purchase_uom_factor) || 1;
+      if (it.sales_uom && uom === it.sales_uom) return Number(it.sales_uom_factor) || 1;
+      return 1;
+    },
   },
 });

@@ -4,11 +4,13 @@ from fastapi import APIRouter
 
 from app.api.v1 import auth
 from app.api.v1.accounts import (
+    bank_reconciliation,
     budgets,
     journal_entries,
     masters as accounts_masters,
     payment_entries,
     payment_reconciliation,
+    payment_requests,
     purchase_invoices,
     reports as accounts_reports,
     sales_invoices,
@@ -19,6 +21,8 @@ from app.api.v1.core import (
     companies,
     currencies,
     naming_series,
+    print_docs,
+    print_settings,
     roles,
     system_settings,
     uoms,
@@ -32,8 +36,12 @@ from app.api.v1.stock import (
     masters as stock_masters,
     material_requests,
     purchase_receipts,
+    reorder as stock_reorder,
     reports as stock_reports,
+    serials as stock_serials,
+    service_credits,
     stock_entries,
+    stock_reconciliations,
     workspace as stock_workspace,
 )
 
@@ -49,6 +57,8 @@ api_v1_router.include_router(uoms.router)
 api_v1_router.include_router(naming_series.router)
 api_v1_router.include_router(workflows.router)
 api_v1_router.include_router(system_settings.router)
+api_v1_router.include_router(print_settings.router)
+api_v1_router.include_router(print_docs.router)
 
 # Module 02 — Accounts
 api_v1_router.include_router(accounts_masters.router)
@@ -57,6 +67,8 @@ api_v1_router.include_router(sales_invoices.router)
 api_v1_router.include_router(purchase_invoices.router)
 api_v1_router.include_router(payment_entries.router)
 api_v1_router.include_router(payment_reconciliation.router)
+api_v1_router.include_router(payment_requests.router)
+api_v1_router.include_router(bank_reconciliation.router)
 api_v1_router.include_router(budgets.router)
 api_v1_router.include_router(accounts_reports.router)
 api_v1_router.include_router(accounts_workspace.router)
@@ -64,10 +76,14 @@ api_v1_router.include_router(accounts_workspace.router)
 # Module 03 — Stock
 api_v1_router.include_router(stock_masters.router)
 api_v1_router.include_router(stock_entries.router)
+api_v1_router.include_router(stock_reconciliations.router)
 api_v1_router.include_router(material_requests.router)
 api_v1_router.include_router(purchase_receipts.router)
 api_v1_router.include_router(delivery_notes.router)
 api_v1_router.include_router(stock_reports.router)
+api_v1_router.include_router(stock_reorder.router)
+api_v1_router.include_router(stock_serials.router)
+api_v1_router.include_router(service_credits.router)
 api_v1_router.include_router(stock_workspace.router)
 
 # Module 04 — Buying

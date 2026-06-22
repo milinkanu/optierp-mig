@@ -21,6 +21,13 @@ services:
     ports:
       - "6379:6379"
 
+  # Dev mail catcher: backend SMTP points here; view sent mail at http://localhost:8025
+  mailhog:
+    image: mailhog/mailhog
+    ports:
+      - "1025:1025"  # SMTP
+      - "8025:8025"  # web UI
+
   backend:
     build: ./backend
     environment:
@@ -31,12 +38,19 @@ services:
       ALLOWED_ORIGINS: "http://localhost:5173,http://localhost:8080"
       REFRESH_COOKIE_SECURE: "false"
       ENVIRONMENT: "development"
+      # Email → Mailhog (dev). Swap for a real provider (SES/SendGrid) in prod.
+      SMTP_HOST: "mailhog"
+      SMTP_PORT: "1025"
+      SMTP_TLS: "false"
+      SMTP_FROM: "no-reply@optireach.local"
     ports:
       - "8000:8000"
     depends_on:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_started
+      mailhog:
         condition: service_started
     command: >
       sh -c "alembic upgrade head &&

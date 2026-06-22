@@ -1,0 +1,14 @@
+/* Compact — dense, smaller type and margins to fit more lines per page. */
+:root {
+  --accent: #374151;
+  --head-bg: #f3f4f6;
+  --font: "Helvetica Neue", Arial, sans-serif;
+  --title: 14px;
+}
+@page { margin: 12mm 12mm 16mm 12mm; }
+body { font-size: 10px; }
+.ph-logo { max-height: 42px; }
+.ph-company { font-size: 14px; }
+table.ph-items { margin-top: 10px; }
+table.ph-items th, table.ph-items td { padding: 4px 6px; }
+table.ph-totals td { padding: 3px 6px; }

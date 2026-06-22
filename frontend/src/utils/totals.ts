@@ -5,12 +5,16 @@
 export interface TotalsItem {
   qty?: number | string | null;
   rate?: number | string | null;
+  price_list_rate?: number | string | null;
+  discount_percentage?: number | string | null;
+  discount_amount?: number | string | null;
 }
 export interface TotalsTax {
   charge_type: string;
   rate?: number | string | null;
   tax_amount?: number | string | null;
   row_id?: number | string | null;
+  included_in_print_rate?: boolean | null;
 }
 export interface TotalsDiscount {
   apply_discount_on: string; // "Grand Total" | "Net Total"
@@ -32,14 +36,65 @@ const n = (v: unknown): number => {
   return Number.isFinite(x) ? x : 0;
 };
 
+// Net per-unit rate after a per-line discount (matches the server engine and
+// ItemsGrid.netRateOf). Falls back to the entered rate when no discount/base.
+const netRate = (i: TotalsItem): number => {
+  const base = n(i.price_list_rate) || n(i.rate);
+  const pct = n(i.discount_percentage);
+  const amt = n(i.discount_amount);
+  if (pct) return base * (1 - pct / 100);
+  if (amt) return base - amt;
+  return base;
+};
+
 export function computeTotals(
   items: TotalsItem[],
   taxes: TotalsTax[],
   discount: TotalsDiscount,
 ): DocTotals {
-  const netTotal = items.reduce((s, i) => s + n(i.qty) * n(i.rate), 0);
   const totalQty = items.reduce((s, i) => s + n(i.qty), 0);
   const applyOn = discount.apply_discount_on || "Grand Total";
+
+  // Gross of the entered rates. When any tax is tax-inclusive (MRP), the rate
+  // already includes those taxes, so back-calculate the exclusive net by
+  // dividing out the cumulative tax fraction (mirrors the server engine's
+  // determine_exclusive_rate). The fraction is the same for every line here
+  // (no per-item tax rates in this form), so we can apply it on the aggregate.
+  const grossNet = items.reduce((s, i) => s + n(i.qty) * netRate(i), 0);
+  let netTotal = grossNet;
+  if (taxes.some((t) => t.included_in_print_rate)) {
+    const fractions: number[] = [];
+    const grandFractions: number[] = [];
+    let cumulated = 0;
+    let inclusivePerQty = 0;
+    taxes.forEach((t, i) => {
+      const rate = n(t.rate);
+      let f = 0;
+      if (t.included_in_print_rate) {
+        const rid = n(t.row_id);
+        switch (t.charge_type) {
+          case "On Net Total":
+            f = rate / 100;
+            break;
+          case "On Previous Row Amount":
+            f = rid >= 1 && rid <= i ? (rate / 100) * (fractions[rid - 1] ?? 0) : 0;
+            break;
+          case "On Previous Row Total":
+            f = rid >= 1 && rid <= i ? (rate / 100) * (grandFractions[rid - 1] ?? 0) : 0;
+            break;
+          case "On Item Quantity":
+            inclusivePerQty += rate;
+            break;
+        }
+      }
+      fractions.push(f);
+      grandFractions.push(i === 0 ? 1 + f : (grandFractions[i - 1] ?? 0) + f);
+      cumulated += f;
+    });
+    if (cumulated || inclusivePerQty) {
+      netTotal = (grossNet - inclusivePerQty * totalQty) / (1 + cumulated);
+    }
+  }
 
   // Discount applied on the Net Total reduces the taxable base before taxes.
   let discountAmount = 0;

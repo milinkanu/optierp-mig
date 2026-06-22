@@ -7,7 +7,21 @@ rest of the simple-master long tail here.
 
 from __future__ import annotations
 
-from app.models.accounts import Account
+from app.models.accounts import (
+    Account,
+    Bank,
+    BankAccount,
+    CostCenter,
+    DunningType,
+    FiscalYear,
+    ItemTaxTemplate,
+    ItemTaxTemplateDetail,
+    ModeOfPayment,
+    PaymentTermsTemplate,
+    PaymentTermsTemplateDetail,
+    TaxCategory,
+    TaxWithholdingCategory,
+)
 from app.models.buying import Supplier, SupplierGroup
 from app.models.selling import (
     Address,
@@ -31,7 +45,17 @@ from app.models.selling import (
     Territory,
     UTMSource,
 )
-from app.models.stock import Item, ItemGroup
+from sqlalchemy import inspect as sa_inspect, select
+
+from app.core.exceptions import ValidationError
+from app.models.stock import (
+    Batch,
+    DeliveryNoteItem,
+    Item,
+    ItemGroup,
+    PurchaseReceiptItem,
+    StockEntryItem,
+)
 from app.registry.base import (
     REGISTRY,
     ChildSpec,
@@ -48,6 +72,23 @@ _SALES_USER = ("read", "report")
 # Buying masters (Purchase Manager / User roles exist in scripts.seed).
 _PURCHASE_MANAGER = ("read", "write", "create", "delete", "report")
 _PURCHASE_USER_RW = ("read", "write", "create", "report")
+
+# Accounts masters (Accounts Manager / User roles exist in scripts.seed).
+_ACCOUNTS_MANAGER = ("read", "write", "create", "delete", "report")
+_ACCOUNTS_USER = ("read", "report")
+
+# Stock masters (Stock Manager / User roles exist in scripts.seed).
+_STOCK_MANAGER = ("read", "write", "create", "delete", "report")
+_STOCK_USER_RW = ("read", "write", "create", "report")
+# Read-only grant for roles that reference a master via a Link field (so the
+# typeahead populates) but don't manage it — e.g. Tax Category / Payment Terms
+# Template are picked on Customer (Sales) and Supplier (Purchase) forms.
+_LINK_READERS = {
+    "Sales Manager": ("read",),
+    "Sales User": ("read",),
+    "Purchase Manager": ("read",),
+    "Purchase User": ("read",),
+}
 
 
 # --- Selling: Campaign (Phase 0 pilot) ---------------------------------------
@@ -306,11 +347,25 @@ register(
         permissions={"Sales Manager": _SALES_MANAGER, "Sales User": _SALES_USER_RW},
         fields=(
             FieldSpec("customer_name", "Customer Name", "Data", required=True, in_list=True, span=2),
-            FieldSpec("customer_type", "Type", "Select", options="Company\nIndividual", in_list=True),
+            FieldSpec("customer_type", "Type", "Select", options="Company\nIndividual\nPartnership", in_list=True),
             FieldSpec("customer_group_id", "Customer Group", "Link", options="customer-group", in_list=True),
             FieldSpec("territory_id", "Territory", "Link", options="territory"),
-            FieldSpec("tax_id", "Tax ID", "Data"),
+            FieldSpec("email_id", "Email", "Email", in_list=True,
+                      help="Used to email invoices and statements to this customer."),
+            FieldSpec("tax_id", "GSTIN", "Data",
+                      help="15-char GSTIN. Its first 2 digits (state code) auto-decide "
+                      "intra-state (CGST+SGST) vs inter-state (IGST) GST on invoices."),
+            FieldSpec("tax_category_id", "Tax Category", "Link", options="tax-category",
+                      help="Manual fallback used only when no GSTIN is set."),
             FieldSpec("default_currency", "Default Currency", "Data"),
+            FieldSpec(
+                "payment_terms_template_id", "Default Payment Terms", "Link",
+                options="payment-terms-template",
+            ),
+            FieldSpec(
+                "receivable_account_id", "Receivable Account", "Link", options="account",
+                help="Overrides the company default receivable account for this customer.",
+            ),
             FieldSpec("credit_limit", "Credit Limit", "Float"),
             FieldSpec("disabled", "Disabled", "Check", in_list=True),
             FieldSpec("notes", "Notes", "Text", span=2),
@@ -364,8 +419,22 @@ register(
             FieldSpec("supplier_name", "Supplier Name", "Data", required=True, in_list=True, span=2),
             FieldSpec("supplier_type", "Supplier Type", "Select", options="Company\nIndividual\nPartnership", in_list=True),
             FieldSpec("supplier_group_id", "Supplier Group", "Link", options="supplier-group", in_list=True),
-            FieldSpec("tax_id", "Tax ID", "Data"),
+            FieldSpec("email_id", "Email", "Email", in_list=True,
+                      help="Used to email purchase orders and documents to this supplier."),
+            FieldSpec("tax_id", "GSTIN", "Data",
+                      help="15-char GSTIN. Its first 2 digits (state code) auto-decide "
+                      "intra-state (CGST+SGST) vs inter-state (IGST) GST on invoices."),
+            FieldSpec("tax_category_id", "Tax Category", "Link", options="tax-category",
+                      help="Manual fallback used only when no GSTIN is set."),
             FieldSpec("default_currency", "Billing Currency", "Data"),
+            FieldSpec(
+                "payment_terms_template_id", "Default Payment Terms", "Link",
+                options="payment-terms-template",
+            ),
+            FieldSpec(
+                "payable_account_id", "Payable Account", "Link", options="account",
+                help="Overrides the company default payable account for this supplier.",
+            ),
             FieldSpec("on_hold", "Block Supplier", "Check"),
             FieldSpec("hold_type", "Hold Type", "Select", options="All\nInvoices\nPayments", depends_on="on_hold"),
             FieldSpec("release_date", "Release Date", "Date", depends_on="on_hold"),
@@ -376,6 +445,304 @@ register(
         links=(
             LinkSpec("address", "supplier_id", "Addresses"),
             LinkSpec("contact", "supplier_id", "Contacts"),
+        ),
+    )
+)
+
+
+# --- Accounts: Tax Category + Payment Terms (cross-cutting masters) -----------
+# These models already exist (app.models.accounts) and are referenced by Link
+# fields on Customer/Supplier and the documents; registering them surfaces a
+# CRUD UI with no migration. Tax Category already carries bespoke endpoints —
+# the engine descriptor adds the generic list/form view alongside them.
+register(
+    DocTypeDescriptor(
+        name="Tax Category",
+        slug="tax-category",
+        model=TaxCategory,
+        title_field="title",
+        naming="field:title",
+        group="Accounts",
+        permission_name="Tax Category",
+        permissions={
+            "Accounts Manager": _ACCOUNTS_MANAGER,
+            "Accounts User": _ACCOUNTS_USER,
+            **_LINK_READERS,
+        },
+        fields=(
+            FieldSpec("title", "Title", "Data", required=True, in_list=True, span=2, unique=True),
+            FieldSpec("is_inter_state", "Inter-state (IGST)", "Check", in_list=True,
+                      help="Tick for the out-of-state category. GST auto-picks this vs the "
+                      "intra-state one by comparing the party's GSTIN state to the company's."),
+            FieldSpec("disabled", "Disabled", "Check", in_list=True),
+        ),
+        list_fields=("title", "is_inter_state", "disabled"),
+    )
+)
+
+register(
+    DocTypeDescriptor(
+        name="Cost Center",
+        slug="cost-center",
+        model=CostCenter,
+        title_field="cost_center_name",
+        naming="field:cost_center_name",
+        group="Accounts",
+        permission_name="Cost Center",
+        permissions={
+            "Accounts Manager": _ACCOUNTS_MANAGER,
+            "Accounts User": _ACCOUNTS_USER,
+            **_LINK_READERS,
+        },
+        # Flat master: the CostCenter model has no ltree path column, so it is
+        # not served as a nested tree (parent is kept as a plain reference link).
+        fields=(
+            FieldSpec("cost_center_name", "Cost Center Name", "Data", required=True, in_list=True, span=2),
+            FieldSpec("parent_cost_center_id", "Parent Cost Center", "Link", options="cost-center"),
+            FieldSpec("is_group", "Is Group", "Check", in_list=True),
+            FieldSpec("disabled", "Disabled", "Check", in_list=True),
+        ),
+        list_fields=("cost_center_name", "is_group", "disabled"),
+    )
+)
+
+# A Payment Terms Template answers one plain question: "how is the bill split
+# into payments over time?" (e.g. 50% upfront, 50% within 30 days). We keep it
+# self-contained — one master with simple installment rows — instead of
+# ERPNext's two-level Payment Term + Template model with its due-date enums,
+# mode-of-payment and early-payment-discount jargon.
+register(
+    DocTypeDescriptor(
+        name="Payment Terms Template",
+        slug="payment-terms-template",
+        model=PaymentTermsTemplate,
+        title_field="template_name",
+        naming="field:template_name",
+        group="Accounts",
+        permission_name="Payment Terms Template",
+        permissions={
+            "Accounts Manager": _ACCOUNTS_MANAGER,
+            "Accounts User": _ACCOUNTS_USER,
+            **_LINK_READERS,
+        },
+        fields=(
+            FieldSpec(
+                "template_name", "Template Name", "Data",
+                required=True, in_list=True, span=2, unique=True,
+                help="A short name you'll pick on orders/invoices, e.g. \"50/50\" or \"Net 30\".",
+            ),
+        ),
+        list_fields=("template_name",),
+        children=(
+            ChildSpec(
+                field="terms",
+                label="Installments — should add up to 100%",
+                model=PaymentTermsTemplateDetail,
+                fk_column="template_id",
+                fields=(
+                    FieldSpec(
+                        "description", "Label", "Data",
+                        help="What this part is for, e.g. Advance, On delivery, Balance.",
+                    ),
+                    FieldSpec(
+                        "invoice_portion", "Pay (% of total)", "Float", required=True,
+                        help="Share of the bill due in this installment.",
+                    ),
+                    FieldSpec(
+                        "credit_days", "Due after (days)", "Int",
+                        help="Days after the invoice date this part is due. 0 = straight away.",
+                    ),
+                ),
+            ),
+        ),
+    )
+)
+
+
+# --- Accounts: Fiscal Year / Mode of Payment / Bank / Bank Account (Phase 0.5) ---
+# Engine-served config masters. Fiscal Year keeps its bespoke GET /fiscal-years
+# (used by the budget picker) — this descriptor adds the /m/fiscal-year CRUD UI.
+register(
+    DocTypeDescriptor(
+        name="Fiscal Year",
+        slug="fiscal-year",
+        model=FiscalYear,
+        title_field="year",
+        naming="field:year",
+        group="Accounts",
+        permission_name="Fiscal Year",
+        permissions={"Accounts Manager": _ACCOUNTS_MANAGER, "Accounts User": _ACCOUNTS_USER},
+        fields=(
+            FieldSpec("year", "Year", "Data", required=True, in_list=True, span=2, unique=True,
+                      help="A label for the year, e.g. 2026-2027."),
+            FieldSpec("year_start_date", "Start Date", "Date", required=True, in_list=True),
+            FieldSpec("year_end_date", "End Date", "Date", required=True, in_list=True),
+            FieldSpec("is_closed", "Closed", "Check", in_list=True, read_only=True,
+                      help="Set automatically by Period Closing — not edited here."),
+        ),
+        list_fields=("year", "year_start_date", "year_end_date", "is_closed"),
+    )
+)
+
+register(
+    DocTypeDescriptor(
+        name="Mode of Payment",
+        slug="mode-of-payment",
+        model=ModeOfPayment,
+        title_field="mode_name",
+        naming="field:mode_name",
+        group="Accounts",
+        permission_name="Mode of Payment",
+        permissions={"Accounts Manager": _ACCOUNTS_MANAGER, "Accounts User": _ACCOUNTS_USER},
+        fields=(
+            FieldSpec("mode_name", "Mode Name", "Data", required=True, in_list=True, span=2, unique=True),
+            FieldSpec("type", "Type", "Select", options="Cash\nBank\nGeneral", in_list=True),
+            FieldSpec("default_account_id", "Default Account", "Link", options="account",
+                      help="The cash/bank account this mode posts to by default."),
+            FieldSpec("enabled", "Enabled", "Check", in_list=True),
+        ),
+        list_fields=("mode_name", "type", "enabled"),
+    )
+)
+
+register(
+    DocTypeDescriptor(
+        name="Bank",
+        slug="bank",
+        model=Bank,
+        title_field="bank_name",
+        naming="field:bank_name",
+        group="Accounts",
+        permission_name="Bank",
+        permissions={"Accounts Manager": _ACCOUNTS_MANAGER, "Accounts User": _ACCOUNTS_USER},
+        fields=(
+            FieldSpec("bank_name", "Bank Name", "Data", required=True, in_list=True, span=2, unique=True),
+            FieldSpec("swift_number", "SWIFT / BIC", "Data"),
+        ),
+        list_fields=("bank_name", "swift_number"),
+    )
+)
+
+register(
+    DocTypeDescriptor(
+        name="Bank Account",
+        slug="bank-account",
+        model=BankAccount,
+        title_field="account_name",
+        naming="field:account_name",
+        group="Accounts",
+        permission_name="Bank Account",
+        permissions={"Accounts Manager": _ACCOUNTS_MANAGER, "Accounts User": _ACCOUNTS_USER},
+        fields=(
+            FieldSpec("account_name", "Account Name", "Data", required=True, in_list=True, span=2, unique=True),
+            FieldSpec("bank_id", "Bank", "Link", options="bank"),
+            FieldSpec("gl_account_id", "Ledger Account", "Link", options="account",
+                      help="The Chart-of-Accounts account this bank account posts to."),
+            FieldSpec("account_number", "Account Number", "Data", in_list=True),
+            FieldSpec("iban", "IBAN", "Data"),
+            FieldSpec("is_company_account", "Company Account", "Check"),
+            FieldSpec("is_default", "Default", "Check", in_list=True),
+        ),
+        list_fields=("account_name", "account_number", "is_default"),
+    )
+)
+
+
+# --- Accounts: Tax Withholding (TDS/TCS) category (Phase 2) -------------------
+register(
+    DocTypeDescriptor(
+        name="Tax Withholding Category",
+        slug="tax-withholding-category",
+        model=TaxWithholdingCategory,
+        title_field="category_name",
+        naming="field:category_name",
+        group="Accounts",
+        permission_name="Tax Withholding Category",
+        permissions={
+            "Accounts Manager": _ACCOUNTS_MANAGER,
+            "Accounts User": _ACCOUNTS_USER,
+            **_LINK_READERS,
+        },
+        fields=(
+            FieldSpec("category_name", "Category Name", "Data", required=True, in_list=True, span=2, unique=True),
+            FieldSpec("kind", "Kind", "Select", options="TDS\nTCS", in_list=True,
+                      help="TDS = withheld on supplier payments; TCS = collected on customer bills."),
+            FieldSpec("rate", "Rate (%)", "Float", required=True, in_list=True),
+            FieldSpec("threshold", "Annual Threshold", "Currency",
+                      help="0 = always apply (threshold tracking is informational for now)."),
+            FieldSpec("account_id", "TDS/TCS Payable Account", "Link", options="account", required=True),
+            FieldSpec("disabled", "Disabled", "Check", in_list=True),
+        ),
+        list_fields=("category_name", "kind", "rate", "disabled"),
+    )
+)
+
+
+# --- Accounts: Dunning Type (overdue-reminder tiers, Phase 3) -----------------
+register(
+    DocTypeDescriptor(
+        name="Dunning Type",
+        slug="dunning-type",
+        model=DunningType,
+        title_field="dunning_type",
+        naming="field:dunning_type",
+        group="Accounts",
+        permission_name="Dunning Type",
+        permissions={
+            "Accounts Manager": _ACCOUNTS_MANAGER,
+            "Accounts User": _ACCOUNTS_USER,
+            **_LINK_READERS,
+        },
+        fields=(
+            FieldSpec("dunning_type", "Dunning Type", "Data", required=True, in_list=True, span=2, unique=True),
+            FieldSpec("grace_period_days", "Apply after (days overdue)", "Int", in_list=True,
+                      help="Use this tier once an invoice is at least this many days past due."),
+            FieldSpec("interest_rate", "Interest Rate (% p.a.)", "Float", in_list=True,
+                      help="Charged on the overdue amount for the days it is late. 0 = no interest."),
+            FieldSpec("dunning_fee", "Dunning Fee", "Currency",
+                      help="A flat administrative charge added to the reminder. 0 = none."),
+            FieldSpec("letter_intro", "Letter Message", "Text", span=2,
+                      help="The tone/message for this tier (e.g. a gentle reminder vs a final notice)."),
+            FieldSpec("disabled", "Disabled", "Check", in_list=True),
+        ),
+        list_fields=("dunning_type", "grace_period_days", "interest_rate", "disabled"),
+    )
+)
+
+
+register(
+    DocTypeDescriptor(
+        name="Item Tax Template",
+        slug="item-tax-template",
+        model=ItemTaxTemplate,
+        title_field="title",
+        naming="field:title",
+        group="Accounts",
+        permission_name="Item Tax Template",
+        permissions={
+            "Accounts Manager": _ACCOUNTS_MANAGER,
+            "Accounts User": _ACCOUNTS_USER,
+            "Stock Manager": ("read", "write", "create", "report"),
+            "Stock User": ("read",),
+            **_LINK_READERS,
+        },
+        fields=(
+            FieldSpec("title", "Title", "Data", required=True, in_list=True, span=2, unique=True,
+                      help="e.g. \"GST 5%\" — picked on an Item to override its tax rate."),
+            FieldSpec("disabled", "Disabled", "Check", in_list=True),
+        ),
+        list_fields=("title", "disabled"),
+        children=(
+            ChildSpec(
+                field="details",
+                label="Tax rates (per tax account head)",
+                model=ItemTaxTemplateDetail,
+                fk_column="template_id",
+                fields=(
+                    FieldSpec("account_head_id", "Tax Account", "Link", options="account", required=True),
+                    FieldSpec("rate", "Rate (%)", "Float", required=True),
+                ),
+            ),
         ),
     )
 )
@@ -570,6 +937,70 @@ register(
                 ),
             ),
         ),
+    )
+)
+
+
+# --- Stock: Batch (Phase 5B) -------------------------------------------------
+
+
+async def _validate_batch(db, descriptor, obj, user):  # noqa: ANN001 — engine hook signature
+    """A batch's identity (item + number) is fixed at creation; only its expiry /
+    disabled state changes. The item must belong to this company and be batch-tracked.
+    Closes cross-tenant item references, batches on non-batched items, and re-pointing
+    an in-use batch to a different item (which would orphan stored line labels)."""
+    insp = sa_inspect(obj)
+    item_hist = insp.attrs.item_id.history
+    if item_hist.deleted and item_hist.deleted[0] != obj.item_id:
+        raise ValidationError("A batch's item cannot be changed after creation", field="item_id")
+    batch_hist = insp.attrs.batch_no.history
+    if batch_hist.deleted and batch_hist.deleted[0] != obj.batch_no:
+        raise ValidationError("A batch number cannot be renamed after creation", field="batch_no")
+    item = await db.get(Item, obj.item_id)
+    if item is None or item.company_id != obj.company_id:
+        raise ValidationError("Item not found in this company", field="item_id")
+    if not item.has_batch_no:
+        raise ValidationError(
+            f"Item '{item.item_code}' is not batch-tracked — enable batch tracking on it first",
+            field="item_id",
+        )
+
+
+async def _block_batch_delete_if_referenced(db, descriptor, obj, user):  # noqa: ANN001
+    """A batch named on any stock document line can't be deleted (the line stores the
+    batch_no as a string with no FK, so the engine's IntegrityError guard can't catch it)."""
+    for model in (PurchaseReceiptItem, DeliveryNoteItem, StockEntryItem):
+        ref = await db.scalar(
+            select(model.id)
+            .where(model.batch_no == obj.batch_no, model.item_id == obj.item_id)
+            .limit(1)
+        )
+        if ref is not None:
+            raise ValidationError(
+                f"Cannot delete: batch '{obj.batch_no}' is referenced by stock documents",
+                code="ERR_LINKED",
+            )
+
+
+register(
+    DocTypeDescriptor(
+        name="Batch",
+        slug="batch",
+        model=Batch,
+        title_field="batch_no",
+        naming="field:batch_no",
+        group="Stock",
+        permission_name="Batch",
+        permissions={"Stock Manager": _STOCK_MANAGER, "Stock User": _STOCK_USER_RW},
+        fields=(
+            FieldSpec("batch_no", "Batch No", "Data", required=True, in_list=True, span=2, unique=True),
+            FieldSpec("item_id", "Item", "Link", options="item", required=True, in_list=True),
+            FieldSpec("expiry_date", "Expiry Date", "Date", in_list=True,
+                      help="Deliveries/issues of an expired batch are blocked"),
+            FieldSpec("disabled", "Disabled", "Check", in_list=True),
+        ),
+        list_fields=("batch_no", "item_id", "expiry_date", "disabled"),
+        hooks={"validate": _validate_batch, "before_delete": _block_batch_delete_if_referenced},
     )
 )
 

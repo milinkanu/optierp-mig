@@ -20,6 +20,11 @@ class OrderItemIn(BaseModel):
     item_id: uuid.UUID
     qty: Decimal = Field(gt=0)
     rate: Decimal | None = Field(ge=0, default=None)  # None -> resolved from price list / item
+    # Per-line discount (ERPNext parity): a % derives the absolute amount; the
+    # resolved rate becomes the price_list_rate base unless one is supplied.
+    price_list_rate: Decimal | None = Field(ge=0, default=None)
+    discount_percentage: Decimal = Field(ge=0, le=100, default=Decimal("0"))
+    discount_amount: Decimal = Field(ge=0, default=Decimal("0"))
     uom: str | None = None
     description: str | None = None
     warehouse_id: uuid.UUID | None = None
@@ -41,6 +46,7 @@ class OrderCreateBase(BaseModel):
     items: list[OrderItemIn] = Field(min_length=1)
     taxes: list[TaxRowIn] = Field(default_factory=list)
     tax_template_id: uuid.UUID | None = None
+    payment_terms_template_id: uuid.UUID | None = None
 
 
 class OrderItemResponse(DocumentMeta):
@@ -51,6 +57,11 @@ class OrderItemResponse(DocumentMeta):
     description: str | None
     qty: Decimal
     uom: str | None
+    conversion_factor: Decimal
+    stock_qty: Decimal
+    price_list_rate: Decimal
+    discount_percentage: Decimal
+    discount_amount: Decimal
     rate: Decimal
     amount: Decimal
     net_amount: Decimal
@@ -77,6 +88,7 @@ class OrderResponseBase(DocumentMeta):
     status: str
     remarks: str | None
     company_id: uuid.UUID
+    payment_terms_template_id: uuid.UUID | None = None
 
 
 # --- purchase order -------------------------------------------------------------------

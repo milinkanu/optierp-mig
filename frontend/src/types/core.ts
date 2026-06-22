@@ -108,6 +108,8 @@ export interface AccountNode {
   account_type: string | null;
   is_group: boolean;
   account_currency: string | null;
+  freeze_account?: boolean;
+  disabled?: boolean;
   path: string;
 }
 

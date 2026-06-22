@@ -25,12 +25,14 @@ from app.services.accounts_common import (
     get_company,
     get_payable_account,
     get_supplier,
+    item_tax_rates,
     require_draft,
     require_submitted,
     set_invoice_status,
 )
 from app.services.audit import log_audit
 from app.services.pagination import paginate
+from app.services.stock_common import resolve_conversion_factor
 from app.services.taxes_and_totals import ItemRow, TaxRow, calculate_taxes_and_totals
 
 ZERO = Decimal("0")
@@ -125,7 +127,7 @@ async def _load_tax_rows(
         from app.services.accounts_masters import resolve_tax_template
 
         template = await resolve_tax_template(
-            db, supplier.company_id, "purchase", supplier.tax_category_id
+            db, supplier.company_id, "purchase", supplier.tax_category_id, party_gstin=supplier.tax_id
         )
         if template is None:
             return []
@@ -140,6 +142,7 @@ async def _load_tax_rows(
             description=d.description,
             add_deduct_tax=d.add_deduct_tax,
             category=d.category,
+            included_in_print_rate=d.included_in_print_rate,
         )
         for d in template.details
     ]
@@ -161,8 +164,21 @@ async def create_purchase_invoice(
         db, supplier, company.id, currency, payload.items,
         sign=Decimal("-1") if payload.is_return else Decimal("1"),
     )
-    tax_rows_in = await _load_tax_rows(db, payload, supplier)
-    engine_items = [ItemRow(qty=item.qty, rate=item.rate) for item in payload.items]
+    # Opening (migration-in) invoices carry no tax — they just establish the
+    # outstanding payable against the Temporary Opening account.
+    tax_rows_in = [] if payload.is_opening else await _load_tax_rows(db, payload, supplier)
+    item_rates = await item_tax_rates(db, payload.items)
+    engine_items = [
+        ItemRow(
+            qty=item.qty,
+            rate=(item.price_list_rate if item.price_list_rate is not None else item.rate),
+            price_list_rate=(item.price_list_rate if item.price_list_rate is not None else item.rate),
+            discount_percentage=item.discount_percentage,
+            discount_amount=item.discount_amount,
+            item_tax_rate=item_rates.get(item.item_id, {}),
+        )
+        for item in payload.items
+    ]
     engine_taxes = [
         TaxRow(
             charge_type=t.charge_type,
@@ -171,6 +187,8 @@ async def create_purchase_invoice(
             row_id=t.row_id,
             add_deduct_tax=t.add_deduct_tax,
             category=t.category,
+            included_in_print_rate=t.included_in_print_rate,
+            account_head_id=t.account_head_id,
         )
         for t in tax_rows_in
     ]
@@ -183,6 +201,22 @@ async def create_purchase_invoice(
         discount_amount=payload.discount_amount,
         is_purchase=True,
     )
+
+    # India TDS: withhold rate% of the taxable (net) base — paid to the govt, not the supplier.
+    tax_withholding_amount = ZERO
+    if payload.tax_withholding_category_id is not None:
+        from app.models.accounts import TaxWithholdingCategory
+
+        twc = await db.get(TaxWithholdingCategory, payload.tax_withholding_category_id)
+        if twc is None or twc.company_id != company.id:
+            raise NotFoundError("Tax withholding category not found")
+        if twc.kind != "TDS":
+            raise ValidationError(
+                "Purchase invoices use a TDS withholding category", field="tax_withholding_category_id"
+            )
+        tax_withholding_amount = (totals.base_net_total * twc.rate / Decimal("100")).quantize(
+            Decimal("0.01")
+        )
 
     sign = Decimal("-1") if payload.is_return else Decimal("1")
     name = await get_next_name(db, NAMING_SERIES["Purchase Invoice"], company.id)
@@ -200,10 +234,12 @@ async def create_purchase_invoice(
         supplier_address_id=payload.supplier_address_id,
         shipping_address_id=payload.shipping_address_id,
         contact_person_id=payload.contact_person_id,
+        payment_terms_template_id=payload.payment_terms_template_id,
         currency=currency,
         conversion_rate=payload.conversion_rate,
         remarks=payload.remarks,
         is_return=payload.is_return,
+        is_opening=payload.is_opening,
         return_against_id=payload.return_against_id,
         apply_discount_on=payload.apply_discount_on,
         additional_discount_percentage=payload.additional_discount_percentage,
@@ -220,6 +256,8 @@ async def create_purchase_invoice(
         rounded_total=totals.rounded_total * sign,
         rounding_adjustment=totals.rounding_adjustment * sign,
         outstanding_amount=ZERO,
+        tax_withholding_category_id=payload.tax_withholding_category_id,
+        tax_withholding_amount=tax_withholding_amount * sign,
         owner=user.id,
         modified_by=user.id,
     )
@@ -254,6 +292,12 @@ async def create_purchase_invoice(
                 f"Item row {idx}: no expense account given and the company has no default",
                 field="items",
             )
+        # multi-UOM: stock_qty is informational on an invoice (billing caps stay in
+        # document qty / amount), but kept consistent for display/reporting
+        factor = (
+            resolve_conversion_factor(item_master, item_in.uom, strict=False)
+            if item_master else Decimal("1")
+        )
         db.add(
             PurchaseInvoiceItem(
                 invoice_id=invoice.id,
@@ -263,6 +307,12 @@ async def create_purchase_invoice(
                 description=item_in.description,
                 qty=engine_item.qty * sign,
                 uom=item_in.uom,
+                conversion_factor=factor,
+                stock_qty=engine_item.qty * sign * factor,
+                price_list_rate=engine_item.price_list_rate or engine_item.rate,
+                base_price_list_rate=engine_item.base_price_list_rate,
+                discount_percentage=engine_item.discount_percentage,
+                discount_amount=engine_item.discount_amount,
                 rate=engine_item.rate,
                 amount=engine_item.amount * sign,
                 base_rate=engine_item.base_rate,
@@ -289,6 +339,7 @@ async def create_purchase_invoice(
                 description=tax_in.description,
                 add_deduct_tax=engine_tax.add_deduct_tax,
                 category=engine_tax.category,
+                included_in_print_rate=engine_tax.included_in_print_rate,
                 tax_amount=engine_tax.tax_amount * sign,
                 total=engine_tax.total * sign,
                 base_tax_amount=engine_tax.base_tax_amount * sign,
@@ -338,23 +389,39 @@ def _build_gl_rows(
     invoice: PurchaseInvoice,
     supplier_name: str,
     srbnb_split: dict[uuid.UUID, tuple[Decimal, uuid.UUID | None]] | None = None,
+    tds_account_id: uuid.UUID | None = None,
 ) -> list[gl.GLRow]:
     rows: list[gl.GLRow] = []
     payable_amount = base_payable_total(invoice)
     srbnb_split = srbnb_split or {}
 
-    # Cr payable (party row)
+    # India TDS: withhold from the supplier — the payable shrinks and the
+    # withheld amount is credited to the TDS payable (owed to the govt).
+    tds = invoice.tax_withholding_amount if tds_account_id is not None else ZERO
+    party_amount = payable_amount - tds
+
+    # Cr payable (party row), net of TDS
     rows.append(
         gl.GLRow(
             account_id=invoice.credit_to_id,
-            credit=payable_amount if payable_amount > ZERO else ZERO,
-            debit=-payable_amount if payable_amount < ZERO else ZERO,
+            credit=party_amount if party_amount > ZERO else ZERO,
+            debit=-party_amount if party_amount < ZERO else ZERO,
             party_type="Supplier",
             party_id=invoice.supplier_id,
             against_voucher_type="Purchase Invoice",
             against_voucher_id=invoice.id,
         )
     )
+    if tds != ZERO and tds_account_id is not None:
+        rows.append(
+            gl.GLRow(
+                account_id=tds_account_id,
+                credit=tds if tds > ZERO else ZERO,
+                debit=-tds if tds < ZERO else ZERO,
+                against=supplier_name,
+                remarks="TDS withheld",
+            )
+        )
     # Dr expense per item. Receipt-linked rows clear SRBNB at the RECEIPT's
     # valuation; any rate/discount difference posts to the expense account so
     # SRBNB nets to exactly zero once a receipt is fully billed.
@@ -447,7 +514,13 @@ async def submit_purchase_invoice(
                 )
             srbnb_split[item.id] = (srbnb_amount, diff_account_id)
 
-    rows = _build_gl_rows(invoice, supplier.supplier_name, srbnb_split)
+    tds_account_id = None
+    if invoice.tax_withholding_category_id is not None and invoice.tax_withholding_amount != ZERO:
+        from app.models.accounts import TaxWithholdingCategory
+
+        twc = await db.get(TaxWithholdingCategory, invoice.tax_withholding_category_id)
+        tds_account_id = twc.account_id if twc else None
+    rows = _build_gl_rows(invoice, supplier.supplier_name, srbnb_split, tds_account_id)
 
     base_rounding = invoice.rounding_adjustment * invoice.conversion_rate
     if base_rounding != ZERO:
@@ -471,6 +544,7 @@ async def submit_purchase_invoice(
         posting_date=invoice.posting_date,
         rows=rows,
         user_id=user.id,
+        is_opening=invoice.is_opening,
         remarks=invoice.remarks,
     )
 
@@ -479,7 +553,8 @@ async def submit_purchase_invoice(
         db, supplier, invoice.company_id, invoice.currency, invoice.items, sign=Decimal("1")
     )
     invoice.docstatus = DOCSTATUS_SUBMITTED
-    invoice.outstanding_amount = base_payable_total(invoice)
+    # you owe the supplier the bill less the TDS withheld
+    invoice.outstanding_amount = base_payable_total(invoice) - invoice.tax_withholding_amount
     await _apply_cycle_links(db, invoice, sign=1)
 
     if invoice.is_return and invoice.return_against_id:
@@ -505,7 +580,11 @@ async def cancel_purchase_invoice(
 ) -> PurchaseInvoice:
     invoice = await get_purchase_invoice(db, invoice_id, user.company_id)
     require_submitted(invoice.docstatus)
-    if invoice.outstanding_amount != base_payable_total(invoice) and not invoice.is_return:
+    # "no payment yet" ⇒ outstanding == grand - TDS withheld (the amount first booked).
+    if (
+        invoice.outstanding_amount != base_payable_total(invoice) - invoice.tax_withholding_amount
+        and not invoice.is_return
+    ):
         raise ValidationError(
             "Cannot cancel: payments are allocated against this invoice. Cancel them first."
         )

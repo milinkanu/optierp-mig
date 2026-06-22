@@ -1,0 +1,69 @@
+{% extends "base/layout.html" %}
+{% import "base/_macros.html" as m %}
+{% block body %}
+<div class="ph-parties">
+  <div class="ph-party">
+    <div class="ph-label">Statement For</div>
+    <div class="ph-party-name">{{ statement.party_name }}</div>
+    {% if statement.party_email %}<div class="ph-muted">{{ statement.party_email }}</div>{% endif %}
+  </div>
+  <div class="ph-party ph-right">
+    <div><span class="ph-muted">Period:</span> {{ statement.from_date }} to {{ statement.to_date }}</div>
+    <div><span class="ph-muted">Opening Balance:</span> {{ m.money(statement.opening_balance) }}</div>
+    <div><span class="ph-muted">Closing Balance:</span> {{ m.money(statement.closing_balance) }}</div>
+  </div>
+</div>
+
+<table class="ph-items">
+  <thead>
+    <tr>
+      <th style="width:12%">Date</th>
+      <th>Voucher</th>
+      <th class="num" style="width:16%">Debit</th>
+      <th class="num" style="width:16%">Credit</th>
+      <th class="num" style="width:18%">Balance</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td colspan="4"><strong>Opening Balance</strong></td>
+      <td class="num"><strong>{{ m.money(statement.opening_balance) }}</strong></td>
+    </tr>
+    {% for line in statement.lines %}
+    <tr>
+      <td>{{ line.posting_date }}</td>
+      <td><strong>{{ line.voucher_no }}</strong> <span class="ph-muted">{{ line.voucher_type }}</span>{% if line.remarks %}<br><span class="ph-muted">{{ line.remarks }}</span>{% endif %}</td>
+      <td class="num">{% if line.debit %}{{ m.money(line.debit) }}{% else %}&mdash;{% endif %}</td>
+      <td class="num">{% if line.credit %}{{ m.money(line.credit) }}{% else %}&mdash;{% endif %}</td>
+      <td class="num">{{ m.money(line.balance) }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<table class="ph-totals">
+  <tr><td>Total Debit</td><td class="num">{{ m.money(statement.total_debit) }}</td></tr>
+  <tr><td>Total Credit</td><td class="num">{{ m.money(statement.total_credit) }}</td></tr>
+  <tr class="grand"><td>Closing Balance</td><td class="num">{{ m.money(statement.closing_balance) }}</td></tr>
+</table>
+
+{% if statement.aging_total %}
+<div style="margin-top:16px">
+  <div class="ph-label">Outstanding by Age</div>
+  <table class="ph-items">
+    <thead>
+      <tr><th>0–30 days</th><th>31–60 days</th><th>61–90 days</th><th>90+ days</th><th class="num">Total Due</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>{{ m.money(statement.aging_0_30) }}</td>
+        <td>{{ m.money(statement.aging_31_60) }}</td>
+        <td>{{ m.money(statement.aging_61_90) }}</td>
+        <td>{{ m.money(statement.aging_90_plus) }}</td>
+        <td class="num"><strong>{{ m.money(statement.aging_total) }}</strong></td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+{% endif %}
+{% endblock %}

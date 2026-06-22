@@ -19,6 +19,9 @@ dependencies = [
     "apscheduler>=3.10",
     "redis>=5.2",
     "aiosmtplib>=3.0",
+    # PDF engine for document printing (Section 4.5). Needs native libs (Pango/Cairo/
+    # gdk-pixbuf) — installed in the Docker image. MANUAL_REVIEW: WeasyPrint (vs. wkhtmltopdf).
+    "weasyprint>=63",
 ]
 
 [project.optional-dependencies]
@@ -28,7 +31,7 @@ dev = [
     "httpx>=0.28",
     "ruff>=0.8",
 ]
-# MANUAL_REVIEW: PDF engine — WeasyPrint assumed (vs. wkhtmltopdf). Pulled in from Module 02 onwards.
+# Kept as an alias for compatibility; WeasyPrint now ships in the default deps above.
 pdf = ["weasyprint>=63"]
 
 [tool.pytest.ini_options]

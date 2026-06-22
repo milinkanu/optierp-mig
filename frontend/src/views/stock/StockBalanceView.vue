@@ -1,22 +1,33 @@
 <script setup lang="ts">
 // Stock reports: balance (per item/warehouse) and movement ledger.
 
-import { onMounted, ref } from "vue";
+import { onMounted, ref, watch } from "vue";
+import { useRoute, useRouter } from "vue-router";
 import { api } from "@/api/client";
 import { useStockStore } from "@/stores/stock";
 import { useCompanyCurrency } from "@/composables/useCompanyCurrency";
 import { formatCurrency, formatDate, formatQty } from "@/utils/format";
 import type { ErrorEnvelope } from "@/types/core";
-import type { StockBalanceRow, StockLedgerRow } from "@/types/stock";
+import type { StockAgeingRow, StockBalanceRow, StockLedgerRow } from "@/types/stock";
+
+type StockTab = "balance" | "ledger" | "ageing";
 
 const store = useStockStore();
 const companyCurrency = useCompanyCurrency();
+const route = useRoute();
+const router = useRouter();
 
-const tab = ref<"balance" | "ledger">("balance");
+function tabFromQuery(t: unknown): StockTab {
+  return t === "ledger" || t === "ageing" ? t : "balance";
+}
+
+const tab = ref<StockTab>(tabFromQuery(route.query.tab));
 const warehouseId = ref("");
 const itemId = ref("");
+const asOf = ref(""); // empty = current; a date = historical / ageing as-of
 const balanceRows = ref<StockBalanceRow[]>([]);
 const ledgerRows = ref<StockLedgerRow[]>([]);
+const ageingRows = ref<StockAgeingRow[]>([]);
 const loading = ref(false);
 const error = ref<ErrorEnvelope | null>(null);
 
@@ -28,8 +39,15 @@ async function run(): Promise<void> {
     if (warehouseId.value) params.warehouse_id = warehouseId.value;
     if (itemId.value) params.item_id = itemId.value;
     if (tab.value === "balance") {
+      balanceRows.value = []; // avoid flashing the prior tab's rows during the fetch
+      if (asOf.value) params.as_of = asOf.value;
       balanceRows.value = (await api.get<StockBalanceRow[]>("/reports/stock-balance", { params })).data;
+    } else if (tab.value === "ageing") {
+      ageingRows.value = [];
+      if (asOf.value) params.as_of = asOf.value;
+      ageingRows.value = (await api.get<StockAgeingRow[]>("/reports/stock-ageing", { params })).data;
     } else {
+      ledgerRows.value = [];
       ledgerRows.value = (await api.get<StockLedgerRow[]>("/reports/stock-ledger", { params })).data;
     }
   } catch (e) {
@@ -39,10 +57,22 @@ async function run(): Promise<void> {
   }
 }
 
-function switchTab(next: "balance" | "ledger"): void {
-  tab.value = next;
-  void run();
+// the URL is the source of truth for the tab: in-page buttons push the query,
+// the watcher below applies it — so sidebar ?tab= links never become dead links
+function switchTab(next: StockTab): void {
+  if (next !== tabFromQuery(route.query.tab)) {
+    void router.push({ query: { ...route.query, tab: next } });
+  }
 }
+
+// single responder to URL tab changes (in-page buttons + sidebar links)
+watch(
+  () => route.query.tab,
+  (t) => {
+    tab.value = tabFromQuery(t);
+    void run();
+  },
+);
 
 onMounted(async () => {
   await Promise.all([store.fetchItems(), store.fetchWarehouses()]);
@@ -55,6 +85,8 @@ onMounted(async () => {
     <div class="mb-4 flex items-center justify-between">
       <h1 class="text-xl font-semibold text-gray-900">Stock</h1>
       <div class="flex items-center gap-3">
+        <input v-if="tab !== 'ledger'" v-model="asOf" type="date" class="form-input w-40"
+               title="As of date (leave blank for today / current)" @change="run" />
         <select v-model="itemId" class="form-input w-56" @change="run">
           <option value="">All items</option>
           <option v-for="opt in store.itemOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
@@ -67,13 +99,16 @@ onMounted(async () => {
     </div>
 
     <div class="mb-4 flex gap-1 border-b border-gray-200">
-      <button v-for="t in (['balance', 'ledger'] as const)" :key="t"
+      <button v-for="t in (['balance', 'ledger', 'ageing'] as const)" :key="t"
               class="border-b-2 px-4 py-2 text-sm font-medium"
               :class="tab === t ? 'border-primary text-primary' : 'border-transparent text-gray-500 hover:text-gray-700'"
               @click="switchTab(t)">
-        {{ t === "balance" ? "Stock Balance" : "Stock Ledger" }}
+        {{ t === "balance" ? "Stock Balance" : t === "ledger" ? "Stock Ledger" : "Stock Ageing" }}
       </button>
     </div>
+    <p v-if="tab !== 'ledger' && asOf" class="mb-2 text-xs text-gray-400">
+      Historical snapshot as of {{ formatDate(asOf) }} — on-hand only.
+    </p>
     <p v-if="error" class="mb-2 text-sm text-red-600">{{ error.detail }}</p>
 
     <div class="overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm">
@@ -106,7 +141,7 @@ onMounted(async () => {
         </tbody>
       </table>
 
-      <table v-else class="min-w-full text-sm">
+      <table v-else-if="tab === 'ledger'" class="min-w-full text-sm">
         <thead class="bg-gray-50 text-left text-xs uppercase text-gray-500">
           <tr>
             <th class="px-4 py-2">Date</th><th class="px-4 py-2">Item</th>
@@ -133,6 +168,39 @@ onMounted(async () => {
           </tr>
           <tr v-if="!loading && !ledgerRows.length">
             <td colspan="8" class="px-4 py-8 text-center text-gray-400">No stock movements yet.</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <table v-else class="min-w-full text-sm">
+        <thead class="bg-gray-50 text-left text-xs uppercase text-gray-500">
+          <tr>
+            <th class="px-4 py-2">Item</th><th class="px-4 py-2">Warehouse</th>
+            <th class="px-4 py-2 text-right">On Hand</th>
+            <th class="px-4 py-2 text-right">Avg Age (days)</th>
+            <th class="px-4 py-2 text-right">0–30</th>
+            <th class="px-4 py-2 text-right">31–60</th>
+            <th class="px-4 py-2 text-right">61–90</th>
+            <th class="px-4 py-2 text-right">90+</th>
+            <th class="px-4 py-2 text-right">Stock Value</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="(row, i) in ageingRows" :key="i" class="border-t border-gray-100">
+            <td class="px-4 py-2 font-medium text-gray-900">{{ row.item_code }} — {{ row.item_name }}</td>
+            <td class="px-4 py-2 text-gray-500">{{ row.warehouse_name }}</td>
+            <td class="px-4 py-2 text-right">{{ formatQty(row.total_qty) }}</td>
+            <td class="px-4 py-2 text-right">{{ row.average_age_days }}</td>
+            <td class="px-4 py-2 text-right">{{ formatQty(row.bucket_0_30) }}</td>
+            <td class="px-4 py-2 text-right">{{ formatQty(row.bucket_31_60) }}</td>
+            <td class="px-4 py-2 text-right">{{ formatQty(row.bucket_61_90) }}</td>
+            <td class="px-4 py-2 text-right" :class="Number(row.bucket_90_plus) > 0 ? 'text-amber-700 font-medium' : ''">
+              {{ formatQty(row.bucket_90_plus) }}
+            </td>
+            <td class="px-4 py-2 text-right font-medium">{{ formatCurrency(row.stock_value, companyCurrency) }}</td>
+          </tr>
+          <tr v-if="!loading && !ageingRows.length">
+            <td colspan="9" class="px-4 py-8 text-center text-gray-400">No on-hand stock to age.</td>
           </tr>
         </tbody>
       </table>

@@ -19,6 +19,9 @@ const showForm = ref(false);
 
 const fiscalYearId = ref("");
 const action = ref<"Stop" | "Warn" | "Ignore">("Warn");
+const monthlyDistId = ref("");
+const monthlyAction = ref<"Stop" | "Warn" | "Ignore">("Warn");
+const monthlyDistributions = ref<Array<{ id: string; distribution_name: string }>>([]);
 const rows = ref<Array<{ account_id: string; budget_amount: number }>>([
   { account_id: "", budget_amount: 0 },
 ]);
@@ -55,6 +58,8 @@ async function save(): Promise<void> {
     await api.post("/budgets", {
       fiscal_year_id: fiscalYearId.value,
       action_if_annual_budget_exceeded: action.value,
+      monthly_distribution_id: monthlyDistId.value || null,
+      action_if_accumulated_monthly_budget_exceeded: monthlyDistId.value ? monthlyAction.value : "Ignore",
       accounts: rows.value.filter((r) => r.account_id && Number(r.budget_amount) > 0),
     });
     showForm.value = false;
@@ -85,6 +90,15 @@ onMounted(async () => {
   } catch {
     fiscalYears.value = [];
   }
+  try {
+    const md = await api.get<ListResponse<{ id: string; distribution_name: string }>>(
+      "/registry/monthly-distribution",
+      { params: { page_size: 200 } },
+    );
+    monthlyDistributions.value = md.data.items ?? [];
+  } catch {
+    monthlyDistributions.value = [];
+  }
 });
 </script>
 
@@ -114,14 +128,32 @@ onMounted(async () => {
           </select>
         </div>
         <div>
-          <label class="form-label">If exceeded</label>
+          <label class="form-label">If exceeded (annual)</label>
           <select v-model="action" class="form-input">
             <option>Stop</option>
             <option>Warn</option>
             <option>Ignore</option>
           </select>
         </div>
+        <div>
+          <label class="form-label">Monthly Distribution</label>
+          <select v-model="monthlyDistId" class="form-input">
+            <option value="">— annual only —</option>
+            <option v-for="md in monthlyDistributions" :key="md.id" :value="md.id">{{ md.distribution_name }}</option>
+          </select>
+        </div>
+        <div v-if="monthlyDistId">
+          <label class="form-label">If exceeded (month-to-date)</label>
+          <select v-model="monthlyAction" class="form-input">
+            <option>Stop</option>
+            <option>Warn</option>
+            <option>Ignore</option>
+          </select>
+        </div>
       </div>
+      <p v-if="monthlyDistId" class="mt-1 text-xs text-gray-400">
+        Seasonality: the annual amount is spread by the chosen distribution; spend is also checked against the month-to-date share.
+      </p>
 
       <div class="mt-4">
         <div class="mb-2 flex items-center justify-between">

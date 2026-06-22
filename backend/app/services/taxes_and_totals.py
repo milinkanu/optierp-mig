@@ -21,8 +21,10 @@ MANUAL_REVIEW: rounding is commercial half-up (Decimal ROUND_HALF_UP);
 ERPNext's System Settings rounding method (incl. banker's) is configurable —
 confirm the required method per deployment.
 
-Assumption: inclusive taxes (``included_in_print_rate``) are not yet
-supported; rows raise a ValidationError until ported.
+Inclusive taxes (``included_in_print_rate``) are supported via
+``determine_exclusive_rate`` — the item rate is treated as tax-inclusive and the
+net rate is back-calculated (used for MRP / GST-inclusive pricing). 'Actual'
+charge-type rows cannot be inclusive.
 """
 
 from dataclasses import dataclass, field
@@ -61,9 +63,16 @@ class ItemRow:
     rate: Decimal = ZERO
     price_list_rate: Decimal | None = None
     discount_percentage: Decimal = ZERO
+    discount_amount: Decimal = ZERO  # per-unit absolute discount (alt. to %)
+
+    # Per-item tax-rate overrides (Item Tax Template): {tax account head -> rate}.
+    # A tax row whose account_head_id is in this map uses the item's rate instead
+    # of the row's rate (ERPNext item_tax_template), so a bill can mix GST slabs.
+    item_tax_rate: dict = field(default_factory=dict)
 
     amount: Decimal = ZERO
     base_rate: Decimal = ZERO
+    base_price_list_rate: Decimal = ZERO
     base_amount: Decimal = ZERO
     net_amount: Decimal = ZERO
     base_net_amount: Decimal = ZERO
@@ -82,6 +91,7 @@ class TaxRow:
     add_deduct_tax: str = "Add"  # Add | Deduct (purchase only)
     category: str = "Total"  # Total | Valuation | Valuation and Total
     included_in_print_rate: bool = False
+    account_head_id: object | None = None  # used to match per-item rate overrides
 
     total: Decimal = ZERO
     base_tax_amount: Decimal = ZERO
@@ -90,6 +100,9 @@ class TaxRow:
     tax_amount_after_discount_amount: Decimal = ZERO
     tax_amount_for_current_item: Decimal = ZERO
     grand_total_for_current_item: Decimal = ZERO
+    # Inclusive-tax back-calculation (determine_exclusive_rate)
+    tax_fraction_for_current_item: Decimal = ZERO
+    grand_total_fraction_for_current_item: Decimal = ZERO
     _input_tax_amount: Decimal = field(default=ZERO, repr=False)
 
 
@@ -150,9 +163,9 @@ class TaxesAndTotalsCalculator:
         for i, tax in enumerate(self.taxes):
             if tax.charge_type not in CHARGE_TYPES:
                 raise ValidationError(f"Unknown charge_type '{tax.charge_type}'", field="taxes")
-            if tax.included_in_print_rate:
+            if tax.included_in_print_rate and tax.charge_type == "Actual":
                 raise ValidationError(
-                    "Inclusive taxes (included_in_print_rate) are not supported yet", field="taxes"
+                    "An 'Actual' tax row cannot be inclusive (included_in_print_rate)", field="taxes"
                 )
             if tax.charge_type in ("On Previous Row Amount", "On Previous Row Total"):
                 if not tax.row_id or not (1 <= tax.row_id <= i):
@@ -167,9 +180,11 @@ class TaxesAndTotalsCalculator:
         if not self.items:
             raise ValidationError("At least one item row is required", field="items")
         self.calculate_item_values()
+        self.determine_exclusive_rate()
         self._calculate()
         self.set_discount_amount()
         self.apply_discount_amount()
+        self.manipulate_grand_total_for_inclusive_tax()
         self.calculate_totals()
         return self.result
 
@@ -177,14 +192,87 @@ class TaxesAndTotalsCalculator:
 
     def calculate_item_values(self) -> None:
         for item in self.items:
-            if item.price_list_rate is not None and item.discount_percentage:
-                item.rate = flt(
-                    item.price_list_rate * (UNIT - item.discount_percentage / Decimal(100))
-                )
+            # Per-line discount: a % takes precedence and derives the absolute
+            # amount; otherwise an explicit per-unit discount_amount applies.
+            # Either way the net `rate` = price_list_rate - discount_amount.
+            if item.price_list_rate is not None:
+                if item.discount_percentage:
+                    item.discount_amount = flt(
+                        item.price_list_rate * item.discount_percentage / Decimal(100)
+                    )
+                if item.discount_amount:
+                    item.rate = flt(item.price_list_rate - item.discount_amount)
+                item.base_price_list_rate = flt(item.price_list_rate * self.conversion_rate)
             item.amount = flt(item.rate * item.qty)
             item.net_amount = item.amount
             item.base_rate = flt(item.rate * self.conversion_rate)
             item.base_amount = flt(item.amount * self.conversion_rate)
+
+    def determine_exclusive_rate(self) -> None:
+        """ERPNext determine_exclusive_rate: when any tax is ``included_in_print_rate``
+        the item ``amount`` is treated as tax-inclusive, so back-calculate the
+        exclusive ``net_amount`` by dividing out the cumulative tax fraction."""
+        if not any(tax.included_in_print_rate for tax in self.taxes):
+            return
+        for item in self.items:
+            cumulated_tax_fraction = ZERO
+            total_inclusive_tax_amount_per_qty = ZERO
+            for i, tax in enumerate(self.taxes):
+                fraction, inclusive_per_qty = self._tax_fraction_for_item(tax)
+                tax.tax_fraction_for_current_item = fraction
+                if i == 0:
+                    tax.grand_total_fraction_for_current_item = UNIT + fraction
+                else:
+                    tax.grand_total_fraction_for_current_item = (
+                        self.taxes[i - 1].grand_total_fraction_for_current_item + fraction
+                    )
+                cumulated_tax_fraction += fraction
+                total_inclusive_tax_amount_per_qty += inclusive_per_qty * item.qty
+            if cumulated_tax_fraction:
+                amount = item.amount - total_inclusive_tax_amount_per_qty
+                item.net_amount = flt(amount / (UNIT + cumulated_tax_fraction))
+                item.base_net_amount = flt(item.net_amount * self.conversion_rate)
+
+    def _tax_fraction_for_item(self, tax: TaxRow) -> tuple[Decimal, Decimal]:
+        """ERPNext get_current_tax_fraction: the fraction of an inclusive item rate
+        attributable to this tax row (and a per-qty amount for On Item Quantity)."""
+        fraction = ZERO
+        inclusive_per_qty = ZERO
+        if tax.included_in_print_rate:
+            hundred = Decimal(100)
+            if tax.charge_type == "On Net Total":
+                fraction = tax.rate / hundred
+            elif tax.charge_type == "On Previous Row Amount":
+                assert tax.row_id is not None
+                fraction = (tax.rate / hundred) * self.taxes[tax.row_id - 1].tax_fraction_for_current_item
+            elif tax.charge_type == "On Previous Row Total":
+                assert tax.row_id is not None
+                fraction = (
+                    (tax.rate / hundred)
+                    * self.taxes[tax.row_id - 1].grand_total_fraction_for_current_item
+                )
+            elif tax.charge_type == "On Item Quantity":
+                inclusive_per_qty = tax.rate
+        if self.is_purchase and tax.add_deduct_tax == "Deduct":
+            fraction = -fraction
+            inclusive_per_qty = -inclusive_per_qty
+        return fraction, inclusive_per_qty
+
+    def manipulate_grand_total_for_inclusive_tax(self) -> None:
+        """Absorb small rounding drift so the grand total of a tax-inclusive
+        invoice matches the sum of the (inclusive) item amounts. Only nudges by a
+        few paise — large diffs (e.g. an additional discount) are left untouched."""
+        if not self.taxes or not any(tax.included_in_print_rate for tax in self.taxes):
+            return
+        last_tax = self.taxes[-1]
+        non_inclusive_tax_amount = sum(
+            (flt(t.tax_amount_after_discount_amount) for t in self.taxes if not t.included_in_print_rate),
+            ZERO,
+        )
+        diff = flt(self.result.total + non_inclusive_tax_amount - last_tax.total)
+        tolerance = CURRENCY_PLACES * (len(self.items) + 1)
+        if diff and abs(diff) <= tolerance:
+            self.grand_total_diff += diff
 
     def _calculate(self) -> None:
         self.calculate_net_total()
@@ -229,7 +317,8 @@ class TaxesAndTotalsCalculator:
     def get_current_tax_and_net_amount(self, item: ItemRow, tax: TaxRow) -> tuple[Decimal, Decimal]:
         current_tax_amount = ZERO
         current_net_amount = ZERO
-        rate = tax.rate
+        # an Item Tax Template overrides the rate for this tax's account head
+        rate = item.item_tax_rate.get(tax.account_head_id, tax.rate) if item.item_tax_rate else tax.rate
         hundred = Decimal(100)
 
         if tax.charge_type == "Actual":

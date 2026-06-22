@@ -2,6 +2,8 @@
 import { computed, onMounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import StatusBadge from "@/components/shared/StatusBadge.vue";
+import PrintButton from "@/components/shared/PrintButton.vue";
+import SendEmailButton from "@/components/shared/SendEmailButton.vue";
 import ItemsGrid, { type GridColumn } from "@/components/shared/ItemsGrid.vue";
 import GetItemsFrom, { type ItemSource } from "@/components/shared/GetItemsFrom.vue";
 import DateField from "@/components/shared/DateField.vue";
@@ -9,6 +11,8 @@ import TaxesCharges from "@/components/shared/TaxesCharges.vue";
 import AdditionalDiscount, { type DiscountModel } from "@/components/shared/AdditionalDiscount.vue";
 import CurrencySection, { type CurrencyModel } from "@/components/shared/CurrencySection.vue";
 import DocumentTotals from "@/components/shared/DocumentTotals.vue";
+import PaymentSchedulePreview from "@/components/shared/PaymentSchedulePreview.vue";
+import { computeTotals } from "@/utils/totals";
 import DataEntry, { type ImportedRow } from "@/components/shared/DataEntry.vue";
 import AddressContactTab, { type AddressContactModel } from "@/components/shared/AddressContactTab.vue";
 import AddressContactSummary from "@/components/shared/AddressContactSummary.vue";
@@ -18,7 +22,7 @@ import { useStockStore } from "@/stores/stock";
 import { useCoreStore } from "@/stores/core";
 import { useAuthStore } from "@/stores/auth";
 import { useCompanyCurrency } from "@/composables/useCompanyCurrency";
-import { api, openPdf } from "@/api/client";
+import { api } from "@/api/client";
 import { formatCurrency, formatDate, formatQty } from "@/utils/format";
 import type { ErrorEnvelope, ListResponse } from "@/types/core";
 import type {
@@ -28,6 +32,8 @@ import type {
   PurchaseInvoiceDetail,
   SalesInvoiceDetail,
   TaxRowIn,
+  UnreconciledPaymentRow,
+  UnreconciledResponse,
 } from "@/types/accounts";
 
 const props = defineProps<{ kind: "sales" | "purchase"; id?: string }>();
@@ -55,16 +61,72 @@ const docBillNo = computed(() =>
 const money = (value: string | number | null | undefined): string =>
   formatCurrency(value, doc.value?.currency ?? "INR");
 
+// A tax row stores the *template's* nominal rate (e.g. 9%) and a description
+// like "CGST @ 9%". When an Item Tax Template overrides a line (e.g. a 5%-GST
+// item under an 18% invoice template), the charged amount is lower than the
+// nominal rate implies — so showing "@ 9%" is misleading. These helpers show
+// the EFFECTIVE rate actually charged (tax_amount ÷ net_total) and strip the
+// baked-in "@ N%" from the label so the two never contradict each other.
+const taxEffectiveRate = (
+  tax: { rate: string | number; tax_amount: string | number | null },
+): number | null => {
+  const net = Number(doc.value?.net_total ?? 0);
+  if (!net || !Number(tax.rate)) return null; // rate 0 ⇒ a fixed "Actual" charge
+  return Math.round((Number(tax.tax_amount) / net) * 10000) / 100;
+};
+const taxLabel = (tax: { description?: string | null; charge_type?: string }): string =>
+  (tax.description || tax.charge_type || "").replace(/\s*@\s*[\d.]+\s*%/, "").trim();
+
 const doc = ref<InvoiceDetail | null>(null);
 const error = ref<ErrorEnvelope | null>(null);
 const saving = ref(false);
 
 const partyId = ref("");
 const newPartyName = ref("");
+// Debit-To (receivable) for sales / Credit-To (payable) for purchase. The
+// backend defaults these from customer/company when left blank.
+const controlAccountId = ref("");
+const controlAccountLabel = computed(() =>
+  props.kind === "sales" ? "Debit To (Receivable)" : "Credit To (Payable)",
+);
+const controlAccountOptions = computed(() =>
+  props.kind === "sales" ? store.receivableAccountOptions : store.payableAccountOptions,
+);
 const postingDate = ref(new Date().toISOString().slice(0, 10));
 const dueDate = ref("");
 const items = ref<InvoiceItemIn[]>([{ item_name: "", qty: 1, rate: 0 }]);
 const taxes = ref<TaxRowIn[]>([]);
+const taxTemplateId = ref("");
+// India withholding: TDS on purchase (withheld from supplier) / TCS on sales
+// (collected from customer), for the chosen category. Same field, opposite sign.
+const tdsCategoryId = ref("");
+const tdsCategories = ref<Array<{ id: string; category_name: string; rate: string }>>([]);
+// live preview of the chosen TDS/TCS in the totals block (backend computes the real amount on save)
+const withholdingPreview = computed(() => {
+  const cat = tdsCategories.value.find((c) => c.id === tdsCategoryId.value);
+  if (!cat) return undefined;
+  return props.kind === "sales"
+    ? { label: "TCS collected", rate: Number(cat.rate), sign: 1, netLabel: "Customer pays" }
+    : { label: "TDS withheld", rate: Number(cat.rate), sign: -1, netLabel: "Net payable to supplier" };
+});
+
+// Picking a Taxes & Charges template fills the editable rows (ERPNext model:
+// the rows stay authoritative and editable; we don't send the template id).
+function applyTaxTemplate(): void {
+  const tpl = store.taxTemplates.find((t) => t.id === taxTemplateId.value);
+  if (!tpl) return;
+  taxes.value = tpl.details.map((d) => ({
+    charge_type: d.charge_type,
+    rate: Number(d.rate),
+    tax_amount: Number(d.tax_amount),
+    row_id: d.row_id,
+    account_head_id: d.account_head_id,
+    description: d.description,
+    add_deduct_tax: d.add_deduct_tax,
+    category: d.category,
+    included_in_print_rate: d.included_in_print_rate,
+  }));
+}
 const discount = ref<DiscountModel>({
   apply_discount_on: "Grand Total",
   additional_discount_percentage: 0,
@@ -75,6 +137,50 @@ const isReturn = ref(false);
 const returnAgainstId = ref("");
 const returnables = ref<InvoiceListItem[]>([]);
 const terms = ref("");
+const termsTemplates = ref<Array<{ id: string; template_name: string; terms: string | null }>>([]);
+const termsTemplateId = ref("");
+
+// Payment Terms (the payment split). Store only the template id; the due-date
+// breakdown is derived live from the grand total + posting date.
+const paymentTermsTemplateId = ref("");
+const paymentTermsTemplates = ref<Array<{ id: string; template_name: string }>>([]);
+async function fetchPaymentTermsTemplates(): Promise<void> {
+  try {
+    const resp = await api.get<{ items: Array<{ id: string; template_name: string }> }>(
+      "/registry/payment-terms-template",
+      { params: { page_size: 200 } },
+    );
+    paymentTermsTemplates.value = resp.data.items ?? [];
+  } catch {
+    paymentTermsTemplates.value = [];
+  }
+}
+const liveGrandTotal = computed(() => {
+  const t = computeTotals(
+    items.value as unknown as Parameters<typeof computeTotals>[0],
+    taxes.value as unknown as Parameters<typeof computeTotals>[1],
+    discount.value as unknown as Parameters<typeof computeTotals>[2],
+  );
+  return t.roundedTotal || t.grandTotal;
+});
+
+// Picking a Terms Template fills the editable Terms text (stays editable).
+async function fetchTermsTemplates(): Promise<void> {
+  try {
+    const resp = await api.get<{ items: Array<{ id: string; template_name: string; terms: string | null }> }>(
+      "/registry/terms-template",
+      { params: { page_size: 200 } },
+    );
+    termsTemplates.value = resp.data.items ?? [];
+  } catch {
+    termsTemplates.value = [];
+  }
+}
+function applyTermsTemplate(): void {
+  const tpl = termsTemplates.value.find((t) => t.id === termsTemplateId.value);
+  if (tpl) terms.value = tpl.terms ?? "";
+}
+
 const poNo = ref("");
 const poDate = ref("");
 const billNo = ref(""); // supplier's invoice number (purchase)
@@ -101,18 +207,48 @@ const companyName = computed(
 const activeTab = ref("Details");
 const tabs = ["Details", "Payments", "Address & Contact", "Terms", "More Info"];
 
+// Show the Disc % column on the detail table only when a line carries one.
+const hasLineDiscount = computed(() =>
+  (doc.value?.items ?? []).some((it) => Number(it.discount_percentage) > 0),
+);
+
+// Resolve the chosen payment-terms template name for the summary header.
+const paymentTermsName = computed(
+  () =>
+    paymentTermsTemplates.value.find((t) => t.id === doc.value?.payment_terms_template_id)
+      ?.template_name ?? null,
+);
+
 const META = {
-  sales: { module: "Selling", title: "Sales Invoice", series: "SINV-.YY.-", newRoute: "sales-invoice-new" },
-  purchase: { module: "Buying", title: "Purchase Invoice", series: "PINV-.YY.-", newRoute: "purchase-invoice-new" },
+  sales: { module: "Sales", title: "Sales Invoice", series: "SINV-.YY.-", newRoute: "sales-invoice-new" },
+  purchase: { module: "Purchases", title: "Purchase Invoice", series: "PINV-.YY.-", newRoute: "purchase-invoice-new" },
 } as const;
 const meta = computed(() => META[props.kind]);
 
-const gridColumns: GridColumn[] = [
+// Stock-qty display: blank unless the (item-linked) line uses a non-stock UOM
+function stockQtyLabel(row: Record<string, unknown>): string {
+  const id = row.item_id as string | null;
+  if (!id) return "";
+  const f = stock.uomFactor(id, row.uom as string | undefined);
+  if (f === 1) return "";
+  return String(Math.round((Number(row.qty) || 0) * f * 1000) / 1000);
+}
+
+const gridColumns = computed<GridColumn[]>(() => [
   { key: "item_id", label: "Item / Service", type: "item", required: true },
   { key: "qty", label: "Quantity", type: "number", align: "right", required: true },
   { key: "uom", label: "UOM", type: "text" },
+  { key: "stock_qty", label: "Stock Qty", type: "computed", align: "right", compute: stockQtyLabel },
   { key: "rate", label: "Rate", type: "number", align: "right", required: true },
-];
+  { key: "discount_percentage", label: "Discount %", type: "number", align: "right" },
+  {
+    key: "account_id",
+    label: props.kind === "sales" ? "Income Account" : "Expense Account",
+    type: "select",
+    options: store.accountOptions,
+  },
+  { key: "cost_center_id", label: "Cost Center", type: "select", options: store.costCenterOptions },
+]);
 
 const sources = computed<ItemSource[]>(() =>
   props.kind === "sales"
@@ -134,17 +270,23 @@ const gridRows = computed<Record<string, unknown>[]>({
 });
 
 function newItemRow(): Record<string, unknown> {
-  return { item_id: "", item_name: "", qty: 1, rate: 0, uom: "", _rowKey: rowKey() };
+  return {
+    item_id: "", item_name: "", qty: 1, rate: 0, uom: "",
+    discount_percentage: 0, account_id: null, cost_center_id: null, _rowKey: rowKey(),
+  };
 }
 
 async function onItemChange(index: number): Promise<void> {
   const row = items.value[index];
   if (!row?.item_id) return;
   const item = stock.items.find((it) => it.id === row.item_id);
+  // default to the buy/sell UOM; rate is per that UOM (resolved rate is per stock UOM)
+  const uom = (props.kind === "purchase" ? item?.purchase_uom : item?.sales_uom) || item?.stock_uom || "";
+  const factor = stock.uomFactor(row.item_id, uom);
   let rate = row.rate;
   try {
     const resolved = await stock.resolveItemRate(row.item_id, props.kind === "purchase");
-    rate = Number(resolved.rate);
+    rate = Number(resolved.rate) * factor;
   } catch {
     // best-effort; backend re-resolves on save
   }
@@ -154,7 +296,7 @@ async function onItemChange(index: number): Promise<void> {
           ...r,
           item_name: item?.item_name ?? r.item_name,
           item_code: item?.item_code ?? r.item_code,
-          uom: item?.stock_uom ?? r.uom,
+          uom,
           rate,
         }
       : r,
@@ -202,15 +344,6 @@ async function quickCreateParty(): Promise<void> {
   }
 }
 
-async function viewPdf(): Promise<void> {
-  error.value = null;
-  try {
-    await openPdf(`${endpoint.value}/${doc.value!.id}/pdf`);
-  } catch (e) {
-    error.value = e as ErrorEnvelope;
-  }
-}
-
 function goToPayment(): void {
   if (!doc.value) return;
   void router.push({
@@ -223,6 +356,22 @@ function goToPayment(): void {
           : (doc.value as PurchaseInvoiceDetail).supplier_id,
     },
   });
+}
+
+// Buying a prepaid service (e.g. support hours)? Spin up a Service Credit
+// pre-filled from this Purchase Invoice (supplier + first item line + the link).
+function createServiceCredit(): void {
+  if (!doc.value) return;
+  const pi = doc.value as PurchaseInvoiceDetail;
+  const line = pi.items.find((it) => (it as { item_id?: string | null }).item_id) ?? pi.items[0];
+  const query: Record<string, string> = { purchase_invoice_id: pi.id, supplier_id: pi.supplier_id };
+  if (line) {
+    const itemId = (line as { item_id?: string | null }).item_id;
+    if (itemId) query.item_id = itemId;
+    if (line.qty != null) query.qty = String(line.qty);
+    if (line.rate != null) query.rate = String(line.rate);
+  }
+  void router.push({ name: "service-credit-new", query });
 }
 
 async function save(): Promise<void> {
@@ -239,20 +388,24 @@ async function save(): Promise<void> {
       apply_discount_on: discount.value.apply_discount_on,
       additional_discount_percentage: discount.value.additional_discount_percentage || 0,
       discount_amount: discount.value.discount_amount || 0,
+      payment_terms_template_id: paymentTermsTemplateId.value || null,
       is_return: isReturn.value,
       return_against_id: isReturn.value ? returnAgainstId.value || null : null,
     };
     if (props.kind === "sales") {
       payload.customer_id = partyId.value;
+      payload.debit_to_id = controlAccountId.value || null;
       payload.po_no = poNo.value || null;
       payload.po_date = poDate.value || null;
       payload.terms = terms.value || null;
       Object.assign(payload, acPayload("customer"));
     } else {
       payload.supplier_id = partyId.value;
+      payload.credit_to_id = controlAccountId.value || null;
       payload.terms = terms.value || null;
       payload.bill_no = billNo.value || null;
       payload.bill_date = billDate.value || null;
+      payload.tax_withholding_category_id = tdsCategoryId.value || null;
       Object.assign(payload, acPayload("supplier"));
     }
     const resp = await api.post<InvoiceDetail>(endpoint.value, payload);
@@ -269,10 +422,81 @@ async function action(name: "submit" | "cancel"): Promise<void> {
   error.value = null;
   try {
     doc.value = await store.docAction<InvoiceDetail>(endpoint.value, doc.value.id, name);
+    await loadAdvances();
   } catch (e) {
     error.value = e as ErrorEnvelope;
   }
 }
+
+// --- Advances: apply a party's on-account payments to this invoice -----------
+// Reuses Payment Reconciliation (an on-account receipt already sits as a credit
+// on the party's receivable/payable; allocating just links it and drops the
+// outstanding — no new GL).
+const advances = ref<UnreconciledPaymentRow[]>([]);
+const advanceAlloc = ref<Record<string, number>>({});
+const applyingAdvance = ref(false);
+
+const docPartyType = computed(() => (props.kind === "sales" ? "Customer" : "Supplier"));
+const docPartyId = computed(() =>
+  props.kind === "sales"
+    ? (doc.value as SalesInvoiceDetail | null)?.customer_id
+    : (doc.value as PurchaseInvoiceDetail | null)?.supplier_id,
+);
+
+async function loadAdvances(): Promise<void> {
+  advances.value = [];
+  advanceAlloc.value = {};
+  if (!doc.value || doc.value.docstatus !== 1 || Number(doc.value.outstanding_amount) <= 0) return;
+  const partyId = docPartyId.value;
+  if (!partyId) return;
+  try {
+    const resp = await api.get<UnreconciledResponse>("/payment-reconciliation/unreconciled", {
+      params: { party_type: docPartyType.value, party_id: partyId },
+    });
+    advances.value = resp.data.payments;
+    let remaining = Number(doc.value.outstanding_amount);
+    for (const p of advances.value) {
+      const suggested = Math.min(Number(p.unallocated_amount), remaining);
+      advanceAlloc.value[p.payment_entry_id] = suggested > 0 ? suggested : 0;
+      remaining -= suggested > 0 ? suggested : 0;
+    }
+  } catch {
+    advances.value = [];
+  }
+}
+
+async function applyAdvances(): Promise<void> {
+  if (!doc.value) return;
+  const partyId = docPartyId.value;
+  const allocations = advances.value
+    .filter((p) => Number(advanceAlloc.value[p.payment_entry_id]) > 0)
+    .map((p) => ({
+      payment_entry_id: p.payment_entry_id,
+      invoice_type: props.kind === "sales" ? "Sales Invoice" : "Purchase Invoice",
+      invoice_id: doc.value!.id,
+      allocated_amount: Number(advanceAlloc.value[p.payment_entry_id]),
+    }));
+  if (!allocations.length || !partyId) return;
+  applyingAdvance.value = true;
+  error.value = null;
+  try {
+    await api.post("/payment-reconciliation/reconcile", {
+      party_type: docPartyType.value,
+      party_id: partyId,
+      allocations,
+    });
+    doc.value = (await api.get<InvoiceDetail>(`${endpoint.value}/${props.id}`)).data;
+    await loadAdvances();
+  } catch (e) {
+    error.value = e as ErrorEnvelope;
+  } finally {
+    applyingAdvance.value = false;
+  }
+}
+
+const totalAdvanceToApply = computed(() =>
+  Object.values(advanceAlloc.value).reduce((s, v) => s + (Number(v) || 0), 0),
+);
 
 interface SourceItem {
   id: string;
@@ -380,11 +604,27 @@ async function onReturnAgainstChange(): Promise<void> {
 onMounted(async () => {
   await Promise.all([
     store.fetchAccounts(),
+    store.fetchTaxTemplates(props.kind),
+    store.fetchCostCenters(),
+    fetchTermsTemplates(),
+    fetchPaymentTermsTemplates(),
     stock.fetchItems(),
     props.kind === "sales" ? store.fetchCustomers() : store.fetchSuppliers(),
   ]);
+  try {
+    // purchase invoices withhold TDS; sales invoices collect TCS
+    const wantKind = props.kind === "sales" ? "TCS" : "TDS";
+    const r = await api.get<ListResponse<{ id: string; category_name: string; rate: string; kind: string; disabled: boolean }>>(
+      "/registry/tax-withholding-category",
+      { params: { page_size: 200 } },
+    );
+    tdsCategories.value = (r.data.items ?? []).filter((c) => c.kind === wantKind && !c.disabled);
+  } catch {
+    tdsCategories.value = [];
+  }
   if (props.id) {
     doc.value = (await api.get<InvoiceDetail>(`${endpoint.value}/${props.id}`)).data;
+    await loadAdvances();
   } else {
     await prefillFromSource();
     try {
@@ -416,8 +656,14 @@ onMounted(async () => {
             class="btn-primary"
             @click="goToPayment"
           >{{ kind === "sales" ? "Receive Payment" : "Pay" }}</button>
+          <button
+            v-if="kind === 'purchase' && doc.docstatus === 1"
+            class="btn-secondary"
+            @click="createServiceCredit"
+          >Create Service Credit</button>
           <button v-if="doc.docstatus === 1" class="btn-secondary" @click="action('cancel')">Cancel</button>
-          <button v-if="doc.docstatus === 1" class="btn-secondary" @click="viewPdf">PDF</button>
+          <PrintButton :path="`${endpoint}/${doc.id}/pdf`" :title="`${doc.name} — Preview`" />
+          <SendEmailButton :doctype="meta.title" :doc-id="doc.id" :doc-name="doc.name" />
         </div>
       </div>
       <p v-if="error" class="mb-3 text-sm text-red-600">{{ error.detail }}</p>
@@ -453,6 +699,10 @@ onMounted(async () => {
           <div class="text-xs font-semibold uppercase tracking-wide text-gray-400">Remarks</div>
           <div class="mt-0.5 text-sm text-gray-700">{{ doc.remarks }}</div>
         </div>
+        <div v-if="paymentTermsName">
+          <div class="text-xs font-semibold uppercase tracking-wide text-gray-400">Payment Terms</div>
+          <div class="mt-0.5 text-sm text-gray-900">{{ paymentTermsName }}</div>
+        </div>
         <div v-if="doc.terms" class="col-span-2 md:col-span-4">
           <div class="text-xs font-semibold uppercase tracking-wide text-gray-400">Terms</div>
           <div class="mt-0.5 whitespace-pre-line text-sm text-gray-700">{{ doc.terms }}</div>
@@ -470,6 +720,7 @@ onMounted(async () => {
           <thead class="bg-gray-50 text-left text-xs uppercase text-gray-500">
             <tr><th class="px-4 py-2">#</th><th class="px-4 py-2">Item</th>
                 <th class="px-4 py-2 text-right">Qty</th><th class="px-4 py-2 text-right">Rate</th>
+                <th v-if="hasLineDiscount" class="px-4 py-2 text-right">Disc %</th>
                 <th class="px-4 py-2 text-right">Amount</th></tr>
           </thead>
           <tbody>
@@ -477,7 +728,10 @@ onMounted(async () => {
               <td class="px-4 py-2">{{ item.idx }}</td>
               <td class="px-4 py-2 font-medium text-gray-900">{{ item.item_name }}</td>
               <td class="px-4 py-2 text-right">{{ formatQty(item.qty) }}</td>
-              <td class="px-4 py-2 text-right">{{ money(item.rate) }}</td>
+              <td class="px-4 py-2 text-right">{{ money(Number(item.price_list_rate) || item.rate) }}</td>
+              <td v-if="hasLineDiscount" class="px-4 py-2 text-right">
+                {{ Number(item.discount_percentage) ? `${Number(item.discount_percentage)}%` : "—" }}
+              </td>
               <td class="px-4 py-2 text-right">{{ money(item.amount) }}</td>
             </tr>
           </tbody>
@@ -486,7 +740,7 @@ onMounted(async () => {
           <dl class="ml-auto w-80 space-y-1 text-sm">
             <div class="flex justify-between"><dt class="text-gray-500">Net Total</dt><dd>{{ money(doc.net_total) }}</dd></div>
             <div v-for="tax in doc.taxes" :key="tax.idx" class="flex justify-between">
-              <dt class="text-gray-500">{{ tax.description || tax.charge_type }} <template v-if="Number(tax.rate)">({{ Number(tax.rate) }}%)</template></dt>
+              <dt class="text-gray-500">{{ taxLabel(tax) }} <template v-if="taxEffectiveRate(tax) !== null">({{ taxEffectiveRate(tax) }}%)</template></dt>
               <dd>{{ money(tax.tax_amount) }}</dd>
             </div>
             <div v-if="Number(doc.discount_amount)" class="flex justify-between text-gray-500">
@@ -495,11 +749,53 @@ onMounted(async () => {
             <div class="flex justify-between border-t border-gray-200 pt-1 text-base font-semibold">
               <dt>Grand Total</dt><dd>{{ money(doc.rounded_total) }}</dd>
             </div>
+            <div v-if="Number(doc.tax_withholding_amount) > 0" class="flex justify-between text-gray-500">
+              <template v-if="kind === 'sales'">
+                <dt>TCS collected</dt><dd>+{{ formatCurrency(doc.tax_withholding_amount, companyCurrency) }}</dd>
+              </template>
+              <template v-else>
+                <dt>TDS withheld</dt><dd>-{{ formatCurrency(doc.tax_withholding_amount, companyCurrency) }}</dd>
+              </template>
+            </div>
             <!-- outstanding is tracked in company (base) currency -->
             <div class="flex justify-between" :class="Number(doc.outstanding_amount) > 0 ? 'font-medium text-red-700' : 'text-gray-500'">
               <dt>Outstanding</dt><dd>{{ formatCurrency(doc.outstanding_amount, companyCurrency) }}</dd>
             </div>
           </dl>
+          <PaymentSchedulePreview
+            v-if="doc.payment_terms_template_id"
+            :template-id="doc.payment_terms_template_id"
+            :total="Number(doc.rounded_total)"
+            :posting-date="doc.posting_date"
+            :currency="doc.currency"
+          />
+        </div>
+      </div>
+
+      <!-- Advances: apply the party's on-account payments to this invoice -->
+      <div
+        v-if="advances.length && Number(doc.outstanding_amount) > 0"
+        class="mt-4 rounded-lg border border-gray-200 bg-white p-4 shadow-sm"
+      >
+        <h2 class="text-sm font-semibold text-gray-900">Advances available</h2>
+        <p class="mb-3 text-xs text-gray-500">
+          On-account payments from this {{ partyLabel.toLowerCase() }} — allocate them to this invoice to reduce its outstanding.
+        </p>
+        <div v-for="p in advances" :key="p.payment_entry_id" class="mb-2 flex flex-wrap items-center gap-3 text-sm">
+          <span class="w-44 font-medium text-gray-800">{{ p.name }}</span>
+          <span class="w-24 text-gray-500">{{ formatDate(p.posting_date) }}</span>
+          <span class="w-40 text-gray-500">Unallocated: {{ money(p.unallocated_amount) }}</span>
+          <input
+            v-model.number="advanceAlloc[p.payment_entry_id]"
+            type="number" min="0" step="any"
+            class="form-input w-32 text-right"
+          />
+        </div>
+        <div class="mt-3 flex items-center justify-end gap-3 border-t border-gray-100 pt-3">
+          <span class="text-sm text-gray-600">Applying: <strong>{{ money(totalAdvanceToApply) }}</strong></span>
+          <button class="btn-primary" :disabled="applyingAdvance || totalAdvanceToApply <= 0" @click="applyAdvances">
+            {{ applyingAdvance ? "Applying…" : "Apply Advances" }}
+          </button>
         </div>
       </div>
     </div>
@@ -569,6 +865,13 @@ onMounted(async () => {
             </div>
           </div>
           <div>
+            <label class="form-label">{{ controlAccountLabel }}</label>
+            <select v-model="controlAccountId" class="form-input">
+              <option value="">Company default…</option>
+              <option v-for="a in controlAccountOptions" :key="a.value" :value="a.value">{{ a.label }}</option>
+            </select>
+          </div>
+          <div>
             <label class="form-label">Company</label>
             <div class="form-input bg-gray-50 text-gray-600">{{ companyName || "—" }}</div>
           </div>
@@ -625,7 +928,30 @@ onMounted(async () => {
         <CurrencySection v-model="currencyModel" :company-currency="companyCurrency" />
 
         <!-- taxes & charges -->
+        <div v-if="store.taxTemplates.length" class="max-w-sm">
+          <label class="form-label">Taxes and Charges Template</label>
+          <select v-model="taxTemplateId" class="form-input" @change="applyTaxTemplate">
+            <option value="">— Choose a template to fill the rows —</option>
+            <option v-for="t in store.taxTemplates" :key="t.id" :value="t.id">{{ t.title }}</option>
+          </select>
+        </div>
         <TaxesCharges v-model="taxes" :account-options="store.accountOptions" />
+
+        <!-- India TDS (purchase) / TCS (sales) -->
+        <div v-if="tdsCategories.length" class="mt-3 max-w-sm">
+          <label class="form-label">{{ kind === "sales" ? "TCS — Tax Collected at Source" : "TDS — Tax Withholding" }}</label>
+          <select v-model="tdsCategoryId" class="form-input">
+            <option value="">— none —</option>
+            <option v-for="c in tdsCategories" :key="c.id" :value="c.id">
+              {{ c.category_name }} ({{ Number(c.rate) }}%)
+            </option>
+          </select>
+          <p class="mt-1 text-xs text-gray-400">
+            {{ kind === "sales"
+              ? "Collected from the customer on top of the invoice and credited to the TCS payable account."
+              : "Withheld from the supplier payment and credited to the TDS payable account." }}
+          </p>
+        </div>
 
         <!-- additional discount -->
         <AdditionalDiscount v-model="discount" />
@@ -636,6 +962,7 @@ onMounted(async () => {
           :taxes="taxes"
           :discount="discount"
           :currency="currencyModel.currency || companyCurrency"
+          :withholding="withholdingPreview"
         />
 
         <p v-if="error" class="text-sm text-red-600">
@@ -665,6 +992,13 @@ onMounted(async () => {
         />
       </div>
       <div v-show="activeTab === 'Terms'" class="space-y-4">
+        <div v-if="termsTemplates.length" class="max-w-sm">
+          <label class="form-label">Terms Template</label>
+          <select v-model="termsTemplateId" class="form-input" @change="applyTermsTemplate">
+            <option value="">— Choose a template to fill the text —</option>
+            <option v-for="t in termsTemplates" :key="t.id" :value="t.id">{{ t.template_name }}</option>
+          </select>
+        </div>
         <div>
           <label class="form-label">Terms and Conditions</label>
           <textarea
@@ -673,6 +1007,23 @@ onMounted(async () => {
             class="form-input"
             placeholder="Payment terms, delivery terms, warranty…"
           ></textarea>
+        </div>
+
+        <!-- Payment Terms: pick a template, see when each part is due -->
+        <div class="border-t border-gray-100 pt-4">
+          <div class="max-w-sm">
+            <label class="form-label">Payment Terms</label>
+            <select v-model="paymentTermsTemplateId" class="form-input">
+              <option value="">— None (pay in full) —</option>
+              <option v-for="t in paymentTermsTemplates" :key="t.id" :value="t.id">{{ t.template_name }}</option>
+            </select>
+          </div>
+          <PaymentSchedulePreview
+            :template-id="paymentTermsTemplateId"
+            :total="liveGrandTotal"
+            :posting-date="postingDate"
+            :currency="currencyModel.currency || companyCurrency"
+          />
         </div>
       </div>
       <div

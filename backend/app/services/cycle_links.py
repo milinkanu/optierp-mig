@@ -47,10 +47,13 @@ class LinkSpec:
     tolerance: Decimal = QTY_TOL
 
 
+# Delivery/receipt tracking is in STOCK units (a DN/PR may use a different UOM
+# than the order) — delivered_qty/received_qty accrue stock_qty, capped at the
+# order line's stock_qty. Billing (below) stays in document qty/amount.
 SO_DELIVERY = LinkSpec(SalesOrderItem, SalesOrder, "order_id", "customer_id",
-                       "delivered_qty", "qty", "Sales Order")
+                       "delivered_qty", "stock_qty", "Sales Order")
 PO_RECEIPT = LinkSpec(PurchaseOrderItem, PurchaseOrder, "order_id", "supplier_id",
-                      "received_qty", "qty", "Purchase Order")
+                      "received_qty", "stock_qty", "Purchase Order")
 SO_BILLING = LinkSpec(SalesOrderItem, SalesOrder, "order_id", "customer_id",
                       "billed_amt", "amount", "Sales Order",
                       check_currency=True, tolerance=AMT_TOL)

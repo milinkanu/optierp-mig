@@ -40,6 +40,11 @@ const routes: RouteRecordRaw[] = [
         name: "settings",
         component: () => import("@/views/core/SettingsView.vue"),
       },
+      {
+        path: "settings/print",
+        name: "print-settings",
+        component: () => import("@/views/core/PrintSettingsView.vue"),
+      },
       // Module 02 — Accounts
       {
         path: "sales-invoices",
@@ -83,9 +88,21 @@ const routes: RouteRecordRaw[] = [
         component: () => import("@/views/accounts/JournalEntryView.vue"),
       },
       {
+        path: "journal-entries/:id",
+        name: "journal-entry-detail",
+        component: () => import("@/views/accounts/JournalEntryDetailView.vue"),
+        props: true,
+      },
+      {
         path: "payment-entries",
         name: "payment-entries",
         component: () => import("@/views/accounts/PaymentEntryView.vue"),
+      },
+      {
+        path: "payment-entries/:id",
+        name: "payment-entry-detail",
+        component: () => import("@/views/accounts/PaymentEntryDetailView.vue"),
+        props: true,
       },
       {
         path: "payment-reconciliation",
@@ -93,9 +110,44 @@ const routes: RouteRecordRaw[] = [
         component: () => import("@/views/accounts/PaymentReconciliationView.vue"),
       },
       {
+        path: "statements",
+        name: "statements",
+        component: () => import("@/views/accounts/StatementOfAccountsView.vue"),
+      },
+      {
+        path: "dunning",
+        name: "dunning",
+        component: () => import("@/views/accounts/DunningView.vue"),
+      },
+      {
+        path: "payment-requests",
+        name: "payment-requests-list",
+        component: () => import("@/views/accounts/PaymentRequestView.vue"),
+      },
+      {
         path: "budgets",
         name: "budgets",
         component: () => import("@/views/accounts/BudgetView.vue"),
+      },
+      {
+        path: "chart-of-accounts",
+        name: "chart-of-accounts",
+        component: () => import("@/views/accounts/ChartOfAccountsView.vue"),
+      },
+      {
+        path: "tax-templates",
+        name: "tax-templates",
+        component: () => import("@/views/accounts/TaxTemplateView.vue"),
+      },
+      {
+        path: "opening-invoices",
+        name: "opening-invoices",
+        component: () => import("@/views/accounts/OpeningInvoicesView.vue"),
+      },
+      {
+        path: "bank-reconciliation",
+        name: "bank-reconciliation",
+        component: () => import("@/views/accounts/BankReconciliationView.vue"),
       },
       {
         path: "reports",
@@ -104,25 +156,87 @@ const routes: RouteRecordRaw[] = [
       },
       // Module 03 — Stock
       { path: "items", name: "items", component: () => import("@/views/stock/ItemsView.vue") },
+      { path: "items/new", name: "item-new", component: () => import("@/views/stock/ItemFormView.vue") },
+      {
+        path: "items/:id",
+        name: "item-detail",
+        component: () => import("@/views/stock/ItemFormView.vue"),
+        props: true,
+      },
       {
         path: "warehouses",
         name: "warehouses",
         component: () => import("@/views/stock/WarehousesView.vue"),
+      },
+      { path: "warehouses/new", name: "warehouse-new", component: () => import("@/views/stock/WarehouseFormView.vue") },
+      {
+        path: "warehouses/:id",
+        name: "warehouse-detail",
+        component: () => import("@/views/stock/WarehouseFormView.vue"),
+        props: true,
       },
       {
         path: "stock-entries",
         name: "stock-entries",
         component: () => import("@/views/stock/StockEntryView.vue"),
       },
+      { path: "stock-entries/new", name: "stock-entry-new", component: () => import("@/views/stock/StockEntryFormView.vue") },
+      {
+        path: "stock-entries/:id",
+        name: "stock-entry-detail",
+        component: () => import("@/views/stock/StockEntryFormView.vue"),
+        props: true,
+      },
+      {
+        path: "stock-reconciliations",
+        name: "stock-reconciliations",
+        component: () => import("@/views/stock/StockReconciliationView.vue"),
+      },
+      { path: "stock-reconciliations/new", name: "stock-reconciliation-new", component: () => import("@/views/stock/StockReconciliationFormView.vue") },
+      {
+        path: "stock-reconciliations/:id",
+        name: "stock-reconciliation-detail",
+        component: () => import("@/views/stock/StockReconciliationFormView.vue"),
+        props: true,
+      },
+      {
+        path: "reorder",
+        name: "reorder",
+        component: () => import("@/views/stock/ReorderView.vue"),
+      },
+      {
+        path: "service-credits",
+        name: "service-credits",
+        component: () => import("@/views/stock/ServiceCreditView.vue"),
+      },
+      { path: "service-credits/new", name: "service-credit-new", component: () => import("@/views/stock/ServiceCreditFormView.vue") },
+      {
+        path: "service-credits/:id",
+        name: "service-credit-detail",
+        component: () => import("@/views/stock/ServiceCreditFormView.vue"),
+        props: true,
+      },
       {
         path: "material-requests",
         name: "material-requests",
         component: () => import("@/views/stock/MaterialRequestView.vue"),
       },
+      { path: "material-requests/new", name: "material-request-new", component: () => import("@/views/stock/MaterialRequestFormView.vue") },
+      {
+        path: "material-requests/:id",
+        name: "material-request-detail",
+        component: () => import("@/views/stock/MaterialRequestFormView.vue"),
+        props: true,
+      },
       {
         path: "stock-balance",
         name: "stock-balance",
         component: () => import("@/views/stock/StockBalanceView.vue"),
+      },
+      {
+        path: "serial-nos",
+        name: "serial-nos",
+        component: () => import("@/views/stock/SerialNoView.vue"),
       },
       {
         path: "purchase-receipts",

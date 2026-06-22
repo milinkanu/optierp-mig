@@ -3,7 +3,7 @@
 // on-account advances supported via an independent amount field).
 
 import { computed, onMounted, ref, watch } from "vue";
-import { useRoute } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import DataTable, { type Column } from "@/components/shared/DataTable.vue";
 import PaginationFooter from "@/components/shared/PaginationFooter.vue";
 import StatusBadge from "@/components/shared/StatusBadge.vue";
@@ -17,6 +17,8 @@ import type { InvoiceListItem, PaymentEntryListItem } from "@/types/accounts";
 
 const store = useAccountsStore();
 const route = useRoute();
+const router = useRouter();
+const openDetail = (row: PaymentEntryListItem): void => void router.push(`/payment-entries/${row.id}`);
 const companyCurrency = useCompanyCurrency();
 const { items, total, page, pageSize, loading, fetchList, goToPage } =
   useList<PaymentEntryListItem>("/payment-entries");
@@ -247,9 +249,9 @@ onMounted(async () => {
       <p v-if="error" class="mt-2 text-sm text-red-600">{{ error.detail }}</p>
     </form>
 
-    <DataTable :columns="columns" :rows="items" :loading="loading">
+    <DataTable :columns="columns" :rows="items" :loading="loading" @row-click="openDetail">
       <template #cell-name="{ row }">
-        <span class="font-medium text-gray-900">{{ row.name }}</span>
+        <span class="font-medium text-primary">{{ row.name }}</span>
       </template>
       <template #cell-party="{ row }">
         {{ partyName(row) }}

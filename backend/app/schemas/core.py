@@ -325,6 +325,8 @@ class AccountListItem(ORMModel):
     account_type: str | None
     is_group: bool
     account_currency: str | None
+    freeze_account: bool
+    disabled: bool
     path: str
 
 

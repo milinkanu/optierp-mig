@@ -9,10 +9,12 @@ Transactions: Stock Entry, Material Request, Purchase Receipt, Delivery Note.
 Assumptions (flagged for manual review):
   * Valuation: Moving Average implemented; FIFO is a column value reserved for
     later (creating a FIFO item raises a validation error for now).
-  * Batch / Serial No / Landed Cost Voucher / Stock Reconciliation are
-    deferred — not part of the Phase 3 deliverable list.
+  * Stock Reconciliation shipped (Phase 1); landed cost is handled as charges on
+    the Purchase Receipt (Phase 3, no separate Landed Cost Voucher). Batch /
+    Serial No remain deferred.
   * Purchase Receipts / Delivery Notes carry no tax rows; taxes apply on the
     invoice (orders DO carry taxes so their grand totals match invoices).
+    DN/PR returns (Phase 3) mirror this — they post only stock + COGS/SRBNB GL.
 """
 
 import uuid
@@ -40,6 +42,7 @@ from app.models.base import Base, CompanyScopedMixin, DocumentMixin
 VALUATION_METHODS = ("Moving Average", "FIFO")
 STOCK_ENTRY_PURPOSES = ("Material Receipt", "Material Issue", "Material Transfer")
 MATERIAL_REQUEST_TYPES = ("Purchase", "Material Transfer", "Material Issue")
+STOCK_RECONCILIATION_PURPOSES = ("Opening Stock", "Stock Reconciliation")
 
 
 # ============================================================================
@@ -108,9 +111,25 @@ class Item(Base, DocumentMixin, CompanyScopedMixin):
     stock_uom: Mapped[str] = mapped_column(
         String(140), nullable=False, default="Nos", server_default=text("'Nos'")
     )
+    # Multi-UOM (Phase 4): optional buy/sell UOMs with a conversion factor to the
+    # stock UOM (stock units per 1 of that UOM, e.g. Box -> 12 Nos). stock_uom is
+    # implicitly factor 1. A line may use stock_uom, purchase_uom or sales_uom.
+    purchase_uom: Mapped[str | None] = mapped_column(String(140))
+    purchase_uom_factor: Mapped[Decimal] = mapped_column(
+        Numeric(21, 9), nullable=False, default=1, server_default=text("1")
+    )
+    sales_uom: Mapped[str | None] = mapped_column(String(140))
+    sales_uom_factor: Mapped[Decimal] = mapped_column(
+        Numeric(21, 9), nullable=False, default=1, server_default=text("1")
+    )
     is_stock_item: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"))
     is_sales_item: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"))
     is_purchase_item: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"))
+    # Tracking (Phase 5): serialised units (warranty/RMA) tracked individually in
+    # the serial_nos master; batched items label movements with a lot batch_no
+    # (with optional expiry). Either way valuation stays Moving Average.
+    has_serial_no: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+    has_batch_no: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
     valuation_method: Mapped[str] = mapped_column(
         String(20), nullable=False, default="Moving Average", server_default=text("'Moving Average'")
     )
@@ -128,6 +147,10 @@ class Item(Base, DocumentMixin, CompanyScopedMixin):
     )
     expense_account_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("accounts.id")
+    )
+    # Optional per-item GST override (Item Tax Template) applied on invoices.
+    item_tax_template_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("item_tax_templates.id")
     )
     default_warehouse_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("warehouses.id")
@@ -180,6 +203,82 @@ class ItemPrice(Base, DocumentMixin, CompanyScopedMixin):
     currency: Mapped[str | None] = mapped_column(String(3))
     valid_from: Mapped[date | None] = mapped_column(Date)
     valid_upto: Mapped[date | None] = mapped_column(Date)
+
+
+class SerialNo(Base, DocumentMixin, CompanyScopedMixin):
+    """Per-unit serial number (Phase 5) for warranty/RMA tracking.
+
+    Created ``In Stock`` on a receipt, flips to ``Delivered`` on a delivery, and
+    reverts on a return/cancel; ``Returned`` means it left our stock other than to
+    a customer (back to supplier, or issued/consumed). Availability for delivery /
+    issue / transfer / supplier-return = status ``In Stock`` at the right warehouse.
+    Tracking layer only — valuation stays Moving Average on the item's Bin.
+    """
+
+    __tablename__ = "serial_nos"
+    __table_args__ = (
+        UniqueConstraint("company_id", "serial_no", name="uq_serial_no"),
+        Index("ix_serial_nos_company_item_status", "company_id", "item_id", "status"),
+    )
+
+    serial_no: Mapped[str] = mapped_column(String(140), nullable=False)
+    item_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("items.id"), nullable=False)
+    warehouse_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("warehouses.id")
+    )
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="In Stock", server_default=text("'In Stock'")
+    )
+    purchase_voucher_type: Mapped[str | None] = mapped_column(String(60))
+    purchase_voucher_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    delivery_voucher_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    warranty_expiry: Mapped[date | None] = mapped_column(Date)
+
+    item = relationship("Item", lazy="joined", viewonly=True)
+
+    @property
+    def item_code(self) -> str | None:
+        return self.item.item_code if self.item else None
+
+    @property
+    def item_name(self) -> str | None:
+        return self.item.item_name if self.item else None
+
+
+SERIAL_NO_STATUSES = ("In Stock", "Delivered", "Returned")
+
+
+class Batch(Base, DocumentMixin, CompanyScopedMixin):
+    """Lot / batch (Phase 5B). Descriptor-backed master (free CRUD at /m/batch).
+
+    Unlike a serial, a batch has NO per-unit status — it is just a label on a
+    stock movement. The transaction line carries the ``batch_no``; this master
+    holds the batch's item and optional ``expiry_date``. Delivering past the
+    expiry is blocked at submit. Valuation stays Moving Average regardless.
+    """
+
+    __tablename__ = "batches"
+    __table_args__ = (
+        # unique per (company, item) — the resolver keys on item too, so two SKUs may
+        # legitimately reuse a supplier's lot string
+        UniqueConstraint("company_id", "item_id", "batch_no", name="uq_batch_no"),
+        Index("ix_batches_company_item", "company_id", "item_id"),
+    )
+
+    batch_no: Mapped[str] = mapped_column(String(140), nullable=False)
+    item_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("items.id"), nullable=False)
+    expiry_date: Mapped[date | None] = mapped_column(Date)
+    disabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+
+    item = relationship("Item", lazy="joined", viewonly=True)
+
+    @property
+    def item_code(self) -> str | None:
+        return self.item.item_code if self.item else None
+
+    @property
+    def item_name(self) -> str | None:
+        return self.item.item_name if self.item else None
 
 
 # ============================================================================
@@ -326,10 +425,18 @@ class StockEntryItem(Base, DocumentMixin):
     )
     qty: Mapped[Decimal] = mapped_column(Numeric(21, 6), nullable=False)
     uom: Mapped[str | None] = mapped_column(String(140))
+    conversion_factor: Mapped[Decimal] = mapped_column(
+        Numeric(21, 9), nullable=False, default=1, server_default=text("1")
+    )
+    stock_qty: Mapped[Decimal] = mapped_column(
+        Numeric(21, 6), nullable=False, default=0, server_default=text("0")
+    )  # qty in stock UOM
     basic_rate: Mapped[Decimal] = mapped_column(
         Numeric(21, 6), nullable=False, default=0, server_default=text("0")
     )  # incoming rate for receipts; ignored for issues (valuation applies)
     amount: Mapped[Decimal] = mapped_column(Numeric(21, 6), nullable=False, default=0, server_default=text("0"))
+    serial_nos: Mapped[str | None] = mapped_column(Text)  # newline-separated, count == stock_qty
+    batch_no: Mapped[str | None] = mapped_column(String(140))  # lot label (batched items)
 
     stock_entry: Mapped[StockEntry] = relationship(back_populates="items")
     item = relationship("Item", lazy="joined", viewonly=True)
@@ -379,9 +486,15 @@ class MaterialRequestItem(Base, DocumentMixin):
     warehouse_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("warehouses.id"))
     qty: Mapped[Decimal] = mapped_column(Numeric(21, 6), nullable=False)
     uom: Mapped[str | None] = mapped_column(String(140))
+    conversion_factor: Mapped[Decimal] = mapped_column(
+        Numeric(21, 9), nullable=False, default=1, server_default=text("1")
+    )
+    stock_qty: Mapped[Decimal] = mapped_column(
+        Numeric(21, 6), nullable=False, default=0, server_default=text("0")
+    )  # qty in stock UOM
     ordered_qty: Mapped[Decimal] = mapped_column(
         Numeric(21, 6), nullable=False, default=0, server_default=text("0")
-    )
+    )  # accrued from POs, in stock UOM
     schedule_date: Mapped[date | None] = mapped_column(Date)
 
     material_request: Mapped[MaterialRequest] = relationship(back_populates="items")
@@ -420,6 +533,13 @@ class PurchaseReceipt(Base, DocumentMixin, CompanyScopedMixin, VoucherMixin):
     set_warehouse_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("warehouses.id")
     )
+    # Returns (Phase 3): a return PR sends goods back to the supplier — SLE out /
+    # reverse SRBNB. return_against_id self-links to the original receipt.
+    is_return: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+    return_against_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("purchase_receipts.id")
+    )
+    supplier_delivery_note: Mapped[str | None] = mapped_column(String(140))  # supplier's DN ref
     total_qty: Mapped[Decimal] = mapped_column(Numeric(21, 6), nullable=False, default=0, server_default=text("0"))
     base_total: Mapped[Decimal] = mapped_column(Numeric(21, 6), nullable=False, default=0, server_default=text("0"))
     grand_total: Mapped[Decimal] = mapped_column(
@@ -437,6 +557,9 @@ class PurchaseReceipt(Base, DocumentMixin, CompanyScopedMixin, VoucherMixin):
 
     items: Mapped[list["PurchaseReceiptItem"]] = relationship(
         back_populates="receipt", cascade="all, delete-orphan", order_by="PurchaseReceiptItem.idx"
+    )
+    charges: Mapped[list["PurchaseReceiptCharge"]] = relationship(
+        back_populates="receipt", cascade="all, delete-orphan", order_by="PurchaseReceiptCharge.idx"
     )
     supplier = relationship("Supplier", lazy="joined", viewonly=True)
 
@@ -456,13 +579,27 @@ class PurchaseReceiptItem(Base, DocumentMixin):
     warehouse_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("warehouses.id"), nullable=False
     )
-    qty: Mapped[Decimal] = mapped_column(Numeric(21, 6), nullable=False)
+    qty: Mapped[Decimal] = mapped_column(Numeric(21, 6), nullable=False)  # ACCEPTED qty (txn UOM)
     uom: Mapped[str | None] = mapped_column(String(140))
+    conversion_factor: Mapped[Decimal] = mapped_column(
+        Numeric(21, 9), nullable=False, default=1, server_default=text("1")
+    )
+    stock_qty: Mapped[Decimal] = mapped_column(
+        Numeric(21, 6), nullable=False, default=0, server_default=text("0")
+    )  # accepted qty in stock UOM
     rate: Mapped[Decimal] = mapped_column(Numeric(21, 6), nullable=False, default=0, server_default=text("0"))
     amount: Mapped[Decimal] = mapped_column(Numeric(21, 6), nullable=False, default=0, server_default=text("0"))
     base_rate: Mapped[Decimal] = mapped_column(Numeric(21, 6), nullable=False, default=0, server_default=text("0"))
     base_amount: Mapped[Decimal] = mapped_column(
         Numeric(21, 6), nullable=False, default=0, server_default=text("0")
+    )
+    # QC split (Phase 3): rejected goods are received into a separate warehouse and
+    # valued, but not billed; PO received_qty accrues qty + rejected_qty.
+    rejected_qty: Mapped[Decimal] = mapped_column(
+        Numeric(21, 6), nullable=False, default=0, server_default=text("0")
+    )
+    rejected_warehouse_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("warehouses.id")
     )
     purchase_order_item_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("purchase_order_items.id", use_alter=True, name="fk_pri_po_item")
@@ -470,6 +607,8 @@ class PurchaseReceiptItem(Base, DocumentMixin):
     billed_qty: Mapped[Decimal] = mapped_column(
         Numeric(21, 6), nullable=False, default=0, server_default=text("0")
     )
+    serial_nos: Mapped[str | None] = mapped_column(Text)  # newline-separated, count == stock_qty
+    batch_no: Mapped[str | None] = mapped_column(String(140))  # lot label (batched items)
 
     receipt: Mapped[PurchaseReceipt] = relationship(back_populates="items")
     item = relationship("Item", lazy="joined", viewonly=True)
@@ -481,6 +620,32 @@ class PurchaseReceiptItem(Base, DocumentMixin):
     @property
     def item_name(self) -> str | None:
         return self.item.item_name if self.item else None
+
+
+class PurchaseReceiptCharge(Base, DocumentMixin):
+    """Landed-cost line on a Purchase Receipt (freight / customs / insurance).
+
+    Apportioned by item value into the incoming valuation at submit (no separate
+    Landed Cost Voucher); ``account_id`` is the charge clearing/expense account
+    credited on submit (e.g. "Expenses Included In Valuation"), later cleared by
+    the actual freight bill.
+    """
+
+    __tablename__ = "purchase_receipt_charges"
+
+    receipt_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("purchase_receipts.id", ondelete="CASCADE"), nullable=False
+    )
+    idx: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default=text("0"))
+    description: Mapped[str] = mapped_column(String(180), nullable=False)
+    account_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("accounts.id"), nullable=False
+    )
+    amount: Mapped[Decimal] = mapped_column(
+        Numeric(21, 6), nullable=False, default=0, server_default=text("0")
+    )  # in the receipt's document currency
+
+    receipt: Mapped[PurchaseReceipt] = relationship(back_populates="charges")
 
 
 class DeliveryNote(Base, DocumentMixin, CompanyScopedMixin, VoucherMixin):
@@ -506,6 +671,22 @@ class DeliveryNote(Base, DocumentMixin, CompanyScopedMixin, VoucherMixin):
     )
     set_warehouse_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("warehouses.id")
+    )
+    # Returns (Phase 3): a return DN takes goods back into stock — SLE in /
+    # reverse COGS. return_against_id self-links to the original delivery.
+    is_return: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+    return_against_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("delivery_notes.id")
+    )
+    # Address & Contact (party is the customer; mirrors order/invoice A&C links)
+    customer_address_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("addresses.id", ondelete="SET NULL")
+    )
+    shipping_address_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("addresses.id", ondelete="SET NULL")
+    )
+    contact_person_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("contacts.id", ondelete="SET NULL")
     )
     total_qty: Mapped[Decimal] = mapped_column(Numeric(21, 6), nullable=False, default=0, server_default=text("0"))
     base_total: Mapped[Decimal] = mapped_column(Numeric(21, 6), nullable=False, default=0, server_default=text("0"))
@@ -545,6 +726,12 @@ class DeliveryNoteItem(Base, DocumentMixin):
     )
     qty: Mapped[Decimal] = mapped_column(Numeric(21, 6), nullable=False)
     uom: Mapped[str | None] = mapped_column(String(140))
+    conversion_factor: Mapped[Decimal] = mapped_column(
+        Numeric(21, 9), nullable=False, default=1, server_default=text("1")
+    )
+    stock_qty: Mapped[Decimal] = mapped_column(
+        Numeric(21, 6), nullable=False, default=0, server_default=text("0")
+    )  # qty in stock UOM
     rate: Mapped[Decimal] = mapped_column(Numeric(21, 6), nullable=False, default=0, server_default=text("0"))
     amount: Mapped[Decimal] = mapped_column(Numeric(21, 6), nullable=False, default=0, server_default=text("0"))
     base_rate: Mapped[Decimal] = mapped_column(Numeric(21, 6), nullable=False, default=0, server_default=text("0"))
@@ -557,6 +744,8 @@ class DeliveryNoteItem(Base, DocumentMixin):
     billed_qty: Mapped[Decimal] = mapped_column(
         Numeric(21, 6), nullable=False, default=0, server_default=text("0")
     )
+    serial_nos: Mapped[str | None] = mapped_column(Text)  # newline-separated, count == stock_qty
+    batch_no: Mapped[str | None] = mapped_column(String(140))  # lot label (batched items)
 
     delivery_note: Mapped[DeliveryNote] = relationship(back_populates="items")
     item = relationship("Item", lazy="joined", viewonly=True)
@@ -570,6 +759,182 @@ class DeliveryNoteItem(Base, DocumentMixin):
         return self.item.item_name if self.item else None
 
 
+class StockReconciliation(Base, DocumentMixin, CompanyScopedMixin, VoucherMixin):
+    """Source: erpnext/stock/doctype/stock_reconciliation.
+
+    Sets each (item, warehouse) row to an absolute target qty and valuation
+    rate; on submit it posts only the DIFFERENCE vs the current Bin to the
+    stock ledger and (under perpetual inventory) to the Stock Adjustment
+    account. This is how opening balances and physical-count corrections enter
+    the system, and the documented escape hatch when a cancellation is blocked
+    because stock was since consumed at a different valuation.
+
+    ``purpose`` is a label only ("Opening Stock" vs "Stock Reconciliation") —
+    both behave identically (post the difference). We deliberately do NOT route
+    Opening Stock to a separate Temporary Opening account (kept simple).
+    """
+
+    __tablename__ = "stock_reconciliations"
+    __table_args__ = (
+        UniqueConstraint("company_id", "name", name="uq_stock_reconciliation_name"),
+        Index("ix_stock_reconciliations_company_docstatus", "company_id", "docstatus"),
+    )
+
+    purpose: Mapped[str] = mapped_column(
+        String(40), nullable=False, default="Stock Reconciliation",
+        server_default=text("'Stock Reconciliation'"),
+    )
+    set_warehouse_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("warehouses.id")
+    )
+    difference_amount: Mapped[Decimal] = mapped_column(
+        Numeric(21, 6), nullable=False, default=0, server_default=text("0")
+    )  # net value posted to Stock Adjustment on submit
+
+    items: Mapped[list["StockReconciliationItem"]] = relationship(
+        back_populates="reconciliation",
+        cascade="all, delete-orphan",
+        order_by="StockReconciliationItem.idx",
+    )
+
+
+class StockReconciliationItem(Base, DocumentMixin):
+    __tablename__ = "stock_reconciliation_items"
+
+    reconciliation_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("stock_reconciliations.id", ondelete="CASCADE"), nullable=False
+    )
+    idx: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default=text("0"))
+    item_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("items.id"), nullable=False)
+    warehouse_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("warehouses.id"), nullable=False
+    )
+    qty: Mapped[Decimal] = mapped_column(Numeric(21, 6), nullable=False)  # target absolute qty
+    uom: Mapped[str | None] = mapped_column(String(140))
+    valuation_rate: Mapped[Decimal] = mapped_column(
+        Numeric(21, 6), nullable=False, default=0, server_default=text("0")
+    )  # target absolute rate (0 = resolve current/item rate at submit)
+    # snapshots captured at submit (before → after, for transparency)
+    current_qty: Mapped[Decimal] = mapped_column(
+        Numeric(21, 6), nullable=False, default=0, server_default=text("0")
+    )
+    current_valuation_rate: Mapped[Decimal] = mapped_column(
+        Numeric(21, 6), nullable=False, default=0, server_default=text("0")
+    )
+    amount_difference: Mapped[Decimal] = mapped_column(
+        Numeric(21, 6), nullable=False, default=0, server_default=text("0")
+    )
+
+    reconciliation: Mapped[StockReconciliation] = relationship(back_populates="items")
+    item = relationship("Item", lazy="joined", viewonly=True)
+
+    @property
+    def item_code(self) -> str | None:
+        return self.item.item_code if self.item else None
+
+    @property
+    def item_name(self) -> str | None:
+        return self.item.item_name if self.item else None
+
+
+SERVICE_CREDIT_STATUSES = ("Active", "Exhausted", "Expired")
+
+
+class ServiceCredit(Base, DocumentMixin, CompanyScopedMixin):
+    """A prepaid block of a *service* measured in units (e.g. 100 hours of
+    support / AMC bought up front). Services aren't stock items, so they have no
+    Bin; this is a dedicated, lightweight ledger that tracks purchased vs
+    consumed units and exposes the remaining balance (the live credit).
+
+    Drawn down by ``ServiceCreditUsage`` rows; ``consumed_qty`` is maintained as
+    those are added. Deliberately simpler than the stock ledger — no warehouse,
+    no valuation — because a service credit is just a depleting counter.
+    """
+
+    __tablename__ = "service_credits"
+    __table_args__ = (
+        UniqueConstraint("company_id", "name", name="uq_service_credit_name"),
+        Index("ix_service_credits_company", "company_id"),
+    )
+
+    name: Mapped[str] = mapped_column(String(140), nullable=False)
+    item_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("items.id"), nullable=False)
+    supplier_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("suppliers.id")
+    )
+    purchase_date: Mapped[date] = mapped_column(Date, nullable=False)
+    purchased_qty: Mapped[Decimal] = mapped_column(Numeric(21, 6), nullable=False)
+    consumed_qty: Mapped[Decimal] = mapped_column(
+        Numeric(21, 6), nullable=False, default=0, server_default=text("0")
+    )
+    rate: Mapped[Decimal] = mapped_column(
+        Numeric(21, 6), nullable=False, default=0, server_default=text("0")
+    )
+    uom: Mapped[str | None] = mapped_column(String(140))
+    valid_upto: Mapped[date | None] = mapped_column(Date)
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="Active", server_default=text("'Active'")
+    )
+    remarks: Mapped[str | None] = mapped_column(Text)
+    # Accounting: the purchase (prepaid asset) is booked by the linked Purchase
+    # Invoice; each usage posts Dr expense / Cr prepaid for qty*rate.
+    purchase_invoice_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("purchase_invoices.id", ondelete="SET NULL")
+    )
+    prepaid_account_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("accounts.id")
+    )
+    expense_account_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("accounts.id")
+    )
+    cost_center_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("cost_centers.id")
+    )
+
+    usages: Mapped[list["ServiceCreditUsage"]] = relationship(
+        back_populates="service_credit",
+        cascade="all, delete-orphan",
+        order_by="ServiceCreditUsage.idx",
+    )
+    item = relationship("Item", lazy="joined", viewonly=True)
+    supplier = relationship("Supplier", lazy="joined", viewonly=True)
+    purchase_invoice = relationship("PurchaseInvoice", lazy="joined", viewonly=True)
+
+    @property
+    def purchase_invoice_name(self) -> str | None:
+        return self.purchase_invoice.name if self.purchase_invoice else None
+
+    @property
+    def balance_qty(self) -> Decimal:
+        return self.purchased_qty - self.consumed_qty
+
+    @property
+    def item_code(self) -> str | None:
+        return self.item.item_code if self.item else None
+
+    @property
+    def item_name(self) -> str | None:
+        return self.item.item_name if self.item else None
+
+    @property
+    def supplier_name(self) -> str | None:
+        return self.supplier.supplier_name if self.supplier else None
+
+
+class ServiceCreditUsage(Base, DocumentMixin):
+    __tablename__ = "service_credit_usages"
+
+    service_credit_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("service_credits.id", ondelete="CASCADE"), nullable=False
+    )
+    idx: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default=text("0"))
+    usage_date: Mapped[date] = mapped_column(Date, nullable=False)
+    qty: Mapped[Decimal] = mapped_column(Numeric(21, 6), nullable=False)
+    remarks: Mapped[str | None] = mapped_column(Text)
+
+    service_credit: Mapped[ServiceCredit] = relationship(back_populates="usages")
+
+
 # Re-export for services that need the mixin reference
 __all__ = [
     "Bin",
@@ -581,14 +946,24 @@ __all__ = [
     "ItemPrice",
     "MaterialRequest",
     "MaterialRequestItem",
+    "Batch",
     "PriceList",
     "PurchaseReceipt",
     "PurchaseReceiptItem",
+    "PurchaseReceiptCharge",
+    "SerialNo",
+    "SERIAL_NO_STATUSES",
     "StockEntry",
     "StockEntryItem",
     "StockLedgerEntry",
+    "StockReconciliation",
+    "StockReconciliationItem",
+    "ServiceCredit",
+    "ServiceCreditUsage",
     "Warehouse",
     "MATERIAL_REQUEST_TYPES",
+    "SERVICE_CREDIT_STATUSES",
     "STOCK_ENTRY_PURPOSES",
+    "STOCK_RECONCILIATION_PURPOSES",
     "VALUATION_METHODS",
 ]

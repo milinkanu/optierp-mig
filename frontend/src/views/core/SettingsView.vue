@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref } from "vue";
+import { RouterLink } from "vue-router";
 import { brand } from "@/brand";
 import { useNamingSeries } from "@/composables/useNamingSeries";
 
@@ -44,6 +45,18 @@ const { nextName, loading, error, preview } = useNamingSeries();
           <dd><span class="inline-block h-5 w-10 rounded" :style="{ background: brand.secondary_color }" /></dd>
         </div>
       </dl>
+    </section>
+
+    <section class="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
+      <div class="flex items-center justify-between">
+        <div>
+          <h2 class="text-sm font-semibold text-gray-900">Document Branding &amp; Print</h2>
+          <p class="mt-1 text-sm text-gray-500">
+            Logo, addresses, bank details, signatory, theme and what shows on PDFs.
+          </p>
+        </div>
+        <RouterLink to="/settings/print" class="btn-secondary">Configure</RouterLink>
+      </div>
     </section>
   </div>
 </template>

@@ -423,3 +423,23 @@ class NotificationTemplate(Base, DocumentMixin):
     body: Mapped[str] = mapped_column(Text, nullable=False)
     is_html: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
     channel: Mapped[str] = mapped_column(String(20), default="email", server_default=text("'email'"))
+
+
+class EmailLog(Base, DocumentMixin, CompanyScopedMixin):
+    """Send audit trail — one row per outbound email (sent or failed).
+
+    Written by ``services.email.send_document_email`` so a user can see what was
+    emailed, to whom, when, and whether it succeeded. Company-scoped; reads filter
+    by ``company_id`` explicitly (mirrors ``bank_transactions`` — no RLS policy).
+    """
+
+    __tablename__ = "email_logs"
+    __table_args__ = (Index("ix_email_logs_reference", "reference_doctype", "reference_id"),)
+
+    to_addresses: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    subject: Mapped[str] = mapped_column(String(300), nullable=False)
+    reference_doctype: Mapped[str | None] = mapped_column(String(100))
+    reference_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    status: Mapped[str] = mapped_column(String(20), nullable=False)  # Sent | Failed
+    error_message: Mapped[str | None] = mapped_column(Text)
+    sent_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))

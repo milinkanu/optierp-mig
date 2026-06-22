@@ -5,6 +5,8 @@
 import { computed, onMounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import StatusBadge from "@/components/shared/StatusBadge.vue";
+import PrintButton from "@/components/shared/PrintButton.vue";
+import SendEmailButton from "@/components/shared/SendEmailButton.vue";
 import ItemsGrid, { type GridColumn } from "@/components/shared/ItemsGrid.vue";
 import GetItemsFrom, { type ItemSource } from "@/components/shared/GetItemsFrom.vue";
 import DateField from "@/components/shared/DateField.vue";
@@ -12,6 +14,8 @@ import TaxesCharges from "@/components/shared/TaxesCharges.vue";
 import AdditionalDiscount, { type DiscountModel } from "@/components/shared/AdditionalDiscount.vue";
 import CurrencySection, { type CurrencyModel } from "@/components/shared/CurrencySection.vue";
 import DocumentTotals from "@/components/shared/DocumentTotals.vue";
+import PaymentSchedulePreview from "@/components/shared/PaymentSchedulePreview.vue";
+import { computeTotals } from "@/utils/totals";
 import DataEntry, { type ImportedRow } from "@/components/shared/DataEntry.vue";
 import AddressContactTab, { type AddressContactModel } from "@/components/shared/AddressContactTab.vue";
 import AddressContactSummary from "@/components/shared/AddressContactSummary.vue";
@@ -56,6 +60,24 @@ const extraDate = ref(""); // delivery_date (SO) / schedule_date (PO) / valid_ti
 const remarks = ref("");
 const items = ref<OrderItemIn[]>([{ item_id: "", qty: 1, rate: null }]);
 const taxes = ref<TaxRowIn[]>([]);
+const taxTemplateId = ref("");
+
+// Picking a Taxes & Charges template fills the editable rows (ERPNext model:
+// the rows are authoritative and remain editable; we don't send the template id).
+function applyTaxTemplate(): void {
+  const tpl = accounts.taxTemplates.find((t) => t.id === taxTemplateId.value);
+  if (!tpl) return;
+  taxes.value = tpl.details.map((d) => ({
+    charge_type: d.charge_type,
+    rate: Number(d.rate),
+    tax_amount: Number(d.tax_amount),
+    row_id: d.row_id,
+    account_head_id: d.account_head_id,
+    description: d.description,
+    add_deduct_tax: d.add_deduct_tax,
+    category: d.category,
+  }));
+}
 const discount = ref<DiscountModel>({
   apply_discount_on: "Grand Total",
   additional_discount_percentage: 0,
@@ -63,6 +85,52 @@ const discount = ref<DiscountModel>({
 });
 const currencyModel = ref<CurrencyModel>({ currency: "", conversion_rate: 1 });
 const terms = ref("");
+const termsTemplates = ref<Array<{ id: string; template_name: string; terms: string | null }>>([]);
+const termsTemplateId = ref("");
+
+// Payment Terms (the payment split). We store only the chosen template id; the
+// due-date breakdown is derived live from the grand total + posting date.
+const paymentTermsTemplateId = ref("");
+const paymentTermsTemplates = ref<Array<{ id: string; template_name: string }>>([]);
+async function fetchPaymentTermsTemplates(): Promise<void> {
+  try {
+    const resp = await api.get<{ items: Array<{ id: string; template_name: string }> }>(
+      "/registry/payment-terms-template",
+      { params: { page_size: 200 } },
+    );
+    paymentTermsTemplates.value = resp.data.items ?? [];
+  } catch {
+    paymentTermsTemplates.value = [];
+  }
+}
+// Live grand total for the schedule preview (server recomputes authoritatively).
+const liveGrandTotal = computed(() => {
+  const t = computeTotals(
+    items.value as unknown as Parameters<typeof computeTotals>[0],
+    taxes.value as unknown as Parameters<typeof computeTotals>[1],
+    discount.value as unknown as Parameters<typeof computeTotals>[2],
+  );
+  return t.roundedTotal || t.grandTotal;
+});
+
+// Picking a Terms Template fills the editable Terms text (stays editable; the
+// template id is not stored on the document — only the resolved text is).
+async function fetchTermsTemplates(): Promise<void> {
+  try {
+    const resp = await api.get<{ items: Array<{ id: string; template_name: string; terms: string | null }> }>(
+      "/registry/terms-template",
+      { params: { page_size: 200 } },
+    );
+    termsTemplates.value = resp.data.items ?? [];
+  } catch {
+    termsTemplates.value = [];
+  }
+}
+function applyTermsTemplate(): void {
+  const tpl = termsTemplates.value.find((t) => t.id === termsTemplateId.value);
+  if (tpl) terms.value = tpl.terms ?? "";
+}
+
 const poNo = ref("");
 const poDate = ref("");
 const setWarehouseId = ref(""); // Set Source/Target Warehouse (SO/PO)
@@ -73,6 +141,37 @@ const addressContact = ref<AddressContactModel>({
 });
 const quotationId = ref<string | null>(null);
 const supplierQuotationId = ref<string | null>(null);
+
+// More Info (selling only): Campaign / Source / Territory / Customer Group / Sales Partner
+type Opt = { value: string; label: string };
+const moreInfo = ref({
+  campaign_id: "", source_id: "", territory_id: "", customer_group_id: "", sales_partner_id: "",
+});
+const moreInfoFields = [
+  { key: "campaign_id", label: "Campaign", endpoint: "/registry/campaign", title: "campaign_name" },
+  { key: "source_id", label: "Source", endpoint: "/registry/utm-source", title: "utm_source_name" },
+  { key: "territory_id", label: "Territory", endpoint: "/registry/territory", title: "territory_name" },
+  { key: "customer_group_id", label: "Customer Group", endpoint: "/registry/customer-group", title: "customer_group_name" },
+  { key: "sales_partner_id", label: "Sales Partner", endpoint: "/registry/sales-partner", title: "partner_name" },
+] as const;
+const moreInfoOptions = ref<Record<string, Opt[]>>({});
+
+async function fetchMoreInfoMasters(): Promise<void> {
+  if (cfg.value.buying) return; // selling-only section (ERPNext PO More Info differs)
+  const results = await Promise.all(
+    moreInfoFields.map((f) =>
+      api
+        .get<{ items: Array<Record<string, string>> }>(f.endpoint, { params: { page_size: 200 } })
+        .then((r) => r.data.items ?? [])
+        .catch(() => []),
+    ),
+  );
+  const next: Record<string, Opt[]> = {};
+  moreInfoFields.forEach((f, i) => {
+    next[f.key] = results[i].map((row) => ({ value: row.id, label: row[f.title] }));
+  });
+  moreInfoOptions.value = next;
+}
 
 const extraDateLabel = computed(() =>
   props.kind === "sales-order" ? "Delivery Date"
@@ -89,9 +188,9 @@ const tabs = ["Details", "Address & Contact", "Terms", "More Info"];
 const orderType = ref("Sales");
 
 const META = {
-  quotation: { module: "Selling", series: "SAL-QTN-.YYYY.-", newRoute: "quotation-new" },
-  "sales-order": { module: "Selling", series: "SAL-ORD-.YYYY.-", newRoute: "sales-order-new" },
-  "purchase-order": { module: "Buying", series: "PUR-ORD-.YYYY.-", newRoute: "purchase-order-new" },
+  quotation: { module: "Sales", series: "SAL-QTN-.YYYY.-", newRoute: "quotation-new" },
+  "sales-order": { module: "Sales", series: "SAL-ORD-.YYYY.-", newRoute: "sales-order-new" },
+  "purchase-order": { module: "Purchases", series: "PUR-ORD-.YYYY.-", newRoute: "purchase-order-new" },
 } as const;
 const meta = computed(() => META[props.kind]);
 
@@ -99,13 +198,21 @@ const warehouseOptions = computed(() =>
   stock.leafWarehouses.map((w) => ({ value: w.id, label: w.warehouse_name })),
 );
 
+function stockQtyLabel(row: Record<string, unknown>): string {
+  const f = stock.uomFactor(row.item_id as string, row.uom as string | undefined);
+  if (f === 1) return "";
+  return String(Math.round((Number(row.qty) || 0) * f * 1000) / 1000);
+}
+
 const gridColumns = computed<GridColumn[]>(() => {
   const cols: GridColumn[] = [{ key: "item_id", label: "Item / Service", type: "item", required: true }];
   if (props.kind === "sales-order") cols.push({ key: "delivery_date", label: "Delivery Date", type: "date" });
   if (props.kind === "purchase-order") cols.push({ key: "schedule_date", label: "Required By", type: "date" });
   cols.push({ key: "qty", label: "Quantity", type: "number", align: "right", required: true });
-  cols.push({ key: "uom", label: "UOM", type: "text" });
+  cols.push({ key: "uom", label: "UOM", type: "select", optionsKey: "_uomOptions" });
+  cols.push({ key: "stock_qty", label: "Stock Qty", type: "computed", align: "right", compute: stockQtyLabel });
   cols.push({ key: "rate", label: "Rate", type: "number", align: "right" });
+  cols.push({ key: "discount_percentage", label: "Discount %", type: "number", align: "right" });
   if (props.kind === "sales-order" || props.kind === "purchase-order")
     cols.push({ key: "warehouse_id", label: "Warehouse", type: "select", options: warehouseOptions.value });
   return cols;
@@ -130,27 +237,38 @@ const gridRows = computed<Record<string, unknown>[]>({
 });
 
 function newItemRow(): Record<string, unknown> {
-  return { item_id: "", qty: 1, rate: null, uom: "", _rowKey: rowKey() };
+  return { item_id: "", qty: 1, rate: null, uom: "", discount_percentage: 0, _uomOptions: [], _rowKey: rowKey() };
 }
 
 async function onItemChange(index: number): Promise<void> {
   const row = items.value[index];
   if (!row?.item_id) return;
   const item = stock.items.find((it) => it.id === row.item_id);
+  // default to the buy/sell UOM for the document kind; rate is per that UOM
+  const uom =
+    (cfg.value.buying ? item?.purchase_uom : item?.sales_uom) || item?.stock_uom || "";
+  const factor = stock.uomFactor(row.item_id, uom);
   let rate: number | null = row.rate ?? null;
   try {
     const resolved = await stock.resolveItemRate(row.item_id, cfg.value.buying);
-    rate = Number(resolved.rate);
+    rate = Number(resolved.rate) * factor; // resolved is per stock UOM
   } catch {
     // best-effort; backend re-resolves on save
   }
   items.value = items.value.map((r, i) =>
-    i === index ? { ...r, rate, uom: item?.stock_uom ?? r.uom } : r,
+    i === index ? { ...r, rate, uom, _uomOptions: stock.uomOptionsFor(row.item_id) } : r,
   );
 }
 
 function onGetItems(param: string, id: string): void {
   void router.push({ name: meta.value.newRoute, query: { [param]: id } });
+}
+
+// More Info picks → payload (empty string → null). Selling docs only.
+function moreInfoPayload(): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(moreInfo.value).map(([k, v]) => [k, v || null]),
+  );
 }
 
 // Map the generic A&C picks to the party-specific billing-address column.
@@ -174,6 +292,7 @@ function applyImportedRows(rows: ImportedRow[]): void {
       qty: Number(r.qty) || 1,
       rate: r.rate != null ? Number(r.rate) : Number(item.standard_rate) || null,
       uom: item.stock_uom,
+      _uomOptions: stock.uomOptionsFor(item.id),
       _rowKey: rowKey(),
     });
   }
@@ -188,22 +307,35 @@ const money = (value: string | number | null | undefined): string =>
 
 const docPartyName = computed(() => doc.value?.customer_name ?? doc.value?.supplier_name ?? "");
 
+// Show the Disc % column on the detail table only when a line actually carries one.
+const hasLineDiscount = computed(() =>
+  (doc.value?.items ?? []).some((it) => Number(it.discount_percentage) > 0),
+);
+
+// Resolve the chosen payment-terms template name for the summary (the templates
+// list is loaded in onMounted for both the create form and the detail view).
+const paymentTermsName = computed(
+  () =>
+    paymentTermsTemplates.value.find((t) => t.id === doc.value?.payment_terms_template_id)
+      ?.template_name ?? null,
+);
+
 // fulfilment dialog (Create Delivery Note / Purchase Receipt)
 const showFulfil = ref(false);
 const fulfilQty = ref<Record<string, number>>({});
 
-const pendingRows = computed(() => {
-  if (!doc.value) return [];
-  return doc.value.items.filter((row) => {
-    const done = Number(props.kind === "sales-order" ? row.delivered_qty : row.received_qty) || 0;
-    return Number(row.qty) - done > 0.000001;
-  });
-});
-
+// delivered_qty/received_qty are in STOCK units, so compare against the line's
+// stock_qty; the resulting fulfilment qty is in stock UOM (the DN/PR posts factor 1).
 function pendingOf(row: OrderDetail["items"][number]): number {
   const done = Number(props.kind === "sales-order" ? row.delivered_qty : row.received_qty) || 0;
-  return Number(row.qty) - done;
+  const ordered = Number(row.stock_qty ?? row.qty) || 0;
+  return ordered - done;
 }
+
+const pendingRows = computed(() => {
+  if (!doc.value) return [];
+  return doc.value.items.filter((row) => pendingOf(row) > 0.000001);
+});
 
 function openFulfil(): void {
   fulfilQty.value = {};
@@ -276,6 +408,7 @@ async function save(): Promise<void> {
       additional_discount_percentage: discount.value.additional_discount_percentage || 0,
       discount_amount: discount.value.discount_amount || 0,
       taxes: taxes.value.filter((t) => t.account_head_id),
+      payment_terms_template_id: paymentTermsTemplateId.value || null,
     };
     if (props.kind === "sales-order") {
       payload.customer_id = partyId.value;
@@ -285,7 +418,7 @@ async function save(): Promise<void> {
       payload.po_date = poDate.value || null;
       payload.terms = terms.value || null;
       payload.set_warehouse_id = setWarehouseId.value || null;
-      Object.assign(payload, acPayload("customer"));
+      Object.assign(payload, acPayload("customer"), moreInfoPayload());
       if (quotationId.value) payload.quotation_id = quotationId.value;
     } else if (props.kind === "purchase-order") {
       payload.supplier_id = partyId.value;
@@ -299,7 +432,7 @@ async function save(): Promise<void> {
       payload.valid_till = extraDate.value || null;
       payload.order_type = orderType.value;
       payload.terms = terms.value || null;
-      Object.assign(payload, acPayload("customer"));
+      Object.assign(payload, acPayload("customer"), moreInfoPayload());
     }
     const resp = await api.post<OrderDetail>(cfg.value.endpoint, payload);
     void router.push(`${cfg.value.endpoint}/${resp.data.id}`);
@@ -375,8 +508,12 @@ onMounted(async () => {
   await Promise.all([
     cfg.value.buying ? accounts.fetchSuppliers() : accounts.fetchCustomers(),
     accounts.fetchAccounts(),
+    accounts.fetchTaxTemplates(cfg.value.buying ? "purchase" : "sales"),
     stock.fetchItems(),
     stock.fetchWarehouses(),
+    fetchMoreInfoMasters(),
+    fetchTermsTemplates(),
+    fetchPaymentTermsTemplates(),
   ]);
   if (props.id) {
     doc.value = (await api.get<OrderDetail>(`${cfg.value.endpoint}/${props.id}`)).data;
@@ -397,6 +534,8 @@ onMounted(async () => {
         </div>
         <div class="flex items-center gap-3">
           <StatusBadge :status="doc.status" />
+          <PrintButton :path="`/print/${encodeURIComponent(cfg.title)}/${doc.id}`" :title="`${doc.name} — Preview`" />
+          <SendEmailButton :doctype="cfg.title" :doc-id="doc.id" :doc-name="doc.name" />
           <button v-if="doc.docstatus === 0" class="btn-primary" @click="action('submit')">Submit</button>
           <button v-if="kind === 'quotation' && doc.status === 'Open'" class="btn-primary"
                   @click="createSalesOrder">Create Sales Order</button>
@@ -474,6 +613,10 @@ onMounted(async () => {
           <div class="text-xs font-semibold uppercase tracking-wide text-gray-400">Remarks</div>
           <div class="mt-0.5 text-sm text-gray-700">{{ doc.remarks }}</div>
         </div>
+        <div v-if="paymentTermsName">
+          <div class="text-xs font-semibold uppercase tracking-wide text-gray-400">Payment Terms</div>
+          <div class="mt-0.5 text-sm text-gray-900">{{ paymentTermsName }}</div>
+        </div>
         <div v-if="doc.terms" class="col-span-2 md:col-span-4">
           <div class="text-xs font-semibold uppercase tracking-wide text-gray-400">Terms</div>
           <div class="mt-0.5 whitespace-pre-line text-sm text-gray-700">{{ doc.terms }}</div>
@@ -496,6 +639,7 @@ onMounted(async () => {
                 {{ kind === "sales-order" ? "Delivered" : "Received" }}
               </th>
               <th class="px-4 py-2 text-right">Rate</th>
+              <th v-if="hasLineDiscount" class="px-4 py-2 text-right">Disc %</th>
               <th class="px-4 py-2 text-right">Amount</th>
             </tr>
           </thead>
@@ -509,7 +653,10 @@ onMounted(async () => {
               <td v-if="kind !== 'quotation'" class="px-4 py-2 text-right">
                 {{ formatQty(item.delivered_qty ?? item.received_qty ?? "0") }}
               </td>
-              <td class="px-4 py-2 text-right">{{ money(item.rate) }}</td>
+              <td class="px-4 py-2 text-right">{{ money(Number(item.price_list_rate) || item.rate) }}</td>
+              <td v-if="hasLineDiscount" class="px-4 py-2 text-right">
+                {{ Number(item.discount_percentage) ? `${Number(item.discount_percentage)}%` : "—" }}
+              </td>
               <td class="px-4 py-2 text-right">{{ money(item.amount) }}</td>
             </tr>
           </tbody>
@@ -529,6 +676,13 @@ onMounted(async () => {
               <dt>Grand Total</dt><dd>{{ money(doc.rounded_total) }}</dd>
             </div>
           </dl>
+          <PaymentSchedulePreview
+            v-if="doc.payment_terms_template_id"
+            :template-id="doc.payment_terms_template_id"
+            :total="Number(doc.rounded_total)"
+            :posting-date="doc.posting_date"
+            :currency="doc.currency"
+          />
         </div>
       </div>
     </div>
@@ -644,6 +798,13 @@ onMounted(async () => {
         <CurrencySection v-model="currencyModel" :company-currency="companyCurrency" />
 
         <!-- taxes & charges -->
+        <div v-if="accounts.taxTemplates.length" class="max-w-sm">
+          <label class="form-label">Taxes and Charges Template</label>
+          <select v-model="taxTemplateId" class="form-input" @change="applyTaxTemplate">
+            <option value="">— Choose a template to fill the rows —</option>
+            <option v-for="t in accounts.taxTemplates" :key="t.id" :value="t.id">{{ t.title }}</option>
+          </select>
+        </div>
         <TaxesCharges v-model="taxes" :account-options="accounts.accountOptions" />
 
         <!-- additional discount -->
@@ -679,6 +840,13 @@ onMounted(async () => {
         />
       </div>
       <div v-show="activeTab === 'Terms'" class="space-y-4">
+        <div v-if="termsTemplates.length" class="max-w-sm">
+          <label class="form-label">Terms Template</label>
+          <select v-model="termsTemplateId" class="form-input" @change="applyTermsTemplate">
+            <option value="">— Choose a template to fill the text —</option>
+            <option v-for="t in termsTemplates" :key="t.id" :value="t.id">{{ t.template_name }}</option>
+          </select>
+        </div>
         <div>
           <label class="form-label">Terms and Conditions</label>
           <textarea
@@ -688,12 +856,42 @@ onMounted(async () => {
             placeholder="Payment terms, delivery terms, warranty…"
           ></textarea>
         </div>
+
+        <!-- Payment Terms: pick a template, see when each part is due -->
+        <div class="border-t border-gray-100 pt-4">
+          <div class="max-w-sm">
+            <label class="form-label">Payment Terms</label>
+            <select v-model="paymentTermsTemplateId" class="form-input">
+              <option value="">— None (pay in full) —</option>
+              <option v-for="t in paymentTermsTemplates" :key="t.id" :value="t.id">{{ t.template_name }}</option>
+            </select>
+          </div>
+          <PaymentSchedulePreview
+            :template-id="paymentTermsTemplateId"
+            :total="liveGrandTotal"
+            :posting-date="postingDate"
+            :currency="currencyModel.currency || companyCurrency"
+          />
+        </div>
       </div>
-      <div
-        v-show="activeTab !== 'Details' && activeTab !== 'Terms' && activeTab !== 'Address & Contact'"
-        class="rounded-lg border border-dashed border-gray-300 bg-white p-10 text-center text-sm text-gray-400"
-      >
-        This section isn’t built yet.
+      <div v-show="activeTab === 'More Info'">
+        <div v-if="!cfg.buying" class="grid grid-cols-1 gap-x-8 gap-y-4 md:grid-cols-2">
+          <div v-for="f in moreInfoFields" :key="f.key">
+            <label class="form-label">{{ f.label }}</label>
+            <select v-model="moreInfo[f.key]" class="form-input">
+              <option value="">—</option>
+              <option v-for="o in moreInfoOptions[f.key] ?? []" :key="o.value" :value="o.value">
+                {{ o.label }}
+              </option>
+            </select>
+          </div>
+        </div>
+        <div
+          v-else
+          class="rounded-lg border border-dashed border-gray-300 bg-white p-10 text-center text-sm text-gray-400"
+        >
+          No additional info fields for this document.
+        </div>
       </div>
     </form>
   </div>

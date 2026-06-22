@@ -1,0 +1,51 @@
+{% extends "base/layout.html" %}
+{% import "base/_macros.html" as m %}
+{% block body %}
+<div class="ph-parties">
+  <div class="ph-party">
+    <div class="ph-label">To</div>
+    <div class="ph-party-name">{{ notice.party_name }}</div>
+    {% if notice.party_email %}<div class="ph-muted">{{ notice.party_email }}</div>{% endif %}
+  </div>
+  <div class="ph-party ph-right">
+    <div><span class="ph-muted">As of:</span> {{ notice.as_of }}</div>
+    {% if notice.dunning_type %}<div><span class="ph-muted">Notice:</span> {{ notice.dunning_type }}</div>{% endif %}
+  </div>
+</div>
+
+{% if notice.letter_intro %}<p class="ph-words">{{ notice.letter_intro }}</p>{% else %}
+<p class="ph-words">This is a reminder that the following invoices are overdue. Please arrange payment at the earliest.</p>
+{% endif %}
+
+<table class="ph-items">
+  <thead>
+    <tr>
+      <th style="width:4%">#</th>
+      <th>Invoice</th>
+      <th>Due Date</th>
+      <th class="num" style="width:10%">Days Overdue</th>
+      <th class="num" style="width:16%">Outstanding</th>
+      <th class="num" style="width:14%">Interest</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for inv in notice.invoices %}
+    <tr>
+      <td>{{ loop.index }}</td>
+      <td><strong>{{ inv.voucher_no }}</strong></td>
+      <td>{{ inv.due_date or inv.posting_date }}</td>
+      <td class="num">{{ inv.age_days }}</td>
+      <td class="num">{{ m.money(inv.outstanding_amount) }}</td>
+      <td class="num">{% if inv.interest %}{{ m.money(inv.interest) }}{% else %}&mdash;{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<table class="ph-totals">
+  <tr><td>Total Overdue</td><td class="num">{{ m.money(notice.total_overdue) }}</td></tr>
+  {% if notice.total_interest %}<tr><td>Interest</td><td class="num">{{ m.money(notice.total_interest) }}</td></tr>{% endif %}
+  {% if notice.dunning_fee %}<tr><td>Dunning Fee</td><td class="num">{{ m.money(notice.dunning_fee) }}</td></tr>{% endif %}
+  <tr class="grand"><td>Amount Now Due</td><td class="num">{{ m.money(notice.total_due) }}</td></tr>
+</table>
+{% endblock %}

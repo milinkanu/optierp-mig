@@ -15,6 +15,7 @@ from sqlalchemy.orm import selectinload
 from app.core.exceptions import DuplicateError, NotFoundError, ValidationError
 from app.core.security import CurrentUser
 from app.models.accounts import Account, Budget, BudgetAccount, CostCenter, FiscalYear
+from app.models.selling import MonthlyDistribution
 from app.models.base import DOCSTATUS_CANCELLED, DOCSTATUS_SUBMITTED
 from app.schemas.accounts import BudgetCreate
 from app.services.accounts_common import require_draft, require_submitted
@@ -34,6 +35,11 @@ async def create_budget(db: AsyncSession, payload: BudgetCreate, user: CurrentUs
         cost_center = await db.get(CostCenter, payload.cost_center_id)
         if cost_center is None or cost_center.company_id != user.company_id:
             raise NotFoundError("Cost center not found")
+
+    if payload.monthly_distribution_id is not None:
+        md = await db.get(MonthlyDistribution, payload.monthly_distribution_id)
+        if md is None or md.company_id != user.company_id:
+            raise NotFoundError("Monthly distribution not found")
 
     if await db.scalar(
         select(Budget).where(
@@ -74,6 +80,8 @@ async def create_budget(db: AsyncSession, payload: BudgetCreate, user: CurrentUs
         fiscal_year_id=payload.fiscal_year_id,
         cost_center_id=payload.cost_center_id,
         action_if_annual_budget_exceeded=payload.action_if_annual_budget_exceeded,
+        monthly_distribution_id=payload.monthly_distribution_id,
+        action_if_accumulated_monthly_budget_exceeded=payload.action_if_accumulated_monthly_budget_exceeded,
         owner=user.id,
         modified_by=user.id,
     )

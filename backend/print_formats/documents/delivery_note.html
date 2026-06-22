@@ -1,0 +1,46 @@
+{% extends "base/layout.html" %}
+{% import "base/_macros.html" as m %}
+{% block body %}
+<div class="ph-parties">
+  <div class="ph-party">
+    <div class="ph-label">{% if doc.is_return %}Return From{% else %}Ship To{% endif %}</div>
+    <div class="ph-party-name">{{ party.customer_name if party else (doc.customer_name or "—") }}</div>
+    {% if party and party.tax_id %}<div class="ph-muted">GSTIN: {{ party.tax_id }}</div>{% endif %}
+  </div>
+  <div class="ph-party ph-right">
+    <div><span class="ph-muted">Date:</span> {{ doc.posting_date }}</div>
+    {% if doc.is_return %}<div class="ph-muted">Return Note</div>{% endif %}
+    {% if doc.currency %}<div><span class="ph-muted">Currency:</span> {{ doc.currency }}</div>{% endif %}
+  </div>
+</div>
+
+<table class="ph-items">
+  <thead>
+    <tr>
+      <th style="width:4%">#</th>
+      <th>Item</th>
+      <th class="num" style="width:14%">Qty</th>
+      <th class="num" style="width:16%">Rate</th>
+      <th class="num" style="width:18%">Amount</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for item in doc["items"] %}
+    <tr>
+      <td>{{ item.idx }}</td>
+      <td><strong>{{ item.item_name }}</strong>{% if item.item_code %}<br><span class="ph-muted">{{ item.item_code }}</span>{% endif %}{% if item.batch_no %}<br><span class="ph-muted">Batch: {{ item.batch_no }}</span>{% endif %}{% if item.serial_nos %}<br><span class="ph-muted">Serial: {{ item.serial_nos }}</span>{% endif %}</td>
+      <td class="num">{{ m.qty(item.qty, item.uom) }}</td>
+      <td class="num">{{ m.money(item.rate) }}</td>
+      <td class="num">{{ m.money(item.amount) }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<table class="ph-totals">
+  {% if doc.total_qty %}<tr><td>Total Qty</td><td class="num">{{ m.money(doc.total_qty) }}</td></tr>{% endif %}
+  <tr class="grand"><td>Total Value{% if doc.currency %} ({{ doc.currency }}){% endif %}</td><td class="num">{{ m.money(doc.grand_total) }}</td></tr>
+</table>
+
+{% if doc.remarks %}<div class="ph-remarks ph-muted"><strong>Remarks:</strong> {{ doc.remarks }}</div>{% endif %}
+{% endblock %}

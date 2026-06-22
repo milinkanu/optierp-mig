@@ -1,0 +1,14 @@
+/* Modern — teal colour-band header, sans-serif, soft zebra rows. */
+:root {
+  --accent: #0d9488;
+  --head-bg: #ccfbf1;
+  --zebra: #f0fdfa;
+  --font: "Helvetica Neue", Arial, sans-serif;
+  --title: 16px;
+}
+.ph-header { background: var(--accent); color: #fff; border-bottom: none;
+  padding: 14px; margin: -2px -2px 0; border-radius: 6px; }
+.ph-company, .ph-title, .ph-docno { color: #fff; }
+.ph-addr, .ph-contact, .ph-tax, .ph-copy { color: rgba(255, 255, 255, .85); }
+.ph-status { background: #fff; color: var(--accent); }
+table.ph-items th { background: var(--accent); color: #fff; border-bottom: none; }

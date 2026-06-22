@@ -9,6 +9,10 @@ services:
     volumes:
       - ./backend/app:/app/app
       - ./backend/migrations:/app/migrations
+      - ./backend/scripts:/app/scripts
+      # Print templates live-mounted so theme/layout edits take effect without an
+      # image rebuild (same pattern as app/). The image also COPYs them for prod.
+      - ./backend/print_formats:/app/print_formats
     environment:
       PYTHONPATH: /app
       WATCHFILES_FORCE_POLLING: "true"

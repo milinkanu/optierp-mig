@@ -17,6 +17,7 @@ ZERO = Decimal("0")
 # ERPNext v15 default naming series per voucher
 STOCK_NAMING_SERIES = {
     "Stock Entry": "MAT-STE-.YYYY.-",
+    "Stock Reconciliation": "MAT-RECO-.YYYY.-",
     "Material Request": "MAT-MR-.YYYY.-",
     "Purchase Receipt": "MAT-PRE-.YYYY.-",
     "Delivery Note": "MAT-DN-.YYYY.-",
@@ -176,3 +177,30 @@ def require_stock_item(item: Item) -> None:
         raise ValidationError(
             f"Item '{item.item_code}' is not a stock item", field="item_id"
         )
+
+
+def resolve_conversion_factor(item: Item, uom: str | None, *, strict: bool = True) -> Decimal:
+    """Stock-UOM units per 1 of ``uom`` for this item (Phase 4, multi-UOM).
+
+    None or the stock UOM resolves to 1; the item's purchase/sales UOM resolve to
+    their stored factors. Any other UOM is rejected when ``strict`` — a stock/order
+    line may only use a UOM the item actually defines (we never silently assume a
+    factor), so ``stock_qty = qty * factor`` is trustworthy for the Bin/demand/caps.
+    Invoices pass ``strict=False`` (the factor is only informational there) and fall
+    back to 1 for an unrecognised UOM rather than failing the document.
+    """
+    if uom is None or uom == item.stock_uom:
+        return Decimal("1")
+    if item.purchase_uom and uom == item.purchase_uom:
+        return item.purchase_uom_factor
+    if item.sales_uom and uom == item.sales_uom:
+        return item.sales_uom_factor
+    if not strict:
+        return Decimal("1")
+    allowed = ", ".join(
+        u for u in (item.stock_uom, item.purchase_uom, item.sales_uom) if u
+    )
+    raise ValidationError(
+        f"UOM '{uom}' is not defined for item '{item.item_code}' (allowed: {allowed})",
+        field="uom",
+    )

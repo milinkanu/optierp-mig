@@ -1,0 +1,52 @@
+{% extends "base/layout.html" %}
+{% import "base/_macros.html" as m %}
+{% block body %}
+<div class="ph-parties">
+  <div class="ph-party">
+    <div class="ph-label">Quotation For</div>
+    <div class="ph-party-name">{{ party.customer_name if party else (doc.customer_name or "—") }}</div>
+    {% if party and party.tax_id %}<div class="ph-muted">GSTIN: {{ party.tax_id }}</div>{% endif %}
+  </div>
+  <div class="ph-party ph-right">
+    <div><span class="ph-muted">Date:</span> {{ doc.posting_date }}</div>
+    {% if doc.valid_till %}<div><span class="ph-muted">Valid Till:</span> {{ doc.valid_till }}</div>{% endif %}
+    {% if doc.currency %}<div><span class="ph-muted">Currency:</span> {{ doc.currency }}</div>{% endif %}
+  </div>
+</div>
+
+<table class="ph-items">
+  <thead>
+    <tr>
+      <th style="width:4%">#</th>
+      <th>Item</th>
+      <th class="num" style="width:12%">Qty</th>
+      <th class="num" style="width:16%">Rate</th>
+      <th class="num" style="width:18%">Amount</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for item in doc["items"] %}
+    <tr>
+      <td>{{ item.idx }}</td>
+      <td><strong>{{ item.item_name }}</strong>{% if item.description %}<br><span class="ph-muted">{{ item.description }}</span>{% endif %}</td>
+      <td class="num">{{ m.qty(item.qty, item.uom) }}</td>
+      <td class="num">{{ m.money(item.rate) }}</td>
+      <td class="num">{{ m.money(item.amount) }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<table class="ph-totals">
+  <tr><td>Net Total</td><td class="num">{{ m.money(doc.net_total) }}</td></tr>
+  {% for tax in doc.taxes %}
+  <tr><td>{{ m.tax_label(tax) }}{% if tax.rate and doc.net_total %} ({{ m.tax_rate(tax, doc.net_total) }}%){% endif %}</td><td class="num">{{ m.money(tax.tax_amount) }}</td></tr>
+  {% endfor %}
+  {% if doc.discount_amount %}<tr><td>Discount</td><td class="num">-{{ m.money(doc.discount_amount) }}</td></tr>{% endif %}
+  {% if doc.rounding_adjustment %}<tr><td>Rounding</td><td class="num">{{ m.money(doc.rounding_adjustment) }}</td></tr>{% endif %}
+  <tr class="grand"><td>Total{% if doc.currency %} ({{ doc.currency }}){% endif %}</td><td class="num">{{ m.money(doc.rounded_total or doc.grand_total) }}</td></tr>
+</table>
+
+{% if amount_in_words %}<div class="ph-words"><strong>Amount in words:</strong> {{ amount_in_words }}</div>{% endif %}
+{% if doc.remarks %}<div class="ph-remarks ph-muted"><strong>Remarks:</strong> {{ doc.remarks }}</div>{% endif %}
+{% endblock %}

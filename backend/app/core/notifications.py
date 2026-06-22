@@ -43,7 +43,12 @@ async def get_template(db: AsyncSession, name: str) -> NotificationTemplate:
     return tpl
 
 
-async def _smtp_send(message: EmailMessage) -> None:
+async def _smtp_send(message: EmailMessage) -> str | None:
+    """Send via SMTP. Returns None on success or an error string on failure.
+
+    Never raises — a notification failure must never break a business flow. The
+    returned error is used by the service layer to record a failed EmailLog row.
+    """
     settings = get_settings()
     try:
         await aiosmtplib.send(
@@ -54,11 +59,25 @@ async def _smtp_send(message: EmailMessage) -> None:
             password=settings.smtp_password or None,
             start_tls=settings.smtp_tls,
         )
-    except Exception:  # noqa: BLE001 — notification failure must never break business flow
+    except Exception as exc:  # noqa: BLE001 — notification failure must never break business flow
         logger.exception("email_send_failed", to=message["To"], subject=message["Subject"])
+        return str(exc) or exc.__class__.__name__
+    return None
 
 
-async def send_email(to: list[str], subject: str, body: str, *, html: bool = False) -> None:
+async def send_email(
+    to: list[str],
+    subject: str,
+    body: str,
+    *,
+    html: bool = False,
+    attachments: list[tuple[str, bytes, str]] | None = None,
+) -> str | None:
+    """Send an email; returns None on success or an error string on failure.
+
+    ``attachments`` is a list of ``(filename, data, mimetype)`` tuples, e.g.
+    ``("INV-001.pdf", pdf_bytes, "application/pdf")``.
+    """
     settings = get_settings()
     message = EmailMessage()
     message["From"] = settings.smtp_from
@@ -69,7 +88,15 @@ async def send_email(to: list[str], subject: str, body: str, *, html: bool = Fal
         message.add_alternative(body, subtype="html")
     else:
         message.set_content(body)
-    await _smtp_send(message)
+    for filename, data, mimetype in attachments or []:
+        maintype, _, subtype = mimetype.partition("/")
+        message.add_attachment(
+            data,
+            maintype=maintype or "application",
+            subtype=subtype or "octet-stream",
+            filename=filename,
+        )
+    return await _smtp_send(message)
 
 
 async def notify_from_template(
@@ -80,8 +107,12 @@ async def notify_from_template(
     *,
     reference_doctype: str | None = None,
     reference_id: uuid.UUID | None = None,
-) -> None:
-    """Render a stored template and email it; logs but never raises on failure."""
+    attachments: list[tuple[str, bytes, str]] | None = None,
+) -> str | None:
+    """Render a stored template and email it; logs but never raises on failure.
+
+    Returns None on success or an error string on failure (see ``send_email``).
+    """
     template = await get_template(db, template_name)
     subject, body = render_notification(template, context)
     logger.info(
@@ -91,4 +122,6 @@ async def notify_from_template(
         reference_doctype=reference_doctype,
         reference_id=str(reference_id) if reference_id else None,
     )
-    await send_email(recipients, subject, body, html=template.is_html)
+    return await send_email(
+        recipients, subject, body, html=template.is_html, attachments=attachments
+    )

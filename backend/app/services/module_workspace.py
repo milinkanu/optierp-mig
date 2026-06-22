@@ -75,6 +75,7 @@ async def get_selling_workspace(db: AsyncSession, company_id: uuid.UUID) -> dict
     return {
         "currency": currency,
         "chart_title": "Sales Order Trends",
+        "trend_format": "currency",
         "cards": [
             {"label": "Sales Orders", "value": count, "format": "int"},
             {"label": "Total Sales Amount", "value": total, "format": "currency"},
@@ -90,6 +91,7 @@ async def get_buying_workspace(db: AsyncSession, company_id: uuid.UUID) -> dict[
     return {
         "currency": currency,
         "chart_title": "Purchase Order Trends",
+        "trend_format": "currency",
         "cards": [
             {"label": "Purchase Orders", "value": count, "format": "int"},
             {"label": "Total Purchase Amount", "value": total, "format": "currency"},
@@ -117,6 +119,7 @@ async def get_accounting_workspace(db: AsyncSession, company_id: uuid.UUID) -> d
     return {
         "currency": currency,
         "chart_title": "Sales Invoice Trends",
+        "trend_format": "currency",
         "cards": [
             {"label": "Sales Invoices", "value": count, "format": "int"},
             {"label": "Total Invoiced", "value": invoiced, "format": "currency"},
@@ -157,6 +160,7 @@ async def get_stock_workspace(db: AsyncSession, company_id: uuid.UUID) -> dict[s
     return {
         "currency": currency,
         "chart_title": "Stock Entry Trends",
+        "trend_format": "int",
         "cards": [
             {"label": "Items", "value": int(items), "format": "int"},
             {"label": "Warehouses", "value": int(warehouses), "format": "int"},

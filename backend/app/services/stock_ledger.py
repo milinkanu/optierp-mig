@@ -35,6 +35,23 @@ class SLERow:
     warehouse_id: uuid.UUID
     actual_qty: Decimal  # positive = in, negative = out
     incoming_rate: Decimal = ZERO  # used for positive qty only
+    # Outgoing-rate override (negative qty only): value the stock-out at this
+    # rate instead of the current moving average — used for a return-to-source
+    # so the reversal matches the rate the goods originally moved at, even after
+    # the average has drifted. Removing at a rate ≠ the average reprices the
+    # remaining stock. Falls back to the average if it would corrupt the bin.
+    outgoing_rate: Decimal | None = None
+    _entry: StockLedgerEntry = field(init=False, repr=False, default=None)  # type: ignore[assignment]
+
+
+@dataclass
+class ReconcileRow:
+    """A physical-count / opening-balance target for one (item, warehouse)."""
+
+    item_id: uuid.UUID
+    warehouse_id: uuid.UUID
+    qty: Decimal  # target ABSOLUTE quantity (not a delta)
+    valuation_rate: Decimal  # target ABSOLUTE rate
     _entry: StockLedgerEntry = field(init=False, repr=False, default=None)  # type: ignore[assignment]
 
 
@@ -93,6 +110,19 @@ async def make_sl_entries(
             new_value = new_qty * new_rate if new_qty > ZERO else ZERO
             # any residual from the rate reset flows into the GL via value_diff
             value_diff = new_value - bin_row.stock_value
+        elif row.outgoing_rate is not None and (
+            # only honour the override while stock remains and it keeps the bin
+            # value non-negative; otherwise fall through to the average (a rate
+            # above the average can't remove more value than the bin holds)
+            new_qty > ZERO
+            and bin_row.stock_value + row.actual_qty * row.outgoing_rate >= ZERO
+        ):
+            # return-to-source at the original voucher's rate: removing units at a
+            # rate that differs from the average reprices the remaining stock, so
+            # the supplier/customer reversal is exact even after the average drifted
+            value_diff = row.actual_qty * row.outgoing_rate
+            new_value = bin_row.stock_value + value_diff
+            new_rate = new_value / new_qty
         else:
             # outgoing at current moving-average rate
             value_diff = row.actual_qty * bin_row.valuation_rate
@@ -124,6 +154,80 @@ async def make_sl_entries(
 
         bin_row.actual_qty = new_qty
         bin_row.valuation_rate = new_rate
+        bin_row.stock_value = new_value
+        entries.append(entry)
+
+    await db.flush()
+    return entries
+
+
+async def make_reconciliation_entries(
+    db: AsyncSession,
+    *,
+    company_id: uuid.UUID,
+    voucher_type: str,
+    voucher_id: uuid.UUID,
+    voucher_no: str,
+    posting_date: date,
+    rows: list[ReconcileRow],
+    items: dict[uuid.UUID, Item],
+    user_id: uuid.UUID | None = None,
+) -> list[StockLedgerEntry]:
+    """Post stock-reconciliation movements: each row OVERRIDES the bin to an
+    absolute target qty and rate (unlike moving-average in/out). The SLE
+    carries the qty delta and the value difference; ``stock_value_difference``
+    feeds the Stock Adjustment GL. Rows with no change are skipped (no noop
+    ledger rows). The generic reverse-entry path cancels these correctly
+    because it negates qty + value diff and recomputes the bin.
+    """
+    if not rows:
+        raise ValidationError("No stock rows to reconcile")
+    negative_ok = await allow_negative_stock(db, company_id)
+
+    for item_id, warehouse_id in sorted(
+        {(row.item_id, row.warehouse_id) for row in rows}, key=lambda k: (str(k[0]), str(k[1]))
+    ):
+        await get_bin_for_update(db, company_id, item_id, warehouse_id)
+
+    entries: list[StockLedgerEntry] = []
+    for row in rows:
+        item = items[row.item_id]
+        if row.qty < ZERO and not negative_ok:
+            raise ValidationError(
+                f"Negative target quantity for item '{item.item_code}' is not allowed",
+                field="qty",
+            )
+        bin_row = await get_bin_for_update(db, company_id, row.item_id, row.warehouse_id)
+
+        target_qty = row.qty
+        target_rate = row.valuation_rate
+        new_value = target_qty * target_rate
+        actual_qty = target_qty - bin_row.actual_qty  # may be +, -, or 0 (pure revaluation)
+        value_diff = new_value - bin_row.stock_value
+        if actual_qty == ZERO and value_diff == ZERO:
+            continue  # nothing to change for this (item, warehouse)
+
+        entry = StockLedgerEntry(
+            company_id=company_id,
+            item_id=row.item_id,
+            warehouse_id=row.warehouse_id,
+            posting_date=posting_date,
+            voucher_type=voucher_type,
+            voucher_id=voucher_id,
+            voucher_no=voucher_no,
+            actual_qty=actual_qty,
+            qty_after_transaction=target_qty,
+            incoming_rate=target_rate if actual_qty > ZERO else ZERO,
+            valuation_rate=target_rate,
+            stock_value=new_value,
+            stock_value_difference=value_diff,
+            owner=user_id,
+        )
+        db.add(entry)
+        row._entry = entry
+
+        bin_row.actual_qty = target_qty
+        bin_row.valuation_rate = target_rate
         bin_row.stock_value = new_value
         entries.append(entry)
 
@@ -241,3 +345,34 @@ async def get_bin(
     return await db.scalar(
         select(Bin).where(Bin.item_id == item_id, Bin.warehouse_id == warehouse_id)
     )
+
+
+async def voucher_unit_rates(
+    db: AsyncSession, voucher_type: str, voucher_id: uuid.UUID
+) -> dict[tuple[uuid.UUID, uuid.UUID], Decimal]:
+    """Per (item, warehouse) unit rate at which a voucher's own stock moved,
+    computed as ``sum(stock_value_difference) / sum(actual_qty)`` over its
+    (non-cancellation) ledger entries. Lets a RETURN value its stock at the exact
+    rate the original document received/delivered the goods — so COGS / SRBNB
+    reverse precisely even after the moving average has drifted or the bin emptied.
+    (We must NOT read each entry's ``valuation_rate``: that is the post-transaction
+    bin rate, which is 0 precisely when a delivery emptied the bin.) The sign of
+    value and qty cancel, so the result is positive for both in and out vouchers."""
+    rows = (
+        (
+            await db.execute(
+                select(StockLedgerEntry).where(
+                    StockLedgerEntry.voucher_type == voucher_type,
+                    StockLedgerEntry.voucher_id == voucher_id,
+                    StockLedgerEntry.is_cancellation.is_(False),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    agg: dict[tuple[uuid.UUID, uuid.UUID], list[Decimal]] = {}
+    for r in rows:
+        val, qty = agg.setdefault((r.item_id, r.warehouse_id), [ZERO, ZERO])
+        agg[(r.item_id, r.warehouse_id)] = [val + r.stock_value_difference, qty + r.actual_qty]
+    return {key: (val / qty) for key, (val, qty) in agg.items() if qty != ZERO}

@@ -1,0 +1,12 @@
+{# Shared Jinja macros for document print templates. #}
+{% macro money(value) -%}{{ "%.2f"|format((value or 0)|float) }}{%- endmacro %}
+
+{% macro qty(value, uom) -%}{{ value }}{% if uom %} {{ uom }}{% endif %}{%- endmacro %}
+
+{# Tax row label without the template's baked-in "@ 9%" — see tax_rate for why. #}
+{% macro tax_label(tax) -%}{{ (((tax.description or tax.charge_type or "")|string).split("@")[0])|trim }}{%- endmacro %}
+
+{# EFFECTIVE rate actually charged (tax_amount ÷ net_total), so an Item Tax
+   Template override (e.g. a 5%-item under an 18% template) reads as the 2.5%
+   it really charged, not the template's nominal 9%. Caller guards net_total>0. #}
+{% macro tax_rate(tax, net_total) -%}{{ "%g"|format(((tax.tax_amount or 0)|float / (net_total|float) * 100)|round(2)) }}{%- endmacro %}

@@ -33,6 +33,14 @@ class WarehouseCreate(BaseModel):
     account_id: uuid.UUID | None = None
 
 
+class WarehouseUpdate(BaseModel):
+    warehouse_name: str | None = Field(default=None, min_length=1, max_length=140)
+    parent_warehouse_id: uuid.UUID | None = None
+    warehouse_type: str | None = None
+    account_id: uuid.UUID | None = None
+    disabled: bool | None = None
+
+
 class WarehouseResponse(DocumentMeta):
     warehouse_name: str
     parent_warehouse_id: uuid.UUID | None
@@ -49,14 +57,21 @@ class ItemCreate(BaseModel):
     description: str | None = None
     item_group_id: uuid.UUID | None = None
     stock_uom: str = "Nos"
+    purchase_uom: str | None = None
+    purchase_uom_factor: Decimal = Field(gt=0, default=Decimal("1"))
+    sales_uom: str | None = None
+    sales_uom_factor: Decimal = Field(gt=0, default=Decimal("1"))
     is_stock_item: bool = True
     is_sales_item: bool = True
     is_purchase_item: bool = True
+    has_serial_no: bool = False
+    has_batch_no: bool = False
     valuation_method: str = Field(default="Moving Average", pattern="^(Moving Average|FIFO)$")
     standard_rate: Decimal = Field(ge=0, default=Decimal("0"))
     valuation_rate: Decimal = Field(ge=0, default=Decimal("0"))
     income_account_id: uuid.UUID | None = None
     expense_account_id: uuid.UUID | None = None
+    item_tax_template_id: uuid.UUID | None = None
     default_warehouse_id: uuid.UUID | None = None
     reorder_level: Decimal = Field(ge=0, default=Decimal("0"))
     reorder_qty: Decimal = Field(ge=0, default=Decimal("0"))
@@ -69,9 +84,16 @@ class ItemUpdate(BaseModel):
     item_name: str | None = None
     description: str | None = None
     item_group_id: uuid.UUID | None = None
+    purchase_uom: str | None = None
+    purchase_uom_factor: Decimal | None = Field(gt=0, default=None)
+    sales_uom: str | None = None
+    sales_uom_factor: Decimal | None = Field(gt=0, default=None)
+    has_serial_no: bool | None = None
+    has_batch_no: bool | None = None
     standard_rate: Decimal | None = Field(ge=0, default=None)
     income_account_id: uuid.UUID | None = None
     expense_account_id: uuid.UUID | None = None
+    item_tax_template_id: uuid.UUID | None = None
     default_warehouse_id: uuid.UUID | None = None
     reorder_level: Decimal | None = Field(ge=0, default=None)
     reorder_qty: Decimal | None = Field(ge=0, default=None)
@@ -88,15 +110,22 @@ class ItemResponse(DocumentMeta):
     item_group_id: uuid.UUID | None
     item_group_name: str | None = None
     stock_uom: str
+    purchase_uom: str | None
+    purchase_uom_factor: Decimal
+    sales_uom: str | None
+    sales_uom_factor: Decimal
     is_stock_item: bool
     is_sales_item: bool
     is_purchase_item: bool
+    has_serial_no: bool
+    has_batch_no: bool
     valuation_method: str
     standard_rate: Decimal
     valuation_rate: Decimal
     last_purchase_rate: Decimal
     income_account_id: uuid.UUID | None
     expense_account_id: uuid.UUID | None
+    item_tax_template_id: uuid.UUID | None = None
     default_warehouse_id: uuid.UUID | None
     reorder_level: Decimal
     reorder_qty: Decimal
@@ -113,6 +142,12 @@ class ItemListItem(ORMModel):
     item_name: str
     item_group_name: str | None = None
     stock_uom: str
+    purchase_uom: str | None = None
+    purchase_uom_factor: Decimal = Decimal("1")
+    sales_uom: str | None = None
+    sales_uom_factor: Decimal = Decimal("1")
+    has_serial_no: bool = False
+    has_batch_no: bool = False
     is_stock_item: bool
     standard_rate: Decimal
     disabled: bool
@@ -172,6 +207,8 @@ class StockEntryItemIn(BaseModel):
     qty: Decimal = Field(gt=0)
     basic_rate: Decimal = Field(ge=0, default=Decimal("0"))  # receipts; issues use valuation
     uom: str | None = None
+    serial_nos: list[str] | None = None  # required (count == stock_qty) for serialised items
+    batch_no: str | None = None  # required for batched items; must be an existing batch
     source_warehouse_id: uuid.UUID | None = None
     target_warehouse_id: uuid.UUID | None = None
 
@@ -194,8 +231,12 @@ class StockEntryItemResponse(DocumentMeta):
     target_warehouse_id: uuid.UUID | None
     qty: Decimal
     uom: str | None
+    conversion_factor: Decimal
+    stock_qty: Decimal
     basic_rate: Decimal
     amount: Decimal
+    serial_nos: str | None = None
+    batch_no: str | None = None
 
 
 class StockEntryResponse(DocumentMeta):
@@ -248,6 +289,8 @@ class MaterialRequestItemResponse(DocumentMeta):
     warehouse_id: uuid.UUID | None
     qty: Decimal
     uom: str | None
+    conversion_factor: Decimal
+    stock_qty: Decimal
     ordered_qty: Decimal
     schedule_date: date | None
 
@@ -279,11 +322,21 @@ class MaterialRequestListItem(ORMModel):
 
 class PurchaseReceiptItemIn(BaseModel):
     item_id: uuid.UUID
-    qty: Decimal = Field(gt=0)
+    qty: Decimal = Field(gt=0)  # accepted qty
     rate: Decimal = Field(ge=0, default=Decimal("0"))
     uom: str | None = None
     warehouse_id: uuid.UUID | None = None  # falls back to set_warehouse / item default
+    rejected_qty: Decimal = Field(ge=0, default=Decimal("0"))
+    rejected_warehouse_id: uuid.UUID | None = None  # required when rejected_qty > 0
+    serial_nos: list[str] | None = None  # required (count == stock_qty) for serialised items
+    batch_no: str | None = None  # required for batched items; must be an existing batch
     purchase_order_item_id: uuid.UUID | None = None
+
+
+class PurchaseReceiptChargeIn(BaseModel):
+    description: str = Field(min_length=1, max_length=180)
+    account_id: uuid.UUID  # charge clearing/expense account credited on submit
+    amount: Decimal = Field(gt=0)  # document currency
 
 
 class PurchaseReceiptCreate(BaseModel):
@@ -292,8 +345,12 @@ class PurchaseReceiptCreate(BaseModel):
     currency: str | None = Field(default=None, pattern="^[A-Za-z]{3}$")
     conversion_rate: Decimal = Field(gt=0, default=Decimal("1"))
     set_warehouse_id: uuid.UUID | None = None
+    is_return: bool = False  # a return sends goods back to the supplier (SLE out / reverse SRBNB)
+    return_against_id: uuid.UUID | None = None  # required when is_return
+    supplier_delivery_note: str | None = Field(default=None, max_length=140)
     remarks: str | None = None
     items: list[PurchaseReceiptItemIn] = Field(min_length=1)
+    charges: list[PurchaseReceiptChargeIn] = Field(default_factory=list)  # landed cost
 
 
 class PurchaseReceiptItemResponse(DocumentMeta):
@@ -304,11 +361,24 @@ class PurchaseReceiptItemResponse(DocumentMeta):
     warehouse_id: uuid.UUID
     qty: Decimal
     uom: str | None
+    conversion_factor: Decimal
+    stock_qty: Decimal
     rate: Decimal
     amount: Decimal
     base_amount: Decimal
+    rejected_qty: Decimal
+    rejected_warehouse_id: uuid.UUID | None
+    serial_nos: str | None = None
+    batch_no: str | None = None
     purchase_order_item_id: uuid.UUID | None
     billed_qty: Decimal
+
+
+class PurchaseReceiptChargeResponse(DocumentMeta):
+    idx: int
+    description: str
+    account_id: uuid.UUID
+    amount: Decimal
 
 
 class PurchaseReceiptResponse(DocumentMeta):
@@ -319,6 +389,9 @@ class PurchaseReceiptResponse(DocumentMeta):
     currency: str
     conversion_rate: Decimal
     set_warehouse_id: uuid.UUID | None
+    is_return: bool
+    return_against_id: uuid.UUID | None = None
+    supplier_delivery_note: str | None = None
     total_qty: Decimal
     grand_total: Decimal
     base_grand_total: Decimal
@@ -327,6 +400,7 @@ class PurchaseReceiptResponse(DocumentMeta):
     remarks: str | None
     company_id: uuid.UUID
     items: list[PurchaseReceiptItemResponse]
+    charges: list[PurchaseReceiptChargeResponse] = []
 
 
 class PurchaseReceiptListItem(ORMModel):
@@ -338,6 +412,7 @@ class PurchaseReceiptListItem(ORMModel):
     grand_total: Decimal
     status: str
     per_billed: Decimal
+    is_return: bool
     docstatus: int
 
 
@@ -350,6 +425,8 @@ class DeliveryNoteItemIn(BaseModel):
     rate: Decimal = Field(ge=0, default=Decimal("0"))
     uom: str | None = None
     warehouse_id: uuid.UUID | None = None
+    serial_nos: list[str] | None = None  # required (count == stock_qty) for serialised items
+    batch_no: str | None = None  # required for batched items; must be an existing batch
     sales_order_item_id: uuid.UUID | None = None
 
 
@@ -359,6 +436,11 @@ class DeliveryNoteCreate(BaseModel):
     currency: str | None = Field(default=None, pattern="^[A-Za-z]{3}$")
     conversion_rate: Decimal = Field(gt=0, default=Decimal("1"))
     set_warehouse_id: uuid.UUID | None = None
+    customer_address_id: uuid.UUID | None = None
+    shipping_address_id: uuid.UUID | None = None
+    contact_person_id: uuid.UUID | None = None
+    is_return: bool = False  # a return takes goods back into stock (SLE in / reverse COGS)
+    return_against_id: uuid.UUID | None = None  # required when is_return
     remarks: str | None = None
     items: list[DeliveryNoteItemIn] = Field(min_length=1)
 
@@ -371,9 +453,13 @@ class DeliveryNoteItemResponse(DocumentMeta):
     warehouse_id: uuid.UUID
     qty: Decimal
     uom: str | None
+    conversion_factor: Decimal
+    stock_qty: Decimal
     rate: Decimal
     amount: Decimal
     base_amount: Decimal
+    serial_nos: str | None = None
+    batch_no: str | None = None
     sales_order_item_id: uuid.UUID | None
     billed_qty: Decimal
 
@@ -386,6 +472,11 @@ class DeliveryNoteResponse(DocumentMeta):
     currency: str
     conversion_rate: Decimal
     set_warehouse_id: uuid.UUID | None
+    customer_address_id: uuid.UUID | None = None
+    shipping_address_id: uuid.UUID | None = None
+    contact_person_id: uuid.UUID | None = None
+    is_return: bool
+    return_against_id: uuid.UUID | None = None
     total_qty: Decimal
     grand_total: Decimal
     base_grand_total: Decimal
@@ -405,7 +496,130 @@ class DeliveryNoteListItem(ORMModel):
     grand_total: Decimal
     status: str
     per_billed: Decimal
+    is_return: bool
     docstatus: int
+
+
+# --- stock reconciliation --------------------------------------------------------------------
+
+
+class StockReconciliationItemIn(BaseModel):
+    item_id: uuid.UUID
+    warehouse_id: uuid.UUID | None = None  # falls back to set_warehouse / item default
+    qty: Decimal = Field(ge=0)  # target absolute quantity
+    valuation_rate: Decimal | None = Field(default=None, ge=0)  # None/0 = resolve at submit
+    uom: str | None = None
+
+
+class StockReconciliationCreate(BaseModel):
+    purpose: str = Field(default="Stock Reconciliation", pattern="^(Opening Stock|Stock Reconciliation)$")
+    posting_date: date
+    set_warehouse_id: uuid.UUID | None = None
+    remarks: str | None = None
+    items: list[StockReconciliationItemIn] = Field(min_length=1)
+
+
+class StockReconciliationItemResponse(DocumentMeta):
+    idx: int
+    item_id: uuid.UUID
+    item_code: str | None = None
+    item_name: str | None = None
+    warehouse_id: uuid.UUID
+    qty: Decimal
+    uom: str | None
+    valuation_rate: Decimal
+    current_qty: Decimal
+    current_valuation_rate: Decimal
+    amount_difference: Decimal
+
+
+class StockReconciliationResponse(DocumentMeta):
+    name: str
+    posting_date: date
+    purpose: str
+    set_warehouse_id: uuid.UUID | None
+    difference_amount: Decimal
+    remarks: str | None
+    company_id: uuid.UUID
+    items: list[StockReconciliationItemResponse]
+
+
+class StockReconciliationListItem(ORMModel):
+    id: uuid.UUID
+    name: str
+    posting_date: date
+    purpose: str
+    difference_amount: Decimal
+    docstatus: int
+
+
+# --- service credits -------------------------------------------------------------------------
+
+
+class ServiceCreditCreate(BaseModel):
+    item_id: uuid.UUID
+    supplier_id: uuid.UUID | None = None
+    purchase_date: date
+    purchased_qty: Decimal = Field(gt=0)
+    rate: Decimal = Field(ge=0, default=Decimal("0"))
+    valid_upto: date | None = None
+    remarks: str | None = None
+    # accounting (optional — set both accounts to post GL on usage)
+    purchase_invoice_id: uuid.UUID | None = None
+    prepaid_account_id: uuid.UUID | None = None
+    expense_account_id: uuid.UUID | None = None
+    cost_center_id: uuid.UUID | None = None
+
+
+class ServiceCreditUsageIn(BaseModel):
+    usage_date: date
+    qty: Decimal = Field(gt=0)
+    remarks: str | None = None
+
+
+class ServiceCreditUsageResponse(DocumentMeta):
+    idx: int
+    usage_date: date
+    qty: Decimal
+    remarks: str | None
+
+
+class ServiceCreditResponse(DocumentMeta):
+    name: str
+    item_id: uuid.UUID
+    item_code: str | None = None
+    item_name: str | None = None
+    supplier_id: uuid.UUID | None
+    supplier_name: str | None = None
+    purchase_date: date
+    purchased_qty: Decimal
+    consumed_qty: Decimal
+    balance_qty: Decimal
+    rate: Decimal
+    uom: str | None
+    valid_upto: date | None
+    status: str
+    remarks: str | None
+    purchase_invoice_id: uuid.UUID | None = None
+    purchase_invoice_name: str | None = None
+    prepaid_account_id: uuid.UUID | None = None
+    expense_account_id: uuid.UUID | None = None
+    cost_center_id: uuid.UUID | None = None
+    company_id: uuid.UUID
+    usages: list[ServiceCreditUsageResponse]
+
+
+class ServiceCreditListItem(ORMModel):
+    id: uuid.UUID
+    name: str
+    item_code: str | None = None
+    item_name: str | None = None
+    supplier_name: str | None = None
+    purchased_qty: Decimal
+    consumed_qty: Decimal
+    balance_qty: Decimal
+    uom: str | None = None
+    status: str
 
 
 # --- reports ----------------------------------------------------------------------------------
@@ -437,3 +651,67 @@ class StockLedgerRow(BaseModel):
     incoming_rate: Decimal
     valuation_rate: Decimal
     stock_value_difference: Decimal
+
+
+class StockAgeingRow(BaseModel):
+    item_id: uuid.UUID
+    item_code: str
+    item_name: str
+    warehouse_id: uuid.UUID
+    warehouse_name: str
+    total_qty: Decimal
+    average_age_days: int
+    bucket_0_30: Decimal
+    bucket_31_60: Decimal
+    bucket_61_90: Decimal
+    bucket_90_plus: Decimal
+    stock_value: Decimal
+
+
+class ReorderRow(BaseModel):
+    """An item whose company-wide projected qty is below its reorder level."""
+
+    item_id: uuid.UUID
+    item_code: str
+    item_name: str
+    default_warehouse_id: uuid.UUID | None
+    default_warehouse_name: str | None
+    projected_qty: Decimal
+    reorder_level: Decimal
+    reorder_qty: Decimal
+    shortfall: Decimal
+    suggested_qty: Decimal
+
+
+class ReorderMaterialRequest(BaseModel):
+    """Body for the auto-reorder action; empty = all items below reorder level."""
+
+    item_ids: list[uuid.UUID] | None = None
+
+
+# --- serial numbers ---------------------------------------------------------------------------
+
+
+class SerialNoResponse(DocumentMeta):
+    serial_no: str
+    item_id: uuid.UUID
+    item_code: str | None = None
+    item_name: str | None = None
+    warehouse_id: uuid.UUID | None
+    status: str
+    purchase_voucher_type: str | None
+    purchase_voucher_id: uuid.UUID | None
+    delivery_voucher_id: uuid.UUID | None
+    warranty_expiry: date | None
+    company_id: uuid.UUID
+
+
+class SerialNoListItem(ORMModel):
+    id: uuid.UUID
+    serial_no: str
+    item_id: uuid.UUID
+    item_code: str | None = None
+    item_name: str | None = None
+    warehouse_id: uuid.UUID | None = None
+    status: str
+    warranty_expiry: date | None = None

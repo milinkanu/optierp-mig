@@ -34,7 +34,7 @@ export interface WorkspaceConfig {
 
 const SELLING: WorkspaceConfig = {
   key: "selling",
-  title: "Selling",
+  title: "Sales",
   statsEndpoint: "/selling/workspace",
   sidebar: [
     {
@@ -59,6 +59,8 @@ const SELLING: WorkspaceConfig = {
         { label: "Sales Partner", to: "/m/sales-partner" },
         { label: "Sales Person", to: "/m/sales-person" },
         { label: "Territory", to: "/m/territory" },
+        { label: "Payment Terms Template", to: "/m/payment-terms-template" },
+        { label: "Tax Category", to: "/m/tax-category" },
         { label: "Terms Template", to: "/m/terms-template" },
         { label: "UTM Source", to: "/m/utm-source" },
       ],
@@ -74,7 +76,7 @@ const SELLING: WorkspaceConfig = {
   ],
   cards: [
     {
-      title: "Selling",
+      title: "Sales",
       links: [
         { label: "Customer", to: "/m/customer" },
         { label: "Quotation", to: "/quotations" },
@@ -118,7 +120,7 @@ const SELLING: WorkspaceConfig = {
       links: [
         { label: "Tax Template", planned: true },
         { label: "Terms Template", to: "/m/terms-template" },
-        { label: "Selling Settings", to: "/settings" },
+        { label: "Sales Settings", to: "/settings" },
       ],
     },
     {
@@ -141,7 +143,7 @@ const SELLING: WorkspaceConfig = {
 
 const BUYING: WorkspaceConfig = {
   key: "buying",
-  title: "Buying",
+  title: "Purchases",
   statsEndpoint: "/buying/workspace",
   sidebar: [
     {
@@ -162,6 +164,8 @@ const BUYING: WorkspaceConfig = {
         { label: "Supplier Group", to: "/m/supplier-group" },
         { label: "Address", to: "/m/address" },
         { label: "Contact", to: "/m/contact" },
+        { label: "Payment Terms Template", to: "/m/payment-terms-template" },
+        { label: "Tax Category", to: "/m/tax-category" },
         { label: "Terms Template", to: "/m/terms-template" },
         { label: "Products & Services", to: "/items" },
       ],
@@ -170,7 +174,7 @@ const BUYING: WorkspaceConfig = {
   ],
   cards: [
     {
-      title: "Buying",
+      title: "Purchases",
       links: [
         { label: "Supplier", to: "/m/supplier" },
         { label: "Material Request", to: "/material-requests" },
@@ -207,7 +211,7 @@ const BUYING: WorkspaceConfig = {
       links: [
         { label: "Tax Template", planned: true },
         { label: "Terms Template", to: "/m/terms-template" },
-        { label: "Buying Settings", to: "/settings" },
+        { label: "Purchases Settings", to: "/settings" },
       ],
     },
     {
@@ -222,7 +226,7 @@ const BUYING: WorkspaceConfig = {
 
 const STOCK: WorkspaceConfig = {
   key: "stock",
-  title: "Stock",
+  title: "Inventory",
   statsEndpoint: "/stock/workspace",
   sidebar: [
     {
@@ -232,20 +236,40 @@ const STOCK: WorkspaceConfig = {
         { label: "Products & Services", to: "/items", icon: "🏷" },
         { label: "Warehouse", to: "/warehouses", icon: "🏬" },
         { label: "Stock Entry", to: "/stock-entries", icon: "↔" },
+        { label: "Stock Reconciliation", to: "/stock-reconciliations", icon: "🧮" },
         { label: "Material Request", to: "/material-requests", icon: "📋" },
+        { label: "Reorder", to: "/reorder", icon: "🔁" },
+        { label: "Service Credits", to: "/service-credits", icon: "⏱" },
         { label: "Stock Balance", to: "/stock-balance", icon: "📈" },
+        { label: "Stock Ledger", to: "/stock-balance?tab=ledger", icon: "📜" },
+        { label: "Stock Ageing", to: "/stock-balance?tab=ageing", icon: "⏳" },
+        { label: "Serial Numbers", to: "/serial-nos", icon: "🔢" },
+        { label: "Batches", to: "/m/batch", icon: "🏷️" },
         { label: "Purchase Receipt", to: "/purchase-receipts", icon: "📦" },
         { label: "Delivery Note", to: "/delivery-notes", icon: "🚚" },
       ],
     },
-    { title: "Reports", items: [{ label: "Reports", to: "/reports" }] },
+    {
+      title: "Reports",
+      items: [
+        { label: "Stock Balance", to: "/stock-balance" },
+        { label: "Stock Ledger", to: "/stock-balance?tab=ledger" },
+        { label: "Stock Ageing", to: "/stock-balance?tab=ageing" },
+        { label: "Reorder", to: "/reorder" },
+        { label: "General Ledger", to: "/reports?tab=general-ledger" },
+        { label: "Financial Reports", to: "/reports" },
+      ],
+    },
   ],
   cards: [
     {
       title: "Stock Transactions",
       links: [
         { label: "Stock Entry", to: "/stock-entries" },
+        { label: "Stock Reconciliation", to: "/stock-reconciliations" },
         { label: "Material Request", to: "/material-requests" },
+        { label: "Reorder", to: "/reorder" },
+        { label: "Service Credits", to: "/service-credits" },
         { label: "Purchase Receipt", to: "/purchase-receipts" },
         { label: "Delivery Note", to: "/delivery-notes" },
         { label: "Stock Balance", to: "/stock-balance" },
@@ -274,12 +298,21 @@ const STOCK: WorkspaceConfig = {
       title: "Key Reports",
       links: [
         { label: "Stock Balance", to: "/stock-balance" },
+        { label: "Stock Ledger", to: "/stock-balance?tab=ledger" },
+        { label: "Stock Ageing", to: "/stock-balance?tab=ageing" },
+        { label: "Reorder", to: "/reorder" },
+        { label: "General Ledger", to: "/reports?tab=general-ledger" },
         { label: "Financial Reports", to: "/reports" },
       ],
     },
   ],
 };
 
+// Accounting is organised into ERPNext-style sub-modules: each card below is one
+// sub-module (Invoicing, Payments, General Ledger, Taxes, Banking, Budget,
+// Accounts Setup, Financial Reports) grouping its screens, and the sidebar
+// mirrors the same grouping. Share Management + Subscription are flagged
+// `planned` (not built yet) to show the full sub-module set.
 const ACCOUNTING: WorkspaceConfig = {
   key: "accounting",
   title: "Accounting",
@@ -289,52 +322,154 @@ const ACCOUNTING: WorkspaceConfig = {
       items: [
         { label: "Home", to: "/", icon: "⌂" },
         { label: "Dashboard", to: "/accounting", icon: "▦" },
-        { label: "Sales Invoice", to: "/sales-invoices", icon: "🧾" },
-        { label: "Purchase Invoice", to: "/purchase-invoices", icon: "📥" },
-        { label: "Journal Entry", to: "/journal-entries", icon: "📒" },
-        { label: "Payment Entry", to: "/payment-entries", icon: "💸" },
       ],
     },
     {
-      title: "Setup",
+      title: "Invoicing",
       items: [
-        { label: "Reconciliation", to: "/payment-reconciliation" },
+        { label: "Sales Invoice", to: "/sales-invoices", icon: "🧾" },
+        { label: "Purchase Invoice", to: "/purchase-invoices", icon: "📥" },
+        { label: "Opening Invoices", to: "/opening-invoices" },
+      ],
+    },
+    {
+      title: "Payments",
+      items: [
+        { label: "Payment Entry", to: "/payment-entries", icon: "💸" },
+        { label: "Payment Reconciliation", to: "/payment-reconciliation" },
+        { label: "Statement of Accounts", to: "/statements", icon: "🧾" },
+        { label: "Payment Requests", to: "/payment-requests", icon: "💳" },
+        { label: "Dunning (Reminders)", to: "/dunning", icon: "⏰" },
+        { label: "Dunning Type", to: "/m/dunning-type" },
+      ],
+    },
+    {
+      title: "General Ledger",
+      items: [
+        { label: "Journal Entry", to: "/journal-entries", icon: "📒" },
+        { label: "Chart of Accounts", to: "/chart-of-accounts" },
+        { label: "General Ledger", to: "/reports?tab=general-ledger" },
+      ],
+    },
+    {
+      title: "Taxes",
+      items: [
+        { label: "Tax Template", to: "/tax-templates" },
+        { label: "Item Tax Template", to: "/m/item-tax-template" },
+        { label: "Tax Category", to: "/m/tax-category" },
+        { label: "TDS / TCS", to: "/m/tax-withholding-category" },
+      ],
+    },
+    {
+      title: "Banking",
+      items: [
+        { label: "Bank", to: "/m/bank" },
+        { label: "Bank Account", to: "/m/bank-account" },
+        { label: "Bank Reconciliation", to: "/bank-reconciliation" },
+        { label: "Uncleared Items", to: "/reports?tab=bank-recon" },
+      ],
+    },
+    {
+      title: "Budget",
+      items: [
         { label: "Budget", to: "/budgets" },
+        { label: "Budget Variance", to: "/reports?tab=budget-variance" },
+      ],
+    },
+    {
+      title: "Accounts Setup",
+      items: [
+        { label: "Fiscal Year", to: "/m/fiscal-year" },
+        { label: "Cost Center", to: "/m/cost-center" },
+        { label: "Mode of Payment", to: "/m/mode-of-payment" },
+        { label: "Payment Terms Template", to: "/m/payment-terms-template" },
         { label: "Terms Template", to: "/m/terms-template" },
       ],
     },
-    { title: "Reports", items: [{ label: "Reports", to: "/reports" }] },
+    {
+      title: "Reports",
+      items: [
+        { label: "Financial Reports", to: "/reports" },
+        { label: "Gross Profit", to: "/reports?tab=gross-profit" },
+      ],
+    },
   ],
   cards: [
     {
-      title: "Transactions",
+      title: "Invoicing",
       links: [
         { label: "Sales Invoice", to: "/sales-invoices" },
         { label: "Purchase Invoice", to: "/purchase-invoices" },
-        { label: "Journal Entry", to: "/journal-entries" },
-        { label: "Payment Entry", to: "/payment-entries" },
+        { label: "Opening Invoices", to: "/opening-invoices" },
       ],
     },
     {
-      title: "Banking & Reconciliation",
+      title: "Payments",
       links: [
+        { label: "Payment Entry", to: "/payment-entries" },
         { label: "Payment Reconciliation", to: "/payment-reconciliation" },
-        { label: "Bank Reconciliation", planned: true },
       ],
     },
     {
-      title: "Setup",
+      title: "General Ledger",
+      links: [
+        { label: "Journal Entry", to: "/journal-entries" },
+        { label: "Chart of Accounts", to: "/chart-of-accounts" },
+        { label: "General Ledger", to: "/reports?tab=general-ledger" },
+      ],
+    },
+    {
+      title: "Taxes",
+      links: [
+        { label: "Tax Template", to: "/tax-templates" },
+        { label: "Item Tax Template", to: "/m/item-tax-template" },
+        { label: "Tax Category", to: "/m/tax-category" },
+        { label: "TDS / TCS Category", to: "/m/tax-withholding-category" },
+      ],
+    },
+    {
+      title: "Banking",
+      links: [
+        { label: "Bank", to: "/m/bank" },
+        { label: "Bank Account", to: "/m/bank-account" },
+        { label: "Bank Reconciliation", to: "/bank-reconciliation" },
+        { label: "Uncleared Items", to: "/reports?tab=bank-recon" },
+      ],
+    },
+    {
+      title: "Budget",
       links: [
         { label: "Budget", to: "/budgets" },
-        { label: "Terms Template", to: "/m/terms-template" },
-        { label: "Chart of Accounts", planned: true },
-        { label: "Tax Template", planned: true },
-        { label: "Tax Category", planned: true },
+        { label: "Budget Variance", to: "/reports?tab=budget-variance" },
       ],
     },
     {
-      title: "Key Reports",
-      links: [{ label: "Financial Reports", to: "/reports" }],
+      title: "Accounts Setup",
+      links: [
+        { label: "Fiscal Year", to: "/m/fiscal-year" },
+        { label: "Cost Center", to: "/m/cost-center" },
+        { label: "Mode of Payment", to: "/m/mode-of-payment" },
+        { label: "Payment Terms Template", to: "/m/payment-terms-template" },
+        { label: "Terms Template", to: "/m/terms-template" },
+      ],
+    },
+    {
+      title: "Financial Reports",
+      links: [
+        { label: "Trial Balance", to: "/reports?tab=trial-balance" },
+        { label: "Profit & Loss", to: "/reports?tab=profit-loss" },
+        { label: "Balance Sheet", to: "/reports?tab=balance-sheet" },
+        { label: "Gross Profit", to: "/reports?tab=gross-profit" },
+        { label: "Receivable / Payable", to: "/reports?tab=receivable" },
+      ],
+    },
+    {
+      title: "Share Management",
+      links: [{ label: "Shareholders & transfers", planned: true }],
+    },
+    {
+      title: "Subscription",
+      links: [{ label: "Recurring billing", planned: true }],
     },
   ],
 };

@@ -189,6 +189,13 @@ async def cancel_journal_entry(
     entry.docstatus = DOCSTATUS_CANCELLED
     entry.modified_by = user.id
     await db.flush()
+    # A cancelled entry can no longer back a bank reconciliation — free any line
+    # matched to it (lazy import avoids a module-level cycle).
+    from app.services import bank_reconciliation_tool
+
+    await bank_reconciliation_tool.release_matched_transactions(
+        db, "Journal Entry", entry.id, user_id=user.id
+    )
     await log_audit(
         db, doctype="Journal Entry", document_id=entry.id, action="CANCEL",
         user_id=user.id, company_id=entry.company_id,

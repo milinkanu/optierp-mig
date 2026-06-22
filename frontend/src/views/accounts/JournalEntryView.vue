@@ -2,6 +2,7 @@
 // Journal Entry list + creation in one view (rows editor with live balance).
 
 import { computed, onMounted, ref } from "vue";
+import { useRouter } from "vue-router";
 import DataTable, { type Column } from "@/components/shared/DataTable.vue";
 import PaginationFooter from "@/components/shared/PaginationFooter.vue";
 import StatusBadge from "@/components/shared/StatusBadge.vue";
@@ -13,7 +14,9 @@ import { formatCurrency, formatDate, formatNumber } from "@/utils/format";
 import type { ErrorEnvelope } from "@/types/core";
 import type { JournalEntryListItem, JournalEntryRowIn } from "@/types/accounts";
 
+const router = useRouter();
 const store = useAccountsStore();
+const openDetail = (row: JournalEntryListItem): void => void router.push(`/journal-entries/${row.id}`);
 const companyCurrency = useCompanyCurrency();
 const { items, total, page, pageSize, loading, fetchList, goToPage } = useList<JournalEntryListItem>("/journal-entries");
 
@@ -127,9 +130,9 @@ onMounted(async () => {
       </div>
     </form>
 
-    <DataTable :columns="columns" :rows="items" :loading="loading">
+    <DataTable :columns="columns" :rows="items" :loading="loading" @row-click="openDetail">
       <template #cell-name="{ row }">
-        <span class="font-medium text-gray-900">{{ row.name }}</span>
+        <span class="font-medium text-primary">{{ row.name }}</span>
       </template>
       <template #cell-posting_date="{ value }">
         {{ formatDate(String(value)) }}

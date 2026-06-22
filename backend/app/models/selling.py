@@ -47,6 +47,7 @@ class Customer(Base, DocumentMixin, CompanyScopedMixin):
         String(20), nullable=False, default="Company", server_default=text("'Company'")
     )  # Company | Individual
     tax_id: Mapped[str | None] = mapped_column(String(80))
+    email_id: Mapped[str | None] = mapped_column(String(140))  # for emailing invoices/statements
     default_currency: Mapped[str | None] = mapped_column(String(3))
     # Overrides the company default receivable account when set
     receivable_account_id: Mapped[uuid.UUID | None] = mapped_column(
@@ -242,6 +243,11 @@ class Address(Base, DocumentMixin, CompanyScopedMixin):
     )
     supplier_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("suppliers.id", ondelete="SET NULL")
+    )
+    # True for the company's own addresses (registered office / billing / dispatch),
+    # shown on printed documents; customer_id/supplier_id are NULL for these.
+    is_company_address: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false")
     )
     disabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
 
@@ -489,6 +495,26 @@ class Quotation(Base, DocumentMixin, CompanyScopedMixin, VoucherMixin, TotalsMix
     contact_person_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("contacts.id", ondelete="SET NULL")
     )
+    # More Info section (selling): campaign / source / territory / customer group / partner
+    campaign_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("campaigns.id", use_alter=True, name="fk_qtn_campaign", ondelete="SET NULL")
+    )
+    source_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("utm_sources.id", use_alter=True, name="fk_qtn_source", ondelete="SET NULL")
+    )
+    territory_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("territories.id", use_alter=True, name="fk_qtn_territory", ondelete="SET NULL")
+    )
+    customer_group_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("customer_groups.id", use_alter=True, name="fk_qtn_cust_group", ondelete="SET NULL")
+    )
+    sales_partner_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("sales_partners.id", use_alter=True, name="fk_qtn_partner", ondelete="SET NULL")
+    )
+    payment_terms_template_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("payment_terms_templates.id", use_alter=True, name="fk_qtn_payment_terms", ondelete="SET NULL"),
+    )
     status: Mapped[str] = mapped_column(
         String(30), nullable=False, default="Draft", server_default=text("'Draft'")
     )  # Draft | Open | Ordered | Cancelled | Expired
@@ -576,6 +602,26 @@ class SalesOrder(Base, DocumentMixin, CompanyScopedMixin, VoucherMixin, TotalsMi
     )
     contact_person_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("contacts.id", ondelete="SET NULL")
+    )
+    # More Info section (selling): campaign / source / territory / customer group / partner
+    campaign_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("campaigns.id", use_alter=True, name="fk_so_campaign", ondelete="SET NULL")
+    )
+    source_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("utm_sources.id", use_alter=True, name="fk_so_source", ondelete="SET NULL")
+    )
+    territory_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("territories.id", use_alter=True, name="fk_so_territory", ondelete="SET NULL")
+    )
+    customer_group_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("customer_groups.id", use_alter=True, name="fk_so_cust_group", ondelete="SET NULL")
+    )
+    sales_partner_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("sales_partners.id", use_alter=True, name="fk_so_partner", ondelete="SET NULL")
+    )
+    payment_terms_template_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("payment_terms_templates.id", use_alter=True, name="fk_so_payment_terms", ondelete="SET NULL"),
     )
 
     items: Mapped[list["SalesOrderItem"]] = relationship(

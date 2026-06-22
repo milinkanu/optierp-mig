@@ -47,7 +47,7 @@ async def _load_tax_rows(db: AsyncSession, payload: QuotationCreate, customer) -
         from app.services.accounts_masters import resolve_tax_template
 
         template = await resolve_tax_template(
-            db, customer.company_id, "sales", customer.tax_category_id
+            db, customer.company_id, "sales", customer.tax_category_id, party_gstin=customer.tax_id
         )
         if template is None:
             return []
@@ -98,7 +98,16 @@ async def create_quotation(
         ship_row = await shipping_tax_row(db, company.id, payload.shipping_rule_id, subtotal)
         if ship_row is not None:
             tax_rows_in = [*tax_rows_in, ship_row]
-    engine_items = [ItemRow(qty=row.qty, rate=rate) for row, rate in zip(payload.items, rates)]
+    engine_items = [
+        ItemRow(
+            qty=row.qty,
+            rate=(row.price_list_rate if row.price_list_rate is not None else rate),
+            price_list_rate=(row.price_list_rate if row.price_list_rate is not None else rate),
+            discount_percentage=row.discount_percentage,
+            discount_amount=row.discount_amount,
+        )
+        for row, rate in zip(payload.items, rates)
+    ]
     engine_taxes = [
         TaxRow(charge_type=t.charge_type, rate=t.rate, tax_amount=t.tax_amount, row_id=t.row_id)
         for t in tax_rows_in
@@ -124,6 +133,12 @@ async def create_quotation(
         customer_address_id=payload.customer_address_id,
         shipping_address_id=payload.shipping_address_id,
         contact_person_id=payload.contact_person_id,
+        campaign_id=payload.campaign_id,
+        source_id=payload.source_id,
+        territory_id=payload.territory_id,
+        customer_group_id=payload.customer_group_id,
+        sales_partner_id=payload.sales_partner_id,
+        payment_terms_template_id=payload.payment_terms_template_id,
         currency=currency,
         conversion_rate=payload.conversion_rate,
         remarks=payload.remarks,
@@ -159,6 +174,10 @@ async def create_quotation(
                 description=row.description or item.description,
                 qty=engine_item.qty,
                 uom=row.uom or item.stock_uom,
+                price_list_rate=engine_item.price_list_rate or engine_item.rate,
+                base_price_list_rate=engine_item.base_price_list_rate,
+                discount_percentage=engine_item.discount_percentage,
+                discount_amount=engine_item.discount_amount,
                 rate=engine_item.rate,
                 amount=engine_item.amount,
                 base_rate=engine_item.base_rate,

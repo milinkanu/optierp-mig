@@ -6,8 +6,16 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
+# Native libraries required by WeasyPrint (PDF engine, Section 4.5). Kept above the
+# source COPY so this layer stays cached across app changes.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libpango-1.0-0 libpangoft2-1.0-0 libharfbuzz0b libfontconfig1 \
+        libcairo2 libgdk-pixbuf-2.0-0 fonts-dejavu-core \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY pyproject.toml ./
 COPY app ./app
+COPY print_formats ./print_formats
 COPY migrations ./migrations
 COPY alembic.ini ./
 COPY data ./data

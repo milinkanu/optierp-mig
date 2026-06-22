@@ -1,0 +1,114 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+/* MANUAL_REVIEW: WeasyPrint assumed as the PDF engine (vs. wkhtmltopdf). */
+/* 1) Theme variables default here; the selected theme file (included at the end of
+      this block) overrides them and may add a few rules. */
+:root {
+  --accent: #4f46e5; --accent-fg: #ffffff; --ink: #1a1a1a; --muted: #6b7280;
+  --line: #e5e7eb; --head-bg: #f3f4f6; --zebra: #fafafa;
+  --font: "Helvetica Neue", Arial, sans-serif; --title: 17px;
+}
+@page { size: A4; margin: 16mm 14mm 20mm 14mm; }
+* { box-sizing: border-box; }
+body { font-family: var(--font); font-size: 11px; color: var(--ink); margin: 0; }
+
+.ph-watermark { position: fixed; top: 40%; left: 0; right: 0; z-index: -1; text-align: center;
+  font-size: 96px; font-weight: 800; color: rgba(120, 120, 120, .10);
+  transform: rotate(-24deg); letter-spacing: .12em; }
+
+.ph-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px;
+  padding-bottom: 10px; border-bottom: 2px solid var(--accent); }
+.ph-brand { display: flex; gap: 12px; align-items: flex-start; }
+.ph-logo { max-height: 56px; max-width: 170px; object-fit: contain; }
+.ph-company { font-size: 16px; font-weight: 700; color: var(--accent); }
+.ph-addr, .ph-contact, .ph-tax { color: var(--muted); font-size: 10px; line-height: 1.45; margin-top: 2px; }
+.ph-docmeta { text-align: right; }
+.ph-title { font-size: var(--title); font-weight: 700; text-transform: uppercase; letter-spacing: .03em; }
+.ph-docno { color: var(--muted); margin-top: 2px; }
+.ph-status { display: inline-block; margin-top: 5px; padding: 2px 10px; border-radius: 10px;
+  font-size: 10px; font-weight: 600; background: var(--head-bg); color: var(--accent); }
+.ph-copy { margin-top: 5px; font-size: 9px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+
+.ph-body { margin-top: 14px; }
+.ph-parties { display: flex; justify-content: space-between; gap: 16px; }
+.ph-party.ph-right { text-align: right; }
+.ph-label { font-size: 9px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+.ph-party-name { font-weight: 700; font-size: 12px; }
+.ph-muted { color: var(--muted); }
+
+table.ph-items { width: 100%; border-collapse: collapse; margin-top: 14px; }
+table.ph-items th { background: var(--head-bg); text-align: left; padding: 7px 8px; font-size: 9px;
+  text-transform: uppercase; letter-spacing: .04em; border-bottom: 1px solid var(--line); }
+table.ph-items td { padding: 7px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+table.ph-items tbody tr:nth-child(even) { background: var(--zebra); }
+.num { text-align: right; white-space: nowrap; }
+
+table.ph-totals { width: 47%; margin-left: auto; margin-top: 10px; border-collapse: collapse; }
+table.ph-totals td { padding: 4px 8px; }
+table.ph-totals tr.grand td { font-weight: 700; font-size: 12px; border-top: 1.5px solid var(--ink); }
+
+.ph-words { margin-top: 12px; font-size: 11px; }
+.ph-remarks { margin-top: 6px; font-size: 10px; }
+
+.ph-footer { margin-top: 20px; padding-top: 10px; border-top: 1px solid var(--line); }
+.ph-terms { font-size: 10px; white-space: pre-line; margin-bottom: 12px; }
+.ph-footrow { display: flex; justify-content: space-between; gap: 16px; align-items: flex-end; }
+.ph-bank { font-size: 10px; line-height: 1.5; }
+.ph-bank strong, .ph-terms strong { color: var(--accent); }
+.ph-sign { text-align: right; font-size: 10px; min-width: 190px; }
+.ph-sign-img { max-height: 50px; max-width: 170px; object-fit: contain; display: block; margin: 0 0 2px auto; }
+.ph-sign-line { border-top: 1px solid var(--ink); padding-top: 3px; margin-top: 28px; font-weight: 600; }
+.ph-genline { margin-top: 14px; text-align: center; font-size: 8px; color: #aaa; }
+
+/* 2) Selected theme — overrides variables/rules above. */
+{% include "themes/" ~ theme ~ ".css" %}
+{% block extra_css %}{% endblock %}
+</style>
+</head>
+<body>
+{% if docstatus == 0 %}<div class="ph-watermark">DRAFT</div>{% elif docstatus == 2 %}<div class="ph-watermark">CANCELLED</div>{% endif %}
+
+<div class="ph-header">
+  <div class="ph-brand">
+    {% if profile.logo_data_uri %}<img class="ph-logo" src="{{ profile.logo_data_uri }}" alt="">{% endif %}
+    <div>
+      <div class="ph-company">{{ company.company_name }}</div>
+      {% if address %}<div class="ph-addr">{{ address.address_line1 }}{% if address.address_line2 %}, {{ address.address_line2 }}{% endif %}{% if address.city or address.state or address.pincode %}<br>{{ address.city or "" }}{% if address.city and (address.state or address.pincode) %}, {% endif %}{{ address.state or "" }}{% if address.pincode %} - {{ address.pincode }}{% endif %}{% endif %}{% if address.country %}<br>{{ address.country }}{% endif %}</div>{% endif %}
+      <div class="ph-contact">{% if profile.phone %}Ph: {{ profile.phone }}{% endif %}{% if profile.email %}{% if profile.phone %} &middot; {% endif %}{{ profile.email }}{% endif %}{% if profile.website %}<br>{{ profile.website }}{% endif %}</div>
+      {% if company.tax_id %}<div class="ph-tax">Tax ID: {{ company.tax_id }}</div>{% endif %}
+    </div>
+  </div>
+  <div class="ph-docmeta">
+    <div class="ph-title">{{ doc_title }}</div>
+    <div class="ph-docno">{{ doc.name }}</div>
+    {% if doc.status %}<span class="ph-status">{{ doc.status }}</span>{% endif %}
+    {% if copy_label %}<div class="ph-copy">{{ copy_label }}</div>{% endif %}
+  </div>
+</div>
+
+<div class="ph-body">
+  {% block body %}{% endblock %}
+</div>
+
+<div class="ph-footer">
+  {% if doc.terms %}<div class="ph-terms"><strong>Terms &amp; Conditions</strong>
+{{ doc.terms }}</div>{% endif %}
+  <div class="ph-footrow">
+    <div>
+      {% if toggles.bank_details and profile.bank and profile.bank.bank_name %}<div class="ph-bank"><strong>Bank Details</strong><br>{{ profile.bank.bank_name }}{% if profile.bank.branch %}, {{ profile.bank.branch }}{% endif %}{% if profile.bank.account_no %}<br>A/c No: {{ profile.bank.account_no }}{% endif %}{% if profile.bank.ifsc %}<br>IFSC: {{ profile.bank.ifsc }}{% endif %}{% if profile.bank.swift %} &middot; SWIFT: {{ profile.bank.swift }}{% endif %}</div>{% endif %}
+    </div>
+    {% if toggles.signatory %}<div class="ph-sign">
+      {% if profile.signature_data_uri %}<img class="ph-sign-img" src="{{ profile.signature_data_uri }}" alt="">{% endif %}
+      <div class="ph-sign-line">For {{ company.company_name }}</div>
+      {% if profile.signatory_name %}<div>{{ profile.signatory_name }}</div>{% endif %}
+      {% if profile.signatory_designation %}<div class="ph-muted">{{ profile.signatory_designation }}</div>{% endif %}
+      <div class="ph-muted">Authorised Signatory</div>
+    </div>{% endif %}
+  </div>
+  <div class="ph-genline">Generated {{ generated_on }}</div>
+</div>
+</body>
+</html>

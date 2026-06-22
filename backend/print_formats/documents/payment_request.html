@@ -1,0 +1,27 @@
+{% extends "base/layout.html" %}
+{% import "base/_macros.html" as m %}
+{% block body %}
+<div class="ph-parties">
+  <div class="ph-party">
+    <div class="ph-label">Payment Requested From</div>
+    <div class="ph-party-name">{{ party.customer_name if party else (doc.customer_name or "—") }}</div>
+    {% if party and party.tax_id %}<div class="ph-muted">GSTIN: {{ party.tax_id }}</div>{% endif %}
+  </div>
+  <div class="ph-party ph-right">
+    <div><span class="ph-muted">Date:</span> {{ doc.posting_date }}</div>
+    {% if doc.due_date %}<div><span class="ph-muted">Pay By:</span> {{ doc.due_date }}</div>{% endif %}
+    {% if doc.status %}<div><span class="ph-muted">Status:</span> {{ doc.status }}</div>{% endif %}
+  </div>
+</div>
+
+{% if doc.message %}<p class="ph-words">{{ doc.message }}</p>{% else %}
+<p class="ph-words">Please find below the amount due. Kindly arrange payment by the date shown.</p>
+{% endif %}
+
+<table class="ph-totals" style="width:55%">
+  <tr class="grand"><td>Amount Due{% if doc.currency %} ({{ doc.currency }}){% endif %}</td><td class="num">{{ m.money(doc.amount) }}</td></tr>
+</table>
+
+{% if doc.payment_url %}<p class="ph-remarks"><strong>Pay online:</strong> {{ doc.payment_url }}</p>{% endif %}
+<p class="ph-remarks ph-muted">Please use the bank details below for payment, quoting reference {{ doc.name }}.</p>
+{% endblock %}

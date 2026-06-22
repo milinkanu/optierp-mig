@@ -3,12 +3,12 @@
 import uuid
 from datetime import date
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import NotFoundError, ValidationError
 from app.core.security import CurrentUser
-from app.models.stock import Item, ItemGroup, ItemPrice, PriceList, Warehouse
+from app.models.stock import Bin, Item, ItemGroup, ItemPrice, PriceList, SerialNo, Warehouse
 from app.schemas.stock import (
     ItemCreate,
     ItemGroupCreate,
@@ -16,6 +16,7 @@ from app.schemas.stock import (
     ItemUpdate,
     PriceListCreate,
     WarehouseCreate,
+    WarehouseUpdate,
 )
 from app.services.accounts_common import get_company
 from app.services.audit import log_audit
@@ -93,6 +94,36 @@ async def list_warehouses(db: AsyncSession, company_id: uuid.UUID | None) -> lis
     return list((await db.execute(stmt)).scalars().all())
 
 
+async def get_warehouse_by_id(
+    db: AsyncSession, warehouse_id: uuid.UUID, company_id: uuid.UUID | None
+) -> Warehouse:
+    warehouse = await db.get(Warehouse, warehouse_id)
+    if warehouse is None or warehouse.company_id != company_id:
+        raise NotFoundError("Warehouse not found")
+    return warehouse
+
+
+async def update_warehouse(
+    db: AsyncSession, warehouse_id: uuid.UUID, payload: WarehouseUpdate, user: CurrentUser
+) -> Warehouse:
+    warehouse = await get_warehouse_by_id(db, warehouse_id, user.company_id)
+    data = payload.model_dump(exclude_unset=True)
+    if data.get("parent_warehouse_id"):
+        parent = await db.get(Warehouse, data["parent_warehouse_id"])
+        if parent is None or parent.company_id != warehouse.company_id:
+            raise NotFoundError("Parent warehouse not found")
+        if not parent.is_group:
+            raise ValidationError("Parent warehouse must be a group node", field="parent_warehouse_id")
+        if parent.id == warehouse.id:
+            raise ValidationError("A warehouse cannot be its own parent", field="parent_warehouse_id")
+    for field_name, value in data.items():
+        setattr(warehouse, field_name, value)
+    warehouse.modified_by = user.id
+    await db.flush()
+    await db.commit()
+    return await get_warehouse_by_id(db, warehouse.id, user.company_id)
+
+
 # --- items -------------------------------------------------------------------------
 
 
@@ -115,6 +146,12 @@ async def create_item(db: AsyncSession, payload: ItemCreate, user: CurrentUser) 
         description=payload.description,
         item_group_id=payload.item_group_id,
         stock_uom=payload.stock_uom,
+        purchase_uom=payload.purchase_uom,
+        purchase_uom_factor=payload.purchase_uom_factor,
+        sales_uom=payload.sales_uom,
+        sales_uom_factor=payload.sales_uom_factor,
+        has_serial_no=payload.has_serial_no,
+        has_batch_no=payload.has_batch_no,
         is_stock_item=payload.is_stock_item,
         is_sales_item=payload.is_sales_item,
         is_purchase_item=payload.is_purchase_item,
@@ -123,6 +160,7 @@ async def create_item(db: AsyncSession, payload: ItemCreate, user: CurrentUser) 
         valuation_rate=payload.valuation_rate,
         income_account_id=payload.income_account_id,
         expense_account_id=payload.expense_account_id,
+        item_tax_template_id=payload.item_tax_template_id,
         default_warehouse_id=payload.default_warehouse_id,
         reorder_level=payload.reorder_level,
         reorder_qty=payload.reorder_qty,
@@ -150,7 +188,35 @@ async def update_item(
     if user.company_id is None:
         raise ValidationError("An active company is required")
     item = await get_item(db, item_id, user.company_id, allow_disabled=True)
-    for field_name, value in payload.model_dump(exclude_unset=True).items():
+    data = payload.model_dump(exclude_unset=True)
+    # Tracking flags can't be toggled once the item carries stock: turning serial
+    # tracking on would leave existing In-Stock units with no serials (the count
+    # rule then makes them un-deliverable), and either flag flips the validation
+    # every subsequent line must satisfy. Block the toggle while stock is on hand.
+    toggling_serial = "has_serial_no" in data and data["has_serial_no"] != item.has_serial_no
+    toggling_batch = "has_batch_no" in data and data["has_batch_no"] != item.has_batch_no
+    if toggling_serial or toggling_batch:
+        # count bins with a non-zero balance, NOT a net SUM — a SUM nets +10 in WH-A
+        # against -10 in WH-B (reachable when negative stock is allowed) to zero and
+        # would wrongly let the toggle through while real stock is on hand
+        on_hand_bins = await db.scalar(
+            select(func.count()).select_from(Bin).where(
+                Bin.company_id == item.company_id, Bin.item_id == item.id, Bin.actual_qty != 0
+            )
+        )
+        serial_count = await db.scalar(
+            select(func.count()).select_from(SerialNo).where(
+                SerialNo.company_id == item.company_id, SerialNo.item_id == item.id
+            )
+        )
+        if (on_hand_bins or 0) > 0 or (serial_count or 0) > 0:
+            flag = "serial-number" if toggling_serial else "batch"
+            raise ValidationError(
+                f"Cannot change {flag} tracking while the item has stock on hand "
+                "or existing serial numbers. Zero out the stock first.",
+                field="has_serial_no" if toggling_serial else "has_batch_no",
+            )
+    for field_name, value in data.items():
         setattr(item, field_name, value)
     item.modified_by = user.id
     await db.flush()

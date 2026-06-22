@@ -25,12 +25,14 @@ from app.services.accounts_common import (
     get_company,
     get_customer,
     get_receivable_account,
+    item_tax_rates,
     require_draft,
     require_submitted,
     set_invoice_status,
 )
 from app.services.audit import log_audit
 from app.services.pagination import paginate
+from app.services.stock_common import resolve_conversion_factor
 from app.services.taxes_and_totals import ItemRow, TaxRow, calculate_taxes_and_totals
 
 ZERO = Decimal("0")
@@ -119,7 +121,7 @@ async def _load_tax_rows(db: AsyncSession, payload: SalesInvoiceCreate, customer
         from app.services.accounts_masters import resolve_tax_template
 
         template = await resolve_tax_template(
-            db, customer.company_id, "sales", customer.tax_category_id
+            db, customer.company_id, "sales", customer.tax_category_id, party_gstin=customer.tax_id
         )
         if template is None:
             return []
@@ -134,6 +136,7 @@ async def _load_tax_rows(db: AsyncSession, payload: SalesInvoiceCreate, customer
             account_head_id=d.account_head_id,
             cost_center_id=d.cost_center_id,
             description=d.description,
+            included_in_print_rate=d.included_in_print_rate,
         )
         for d in template.details
     ]
@@ -155,16 +158,33 @@ async def create_sales_invoice(
         db, customer, company.id, currency, payload.items,
         sign=Decimal("-1") if payload.is_return else Decimal("1"),
     )
-    tax_rows_in = await _load_tax_rows(db, payload, customer)
+    # Opening (migration-in) invoices carry no tax — they just establish the
+    # outstanding receivable against the Temporary Opening account.
+    tax_rows_in = [] if payload.is_opening else await _load_tax_rows(db, payload, customer)
+
+    # per-item GST overrides (Item Tax Template) keyed by tax account head
+    item_rates = await item_tax_rates(db, payload.items)
 
     # run the calculation engine
-    engine_items = [ItemRow(qty=item.qty, rate=item.rate) for item in payload.items]
+    engine_items = [
+        ItemRow(
+            qty=item.qty,
+            rate=(item.price_list_rate if item.price_list_rate is not None else item.rate),
+            price_list_rate=(item.price_list_rate if item.price_list_rate is not None else item.rate),
+            discount_percentage=item.discount_percentage,
+            discount_amount=item.discount_amount,
+            item_tax_rate=item_rates.get(item.item_id, {}),
+        )
+        for item in payload.items
+    ]
     engine_taxes = [
         TaxRow(
             charge_type=t.charge_type,
             rate=t.rate,
             tax_amount=t.tax_amount,
             row_id=t.row_id,
+            included_in_print_rate=t.included_in_print_rate,
+            account_head_id=t.account_head_id,
         )
         for t in tax_rows_in
     ]
@@ -176,6 +196,23 @@ async def create_sales_invoice(
         additional_discount_percentage=payload.additional_discount_percentage,
         discount_amount=payload.discount_amount,
     )
+
+    # India TCS: collect rate% of the taxable (net) base FROM the customer — added
+    # on top of the invoice and owed to the govt (TCS Payable account).
+    tax_withholding_amount = ZERO
+    if payload.tax_withholding_category_id is not None:
+        from app.models.accounts import TaxWithholdingCategory
+
+        twc = await db.get(TaxWithholdingCategory, payload.tax_withholding_category_id)
+        if twc is None or twc.company_id != company.id:
+            raise NotFoundError("Tax withholding category not found")
+        if twc.kind != "TCS":
+            raise ValidationError(
+                "Sales invoices use a TCS collection category", field="tax_withholding_category_id"
+            )
+        tax_withholding_amount = (totals.base_net_total * twc.rate / Decimal("100")).quantize(
+            Decimal("0.01")
+        )
 
     sign = Decimal("-1") if payload.is_return else Decimal("1")
     name = await get_next_name(db, NAMING_SERIES["Sales Invoice"], company.id)
@@ -191,6 +228,7 @@ async def create_sales_invoice(
         conversion_rate=payload.conversion_rate,
         remarks=payload.remarks,
         is_return=payload.is_return,
+        is_opening=payload.is_opening,
         return_against_id=payload.return_against_id,
         po_no=payload.po_no,
         po_date=payload.po_date,
@@ -198,6 +236,7 @@ async def create_sales_invoice(
         customer_address_id=payload.customer_address_id,
         shipping_address_id=payload.shipping_address_id,
         contact_person_id=payload.contact_person_id,
+        payment_terms_template_id=payload.payment_terms_template_id,
         apply_discount_on=payload.apply_discount_on,
         additional_discount_percentage=payload.additional_discount_percentage,
         discount_amount=totals.discount_amount,
@@ -213,6 +252,8 @@ async def create_sales_invoice(
         rounded_total=totals.rounded_total * sign,
         rounding_adjustment=totals.rounding_adjustment * sign,
         outstanding_amount=ZERO,
+        tax_withholding_category_id=payload.tax_withholding_category_id,
+        tax_withholding_amount=tax_withholding_amount * sign,
         owner=user.id,
         modified_by=user.id,
     )
@@ -221,19 +262,26 @@ async def create_sales_invoice(
 
     default_income = company.default_income_account_id
     for idx, (item_in, engine_item) in enumerate(zip(payload.items, engine_items), start=1):
-        income_account_id = item_in.account_id
-        if income_account_id is None and item_in.item_id is not None:
+        item_master = None
+        if item_in.item_id is not None:
             from app.models.stock import Item
 
             item_master = await db.get(Item, item_in.item_id)
-            if item_master is not None:
-                income_account_id = item_master.income_account_id
+        income_account_id = item_in.account_id
+        if income_account_id is None and item_master is not None:
+            income_account_id = item_master.income_account_id
         income_account_id = income_account_id or default_income
         if income_account_id is None:
             raise ValidationError(
                 f"Item row {idx}: no income account given and the company has no default",
                 field="items",
             )
+        # multi-UOM: stock_qty is informational on an invoice (billing caps stay in
+        # document qty / amount), but kept consistent for display/reporting
+        factor = (
+            resolve_conversion_factor(item_master, item_in.uom, strict=False)
+            if item_master else Decimal("1")
+        )
         db.add(
             SalesInvoiceItem(
                 invoice_id=invoice.id,
@@ -243,6 +291,12 @@ async def create_sales_invoice(
                 description=item_in.description,
                 qty=engine_item.qty * sign,
                 uom=item_in.uom,
+                conversion_factor=factor,
+                stock_qty=engine_item.qty * sign * factor,
+                price_list_rate=engine_item.price_list_rate or engine_item.rate,
+                base_price_list_rate=engine_item.base_price_list_rate,
+                discount_percentage=engine_item.discount_percentage,
+                discount_amount=engine_item.discount_amount,
                 rate=engine_item.rate,
                 amount=engine_item.amount * sign,
                 base_rate=engine_item.base_rate,
@@ -267,6 +321,7 @@ async def create_sales_invoice(
                 account_head_id=tax_in.account_head_id,
                 cost_center_id=tax_in.cost_center_id,
                 description=tax_in.description,
+                included_in_print_rate=engine_tax.included_in_print_rate,
                 tax_amount=engine_tax.tax_amount * sign,
                 total=engine_tax.total * sign,
                 base_tax_amount=engine_tax.base_tax_amount * sign,
@@ -312,22 +367,39 @@ async def list_sales_invoices(
     return await paginate(db, stmt, page, page_size)
 
 
-def _build_gl_rows(invoice: SalesInvoice, customer_name: str) -> list[gl.GLRow]:
+def _build_gl_rows(
+    invoice: SalesInvoice, customer_name: str, tcs_account_id: uuid.UUID | None = None
+) -> list[gl.GLRow]:
     rows: list[gl.GLRow] = []
     receivable_amount = base_payable_total(invoice)
 
-    # Dr receivable (party row); against_voucher self-links for AR tracking
+    # India TCS: collected from the customer — the receivable GROWS by the TCS and
+    # the collected amount is credited to TCS payable (owed to the govt).
+    tcs = invoice.tax_withholding_amount if tcs_account_id is not None else ZERO
+    party_amount = receivable_amount + tcs
+
+    # Dr receivable (party row), incl. any TCS; against_voucher self-links for AR
     rows.append(
         gl.GLRow(
             account_id=invoice.debit_to_id,
-            debit=receivable_amount if receivable_amount > ZERO else ZERO,
-            credit=-receivable_amount if receivable_amount < ZERO else ZERO,
+            debit=party_amount if party_amount > ZERO else ZERO,
+            credit=-party_amount if party_amount < ZERO else ZERO,
             party_type="Customer",
             party_id=invoice.customer_id,
             against_voucher_type="Sales Invoice",
             against_voucher_id=invoice.id,
         )
     )
+    if tcs != ZERO and tcs_account_id is not None:
+        rows.append(
+            gl.GLRow(
+                account_id=tcs_account_id,
+                credit=tcs if tcs > ZERO else ZERO,
+                debit=-tcs if tcs < ZERO else ZERO,
+                against=customer_name,
+                remarks="TCS collected",
+            )
+        )
     # Cr income per item
     for item in invoice.items:
         rows.append(
@@ -363,7 +435,13 @@ async def submit_sales_invoice(
     company = await get_company(db, invoice.company_id)
     customer = await get_customer(db, invoice.customer_id, invoice.company_id)
 
-    rows = _build_gl_rows(invoice, customer.customer_name)
+    tcs_account_id = None
+    if invoice.tax_withholding_category_id is not None and invoice.tax_withholding_amount != ZERO:
+        from app.models.accounts import TaxWithholdingCategory
+
+        twc = await db.get(TaxWithholdingCategory, invoice.tax_withholding_category_id)
+        tcs_account_id = twc.account_id if twc else None
+    rows = _build_gl_rows(invoice, customer.customer_name, tcs_account_id)
 
     # rounding adjustment balances receivable(rounded) vs net+taxes
     base_rounding = invoice.rounding_adjustment * invoice.conversion_rate
@@ -388,6 +466,7 @@ async def submit_sales_invoice(
         posting_date=invoice.posting_date,
         rows=rows,
         user_id=user.id,
+        is_opening=invoice.is_opening,
         remarks=invoice.remarks,
     )
 
@@ -396,7 +475,8 @@ async def submit_sales_invoice(
         db, customer, invoice.company_id, invoice.currency, invoice.items, sign=Decimal("1")
     )
     invoice.docstatus = DOCSTATUS_SUBMITTED
-    invoice.outstanding_amount = base_payable_total(invoice)
+    # the customer owes the bill PLUS any TCS collected on top
+    invoice.outstanding_amount = base_payable_total(invoice) + invoice.tax_withholding_amount
     await _apply_cycle_links(db, invoice, sign=1)
 
     # a credit note (return) reduces the original invoice's outstanding
@@ -423,7 +503,11 @@ async def cancel_sales_invoice(
 ) -> SalesInvoice:
     invoice = await get_sales_invoice(db, invoice_id, user.company_id)
     require_submitted(invoice.docstatus)
-    if invoice.outstanding_amount != base_payable_total(invoice) and not invoice.is_return:
+    # "no payment yet" ⇒ outstanding == grand + TCS collected (the amount first booked).
+    if (
+        invoice.outstanding_amount != base_payable_total(invoice) + invoice.tax_withholding_amount
+        and not invoice.is_return
+    ):
         raise ValidationError(
             "Cannot cancel: payments are allocated against this invoice. Cancel them first."
         )

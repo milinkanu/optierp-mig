@@ -384,12 +384,18 @@ async def list_link_options(
     scoped: bool,
     company_id: uuid.UUID | None,
     q: str | None,
-    limit: int = 20,
+    limit: int = 500,
 ) -> list[dict[str, str]]:
     """Typeahead options for a Link field: [{value: id, label: title_field}].
 
     Works for any model (engine descriptor or core doctype) resolved via the
     link-source registry.
+
+    The engine form fetches these once (no ``q``) and renders a plain dropdown,
+    so the no-query cap must be high enough to include *every* option a user
+    might pick — a low cap silently hides anything past the alphabetical cut
+    (e.g. "Output CGST" never loads). When ``q`` is given (typeahead), the same
+    cap bounds the filtered result set.
     """
     stmt = select(model)
     if scoped and company_id is not None:

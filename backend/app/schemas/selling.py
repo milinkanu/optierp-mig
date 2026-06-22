@@ -25,6 +25,12 @@ class QuotationCreate(OrderCreateBase):
     contact_person_id: uuid.UUID | None = None
     coupon_code: str | None = None
     shipping_rule_id: uuid.UUID | None = None
+    # More Info (selling)
+    campaign_id: uuid.UUID | None = None
+    source_id: uuid.UUID | None = None
+    territory_id: uuid.UUID | None = None
+    customer_group_id: uuid.UUID | None = None
+    sales_partner_id: uuid.UUID | None = None
 
 
 class QuotationItemResponse(OrderItemResponse):
@@ -40,6 +46,11 @@ class QuotationResponse(OrderResponseBase):
     customer_address_id: uuid.UUID | None = None
     shipping_address_id: uuid.UUID | None = None
     contact_person_id: uuid.UUID | None = None
+    campaign_id: uuid.UUID | None = None
+    source_id: uuid.UUID | None = None
+    territory_id: uuid.UUID | None = None
+    customer_group_id: uuid.UUID | None = None
+    sales_partner_id: uuid.UUID | None = None
     items: list[QuotationItemResponse]
     taxes: list[InvoiceTaxResponse]
 
@@ -61,6 +72,12 @@ class SalesOrderCreate(OrderCreateBase):
     quotation_id: uuid.UUID | None = None
     coupon_code: str | None = None
     shipping_rule_id: uuid.UUID | None = None
+    # More Info (selling)
+    campaign_id: uuid.UUID | None = None
+    source_id: uuid.UUID | None = None
+    territory_id: uuid.UUID | None = None
+    customer_group_id: uuid.UUID | None = None
+    sales_partner_id: uuid.UUID | None = None
 
 
 class SalesOrderItemResponse(OrderItemResponse):
@@ -81,6 +98,11 @@ class SalesOrderResponse(OrderResponseBase):
     customer_address_id: uuid.UUID | None = None
     shipping_address_id: uuid.UUID | None = None
     contact_person_id: uuid.UUID | None = None
+    campaign_id: uuid.UUID | None = None
+    source_id: uuid.UUID | None = None
+    territory_id: uuid.UUID | None = None
+    customer_group_id: uuid.UUID | None = None
+    sales_partner_id: uuid.UUID | None = None
     set_warehouse_id: uuid.UUID | None
     quotation_id: uuid.UUID | None
     per_delivered: Decimal

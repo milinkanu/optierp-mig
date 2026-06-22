@@ -1,18 +1,17 @@
 """Sales Invoice endpoints — Module 02."""
 
 import uuid
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.pdf import html_to_pdf, render_print_format
 from app.core.permissions import require_permission
 from app.core.security import CurrentUser, get_tenant_db
 from app.schemas.accounts import InvoiceListItem, SalesInvoiceCreate, SalesInvoiceResponse
 from app.schemas.common import ListResponse
+from app.services import print_service
 from app.services import sales_invoice as service
-from app.services.accounts_common import get_company, get_customer
 
 router = APIRouter(prefix="/sales-invoices", tags=["accounts: sales invoices"])
 
@@ -98,27 +97,24 @@ async def submit(
 
 @router.get(
     "/{invoice_id}/pdf",
-    summary="Download the invoice as PDF",
-    description="Renders the Jinja2 print format and converts it with WeasyPrint. "
-    "Returns 501 if the PDF engine is not installed (`pip install .[pdf]`).",
+    summary="Download or preview the invoice (PDF/HTML)",
+    description="Renders the themed print format via the shared print service. "
+    "`?format=html` returns HTML for in-app preview; `?format=pdf` (default) returns "
+    "the PDF (WeasyPrint; 501 if the engine is not installed).",
 )
 async def download_pdf(
     invoice_id: uuid.UUID,
     current_user: Annotated[CurrentUser, Depends(require_permission("Sales Invoice", "print"))],
     db: Annotated[AsyncSession, Depends(get_tenant_db)],
+    format: Annotated[Literal["pdf", "html"], Query()] = "pdf",
 ) -> Response:
-    invoice = await service.get_sales_invoice(db, invoice_id, current_user.company_id)
-    company = await get_company(db, invoice.company_id)
-    customer = await get_customer(db, invoice.customer_id, invoice.company_id)
-    html = render_print_format(
-        "sales_invoice.html",
-        {"invoice": invoice, "company": company, "customer": customer, "brand": {}},
+    content, filename, media_type = await print_service.render_document(
+        db, "Sales Invoice", invoice_id, current_user.company_id, format
     )
-    pdf = html_to_pdf(html)
     return Response(
-        content=pdf,
-        media_type="application/pdf",
-        headers={"Content-Disposition": f'inline; filename="{invoice.name}.pdf"'},
+        content=content,
+        media_type=media_type,
+        headers={"Content-Disposition": f'inline; filename="{filename}"'},
     )
 
 

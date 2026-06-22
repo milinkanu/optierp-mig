@@ -21,7 +21,7 @@ from app.schemas.stock import MaterialRequestCreate
 from app.services.accounts_common import get_company, require_draft, require_submitted
 from app.services.audit import log_audit
 from app.services.pagination import paginate
-from app.services.stock_common import STOCK_NAMING_SERIES, get_items
+from app.services.stock_common import STOCK_NAMING_SERIES, get_items, resolve_conversion_factor
 
 ZERO = Decimal("0")
 HUNDRED = Decimal("100")
@@ -34,8 +34,9 @@ def set_material_request_status(mr: MaterialRequest) -> None:
     if mr.docstatus == 2:
         mr.status = "Cancelled"
         return
-    total = sum((row.qty for row in mr.items), ZERO)
-    ordered = sum((min(row.ordered_qty, row.qty) for row in mr.items), ZERO)
+    # tracked in stock units (ordered_qty accrues stock qty from linked POs)
+    total = sum((row.stock_qty for row in mr.items), ZERO)
+    ordered = sum((min(row.ordered_qty, row.stock_qty) for row in mr.items), ZERO)
     mr.per_ordered = (ordered / total * HUNDRED) if total else ZERO
     if mr.per_ordered >= HUNDRED:
         mr.status = "Ordered"
@@ -67,6 +68,8 @@ async def create_material_request(
     await db.flush()
     for idx, row in enumerate(payload.items, start=1):
         item = items[row.item_id]
+        uom = row.uom or item.stock_uom
+        factor = resolve_conversion_factor(item, uom)
         db.add(
             MaterialRequestItem(
                 material_request_id=mr.id,
@@ -74,7 +77,9 @@ async def create_material_request(
                 item_id=row.item_id,
                 warehouse_id=row.warehouse_id or item.default_warehouse_id,
                 qty=row.qty,
-                uom=row.uom or item.stock_uom,
+                uom=uom,
+                conversion_factor=factor,
+                stock_qty=row.qty * factor,
                 schedule_date=row.schedule_date or payload.schedule_date,
             )
         )

@@ -1,0 +1,49 @@
+{% extends "base/layout.html" %}
+{% import "base/_macros.html" as m %}
+{% block body %}
+<div class="ph-parties">
+  <div class="ph-party">
+    <div class="ph-label">{% if doc.is_return %}Return To{% else %}Received From{% endif %}</div>
+    <div class="ph-party-name">{{ party.supplier_name if party else (doc.supplier_name or "—") }}</div>
+    {% if party and party.tax_id %}<div class="ph-muted">GSTIN: {{ party.tax_id }}</div>{% endif %}
+  </div>
+  <div class="ph-party ph-right">
+    <div><span class="ph-muted">Date:</span> {{ doc.posting_date }}</div>
+    {% if doc.supplier_delivery_note %}<div><span class="ph-muted">Supplier DN:</span> {{ doc.supplier_delivery_note }}</div>{% endif %}
+    {% if doc.is_return %}<div class="ph-muted">Return Note</div>{% endif %}
+    {% if doc.currency %}<div><span class="ph-muted">Currency:</span> {{ doc.currency }}</div>{% endif %}
+  </div>
+</div>
+
+<table class="ph-items">
+  <thead>
+    <tr>
+      <th style="width:4%">#</th>
+      <th>Item</th>
+      <th class="num" style="width:13%">Accepted</th>
+      <th class="num" style="width:13%">Rejected</th>
+      <th class="num" style="width:15%">Rate</th>
+      <th class="num" style="width:16%">Amount</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for item in doc["items"] %}
+    <tr>
+      <td>{{ item.idx }}</td>
+      <td><strong>{{ item.item_name }}</strong>{% if item.item_code %}<br><span class="ph-muted">{{ item.item_code }}</span>{% endif %}{% if item.batch_no %}<br><span class="ph-muted">Batch: {{ item.batch_no }}</span>{% endif %}</td>
+      <td class="num">{{ m.qty(item.qty, item.uom) }}</td>
+      <td class="num">{% if item.rejected_qty %}{{ m.money(item.rejected_qty) }}{% else %}&mdash;{% endif %}</td>
+      <td class="num">{{ m.money(item.rate) }}</td>
+      <td class="num">{{ m.money(item.amount) }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<table class="ph-totals">
+  {% if doc.total_qty %}<tr><td>Total Qty</td><td class="num">{{ m.money(doc.total_qty) }}</td></tr>{% endif %}
+  <tr class="grand"><td>Total Value{% if doc.currency %} ({{ doc.currency }}){% endif %}</td><td class="num">{{ m.money(doc.grand_total) }}</td></tr>
+</table>
+
+{% if doc.remarks %}<div class="ph-remarks ph-muted"><strong>Remarks:</strong> {{ doc.remarks }}</div>{% endif %}
+{% endblock %}

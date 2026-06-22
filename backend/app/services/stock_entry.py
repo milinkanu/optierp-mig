@@ -32,8 +32,23 @@ from app.services.stock_common import (
     get_warehouse,
     inventory_account_for,
     require_stock_item,
+    resolve_conversion_factor,
 )
 from app.services.stock_ledger import SLERow, get_bin, make_reverse_sl_entries, make_sl_entries
+from app.services.stock_serials import (
+    create_serials,
+    delete_serials,
+    move_serials,
+    parse_serials,
+    serials_from_text,
+    serials_to_text,
+    validate_line_serials,
+)
+from app.services.stock_batches import (
+    check_batch_not_expired,
+    clean_batch_no,
+    validate_line_batch,
+)
 
 ZERO = Decimal("0")
 
@@ -77,15 +92,27 @@ async def create_stock_entry(
             await get_warehouse(db, source_id, company.id)
         if needs_target:
             await get_warehouse(db, target_id, company.id)
+        uom = row.uom or item.stock_uom
+        factor = resolve_conversion_factor(item, uom)
+        stock_qty = row.qty * factor
+        serials = parse_serials(row.serial_nos)
+        validate_line_serials(item, serials, stock_qty)
+        batch_no = clean_batch_no(row.batch_no)
+        await validate_line_batch(db, company.id, item, batch_no)
+        if needs_source and not needs_target:  # pure issue ships out
+            await check_batch_not_expired(db, company.id, item, batch_no, payload.posting_date)
         basic_rate = row.basic_rate
         if payload.purpose == "Material Receipt" and basic_rate == ZERO:
-            # prefer the live bin valuation; the item-master rate is only an
-            # opening default and is never maintained by the ledger
+            # prefer the live bin valuation; the item-master rate is only an opening
+            # default and is never maintained by the ledger. Both are per stock UOM —
+            # scale to the line UOM so basic_rate stays per transaction unit.
             bin_row = await get_bin(db, row.item_id, target_id) if target_id else None
-            if bin_row is not None and bin_row.valuation_rate > ZERO:
-                basic_rate = bin_row.valuation_rate
-            else:
-                basic_rate = item.valuation_rate
+            stock_rate = (
+                bin_row.valuation_rate
+                if bin_row is not None and bin_row.valuation_rate > ZERO
+                else item.valuation_rate
+            )
+            basic_rate = stock_rate * factor
         amount = row.qty * basic_rate
         total_amount += amount
         db.add(
@@ -96,9 +123,13 @@ async def create_stock_entry(
                 source_warehouse_id=source_id if needs_source else None,
                 target_warehouse_id=target_id if needs_target else None,
                 qty=row.qty,
-                uom=row.uom or item.stock_uom,
+                uom=uom,
+                conversion_factor=factor,
+                stock_qty=stock_qty,
                 basic_rate=basic_rate,
                 amount=amount,
+                serial_nos=serials_to_text(serials),
+                batch_no=batch_no,
             )
         )
     entry.total_amount = total_amount
@@ -146,12 +177,23 @@ async def submit_stock_entry(
     company = await get_company(db, entry.company_id)
     items = await get_items(db, {row.item_id for row in entry.items}, company.id)
 
+    # Re-validate batches against the CURRENT master state — a batch disabled,
+    # deleted, expired, re-pointed, or whose item was un-batched between draft and
+    # submit must not move. A pure issue ships out, so it also blocks an expired
+    # batch (transfers/receipts don't). Mirrors the submit-time link-delta re-check.
+    for row in entry.items:
+        item = items[row.item_id]
+        await validate_line_batch(db, entry.company_id, item, row.batch_no)
+        if row.source_warehouse_id is not None and row.target_warehouse_id is None:
+            await check_batch_not_expired(db, entry.company_id, item, row.batch_no, entry.posting_date)
+
     # Outgoing legs first so transfers can't overdraw the source mid-voucher
     sle_rows: list[SLERow] = []
     for row in entry.items:
         if row.source_warehouse_id is not None:
             sle_rows.append(
-                SLERow(item_id=row.item_id, warehouse_id=row.source_warehouse_id, actual_qty=-row.qty)
+                SLERow(item_id=row.item_id, warehouse_id=row.source_warehouse_id,
+                       actual_qty=-row.stock_qty)
             )
     out_entries = (
         await make_sl_entries(
@@ -172,15 +214,18 @@ async def submit_stock_entry(
     in_row_idx: list[int] = []
     for i, row in enumerate(entry.items):
         if row.target_warehouse_id is not None:
-            # transfers carry the source's outgoing valuation; receipts the entered rate
+            # incoming_rate is per STOCK unit: transfers carry the source's outgoing
+            # value spread over stock_qty; receipts use basic_rate / factor
             if row.source_warehouse_id is not None:
-                incoming_rate = (-out_value[i] / row.qty) if row.qty else ZERO
+                incoming_rate = (-out_value[i] / row.stock_qty) if row.stock_qty else ZERO
             else:
-                incoming_rate = row.basic_rate
+                incoming_rate = (
+                    row.basic_rate / row.conversion_factor if row.conversion_factor else row.basic_rate
+                )
             in_rows.append(
                 SLERow(
                     item_id=row.item_id, warehouse_id=row.target_warehouse_id,
-                    actual_qty=row.qty, incoming_rate=incoming_rate,
+                    actual_qty=row.stock_qty, incoming_rate=incoming_rate,
                 )
             )
             in_row_idx.append(i)
@@ -193,6 +238,29 @@ async def submit_stock_entry(
         if in_rows
         else []
     )
+
+    # serial lifecycle: receipt creates In Stock; issue consumes (-> Returned);
+    # transfer re-homes In Stock to the target warehouse
+    for row in entry.items:
+        serials = serials_from_text(row.serial_nos)
+        if not serials:
+            continue
+        if row.source_warehouse_id is not None and row.target_warehouse_id is not None:
+            await move_serials(
+                db, company.id, row.item_id, serials,
+                from_status="In Stock", to_status="In Stock",
+                warehouse_match=row.source_warehouse_id, set_warehouse=row.target_warehouse_id,
+            )
+        elif row.target_warehouse_id is not None:
+            await create_serials(
+                db, company.id, row.item_id, row.target_warehouse_id, serials,
+                voucher_type="Stock Entry", voucher_id=entry.id,
+            )
+        elif row.source_warehouse_id is not None:
+            await move_serials(
+                db, company.id, row.item_id, serials,
+                from_status="In Stock", to_status="Returned", warehouse_match=row.source_warehouse_id,
+            )
 
     # --- perpetual inventory GL ---
     if company.enable_perpetual_inventory:
@@ -278,6 +346,28 @@ async def cancel_stock_entry(
     await gl.make_reverse_gl_entries(
         db, voucher_type="Stock Entry", voucher_id=entry.id, user_id=user.id
     )
+
+    # revert serials: undo transfer (re-home to source), receipt (delete), issue (restock)
+    for row in entry.items:
+        serials = serials_from_text(row.serial_nos)
+        if not serials:
+            continue
+        if row.source_warehouse_id is not None and row.target_warehouse_id is not None:
+            await move_serials(
+                db, entry.company_id, row.item_id, serials,
+                from_status="In Stock", to_status="In Stock",
+                warehouse_match=row.target_warehouse_id, set_warehouse=row.source_warehouse_id,
+            )
+        elif row.target_warehouse_id is not None:
+            await delete_serials(
+                db, entry.company_id, row.item_id, serials,
+                warehouse_match=row.target_warehouse_id,
+            )
+        elif row.source_warehouse_id is not None:
+            await move_serials(
+                db, entry.company_id, row.item_id, serials,
+                from_status="Returned", to_status="In Stock", set_warehouse=row.source_warehouse_id,
+            )
     entry.docstatus = DOCSTATUS_CANCELLED
     entry.modified_by = user.id
     await db.flush()

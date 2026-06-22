@@ -1,16 +1,21 @@
-Marketing and promotions - promotions, lead management, 
+Marketing and promotions - promotions, lead management, (api integration)
 
-Selling - sales
-Buying - purchase
-stock - inventory
-
+GST api integration add or import gst bills 
 
 Tracking dashboard for customer
 
-sales, purchase, bank - reconciliation
+sales, purchase, bank - reconciliation (done)
 
-MCA compliances
+MCA compliances - (company Secratory work)
 
 New company onboarding(organization setup)
 
 POS - Loyalty Program
+
+pdf for all docs
+email send to customer and supplier
+- auto enter while reciving invoices
+
+module for tax management - GST & Income Tax
+- 
+

@@ -33,6 +33,22 @@ export function formatCurrency(value: string | number | null | undefined, curren
   return formatter.format(amount);
 }
 
+// Short axis-tick label: compact notation (1.2K, 2.5L, ₹3Cr) so Y-axis values
+// stay narrow. Pass a currency to prefix the symbol; omit it for plain counts.
+export function formatCompact(value: number, currency?: string | null): string {
+  const amount = Number(value ?? 0);
+  if (Number.isNaN(amount)) return "";
+  const locale = currency ? LOCALE_BY_CURRENCY[currency] ?? undefined : undefined;
+  const options: Intl.NumberFormatOptions = currency
+    ? { style: "currency", currency, notation: "compact", maximumFractionDigits: 1 }
+    : { notation: "compact", maximumFractionDigits: 1 };
+  try {
+    return new Intl.NumberFormat(locale, options).format(amount);
+  } catch {
+    return new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 }).format(amount);
+  }
+}
+
 export function formatNumber(value: string | number | null | undefined, decimals = 2): string {
   const amount = Number(value ?? 0);
   if (Number.isNaN(amount)) return String(value ?? "");

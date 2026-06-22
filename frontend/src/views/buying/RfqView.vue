@@ -6,6 +6,8 @@ import { useRouter } from "vue-router";
 import DataTable, { type Column } from "@/components/shared/DataTable.vue";
 import PaginationFooter from "@/components/shared/PaginationFooter.vue";
 import StatusBadge from "@/components/shared/StatusBadge.vue";
+import PrintButton from "@/components/shared/PrintButton.vue";
+import SendEmailButton from "@/components/shared/SendEmailButton.vue";
 import { useList } from "@/composables/useList";
 import { useAccountsStore } from "@/stores/accounts";
 import { useStockStore } from "@/stores/stock";
@@ -265,6 +267,9 @@ onMounted(async () => {
         <div class="mb-2 flex items-center justify-between">
           <h2 class="text-sm font-semibold text-gray-900">{{ selectedRfq.name }}</h2>
           <div class="flex gap-2">
+            <PrintButton :path="`/print/Request%20for%20Quotation/${selectedRfq.id}`"
+                         :title="`${selectedRfq.name} — Preview`" />
+            <SendEmailButton doctype="Request for Quotation" :doc-id="selectedRfq.id" :doc-name="selectedRfq.name" />
             <button class="btn-primary" :disabled="selectedRfq.docstatus !== 1"
                     @click="recordQuoteFor()">Record Supplier Quotation</button>
             <button class="btn-secondary" @click="selectedRfq = null">Close</button>

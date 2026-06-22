@@ -111,10 +111,42 @@ async def _validate_accounts(db: AsyncSession, company_id: uuid.UUID, rows: list
         row._account = account
 
 
+async def _account_spend(
+    db: AsyncSession, company_id: uuid.UUID, account_id: uuid.UUID, from_date: date, to_date: date
+) -> Decimal:
+    """Net expense (debit - credit) posted to an account in a date window."""
+    total = (
+        await db.execute(
+            select(func.coalesce(func.sum(GLEntry.debit - GLEntry.credit), 0)).where(
+                GLEntry.company_id == company_id,
+                GLEntry.account_id == account_id,
+                GLEntry.posting_date >= from_date,
+                GLEntry.posting_date <= to_date,
+            )
+        )
+    ).scalar_one()
+    return Decimal(total)
+
+
+def _cumulative_distribution_pct(md, fy: FiscalYear, posting_date: date) -> Decimal:
+    """Sum of the monthly-distribution percentages from the fiscal-year start up
+    to (and including) the posting month. month_1 = first month of the FY."""
+    index = (
+        (posting_date.year - fy.year_start_date.year) * 12
+        + (posting_date.month - fy.year_start_date.month)
+        + 1
+    )
+    index = max(1, min(index, 12))
+    return sum((Decimal(getattr(md, f"month_{i}")) for i in range(1, index + 1)), ZERO)
+
+
 async def _validate_budget(
-    db: AsyncSession, company_id: uuid.UUID, fy: FiscalYear, rows: list[GLRow]
+    db: AsyncSession, company_id: uuid.UUID, fy: FiscalYear, rows: list[GLRow], posting_date: date
 ) -> None:
-    """Annual budget check (erpnext budget_controller, simplified to annual)."""
+    """Budget check (erpnext budget_controller): always the annual cap, plus an
+    optional month-to-date cap when the budget carries a Monthly Distribution."""
+    from app.models.selling import MonthlyDistribution
+
     expense_rows = [r for r in rows if r._account.root_type == "Expense" and r.debit > r.credit]
     for row in expense_rows:
         stmt = (
@@ -135,27 +167,44 @@ async def _validate_budget(
         if not found:
             continue
         budget, budget_account = found
-        if budget.action_if_annual_budget_exceeded == "Ignore":
-            continue
-        actual = (
-            await db.execute(
-                select(func.coalesce(func.sum(GLEntry.debit - GLEntry.credit), 0)).where(
-                    GLEntry.company_id == company_id,
-                    GLEntry.account_id == row.account_id,
-                    GLEntry.posting_date >= fy.year_start_date,
-                    GLEntry.posting_date <= fy.year_end_date,
+        delta = row.debit - row.credit
+
+        # --- annual cap ---
+        if budget.action_if_annual_budget_exceeded != "Ignore":
+            actual = await _account_spend(
+                db, company_id, row.account_id, fy.year_start_date, fy.year_end_date
+            )
+            projected = actual + delta
+            if projected > budget_account.budget_amount:
+                message = (
+                    f"Annual budget {budget_account.budget_amount} exceeded for account "
+                    f"'{row._account.account_name}' (projected {projected})"
                 )
-            )
-        ).scalar_one()
-        projected = Decimal(actual) + (row.debit - row.credit)
-        if projected > budget_account.budget_amount:
-            message = (
-                f"Annual budget {budget_account.budget_amount} exceeded for account "
-                f"'{row._account.account_name}' (projected {projected})"
-            )
-            if budget.action_if_annual_budget_exceeded == "Stop":
-                raise ValidationError(message, field="account_id")
-            logger.warning("budget_exceeded", detail=message)
+                if budget.action_if_annual_budget_exceeded == "Stop":
+                    raise ValidationError(message, field="account_id")
+                logger.warning("budget_exceeded", detail=message)
+
+        # --- month-to-date cap (only if a Monthly Distribution is attached) ---
+        if (
+            budget.monthly_distribution_id is not None
+            and budget.action_if_accumulated_monthly_budget_exceeded != "Ignore"
+        ):
+            md = await db.get(MonthlyDistribution, budget.monthly_distribution_id)
+            cum_pct = _cumulative_distribution_pct(md, fy, posting_date) if md else ZERO
+            if cum_pct > ZERO:
+                monthly_cap = budget_account.budget_amount * cum_pct / Decimal("100")
+                spend_to_date = await _account_spend(
+                    db, company_id, row.account_id, fy.year_start_date, posting_date
+                )
+                projected_mtd = spend_to_date + delta
+                if projected_mtd > monthly_cap:
+                    message = (
+                        f"Month-to-date budget {monthly_cap:.2f} ({cum_pct}% of annual) exceeded "
+                        f"for account '{row._account.account_name}' (projected {projected_mtd})"
+                    )
+                    if budget.action_if_accumulated_monthly_budget_exceeded == "Stop":
+                        raise ValidationError(message, field="account_id")
+                    logger.warning("monthly_budget_exceeded", detail=message)
 
 
 async def make_gl_entries(
@@ -191,7 +240,7 @@ async def make_gl_entries(
             f"Voucher is out of balance: debit {total_debit} != credit {total_credit}"
         )
 
-    await _validate_budget(db, company_id, fy, rows)
+    await _validate_budget(db, company_id, fy, rows, posting_date)
 
     entries: list[GLEntry] = []
     for row in rows:
