@@ -875,6 +875,12 @@ register(
                       help="1 = monthly, 3 = quarterly, 12 = yearly. So 60 × 1 = 5 years monthly."),
             FieldSpec("salvage_value_percent", "Salvage Value (%)", "Float",
                       help="Residual value as a % of cost; depreciation never goes below it. 0 = none."),
+            FieldSpec("rate_of_depreciation", "WDV Rate (%)", "Float",
+                      help="Written Down Value only: an explicit rate (e.g. IT-Act 15%/40%). "
+                      "Blank = derive it from salvage + life."),
+            FieldSpec("daily_prorata", "Daily pro-rata", "Check",
+                      help="Weight each period's depreciation by its actual day count "
+                      "(Straight Line) instead of an equal split."),
             FieldSpec("fixed_asset_account_id", "Fixed Asset Account", "Link", options="account",
                       help="Balance-sheet account the asset's cost sits in."),
             FieldSpec("depreciation_expense_account_id", "Depreciation Expense Account", "Link",

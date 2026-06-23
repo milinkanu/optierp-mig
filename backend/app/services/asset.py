@@ -84,14 +84,17 @@ def straight_line_schedule(
     number_of_depreciations: int,
     frequency_months: int,
     start_date: date,
+    daily_prorata: bool = False,
 ) -> list[tuple[date, Decimal, Decimal]]:
     """Equal-instalment schedule. Returns ``(schedule_date, amount, accumulated)`` rows.
 
-    ``amount`` is the depreciable base spread evenly across the periods; the **last row
-    absorbs the rounding remainder** so the total equals the depreciable base exactly and
-    the final book value lands on ``salvage``. ``accumulated`` includes the asset's
-    opening accumulated depreciation. Posting dates fall at the end of each period
-    (``start_date`` + i × frequency).
+    ``amount`` is the depreciable base spread across the periods; the **last row absorbs the
+    rounding remainder** so the total equals the depreciable base exactly and the final book
+    value lands on ``salvage``. ``accumulated`` includes the asset's opening accumulated
+    depreciation. Posting dates fall at the end of each period (``start_date`` + i × frequency).
+
+    When ``daily_prorata`` is set, each period is weighted by its actual number of days
+    (so a 28-day February gets less than a 31-day January) instead of an equal split.
     """
     if number_of_depreciations <= 0:
         raise ValidationError(
@@ -103,14 +106,26 @@ def straight_line_schedule(
         raise ValidationError(
             "Salvage + opening depreciation exceed the asset's gross value", field="gross_purchase_amount"
         )
-    per = (depreciable / number_of_depreciations).quantize(TWOPLACES, rounding=ROUND_HALF_UP)
+    n = number_of_depreciations
+    dates = [add_months(start_date, i * frequency_months) for i in range(1, n + 1)]
+    total_days = (dates[-1] - start_date).days or 1
+    per = (depreciable / n).quantize(TWOPLACES, rounding=ROUND_HALF_UP)
     rows: list[tuple[date, Decimal, Decimal]] = []
     running = ZERO
-    for i in range(1, number_of_depreciations + 1):
-        amount = per if i < number_of_depreciations else (depreciable - running)
+    prev = start_date
+    for i, d in enumerate(dates, start=1):
+        if i == n:
+            amount = depreciable - running  # last row absorbs the remainder exactly
+        elif daily_prorata:
+            days = (d - prev).days
+            amount = (depreciable * Decimal(days) / Decimal(total_days)).quantize(
+                TWOPLACES, rounding=ROUND_HALF_UP
+            )
+        else:
+            amount = per
         running += amount
-        accumulated = opening_accumulated + running
-        rows.append((add_months(start_date, i * frequency_months), amount, accumulated))
+        rows.append((d, amount, opening_accumulated + running))
+        prev = d
     return rows
 
 
@@ -122,37 +137,45 @@ def written_down_value_schedule(
     number_of_depreciations: int,
     frequency_months: int,
     start_date: date,
+    rate_pct: Decimal | None = None,
 ) -> list[tuple[date, Decimal, Decimal]]:
     """Declining-balance schedule. Each period writes down a fixed **rate** of the
-    *opening book value*, so early years depreciate more than later ones. The rate is
-    derived from the salvage ratio over the life (ERPNext: ``1 − (salvage/gross)^(1/n)``);
-    the last row lands book value exactly on salvage. Returns ``(date, amount, accumulated)``.
+    *opening book value*, so early years depreciate more than later ones.
 
-    WDV needs a salvage value > 0 — a declining balance can never reach zero, so a 0%
-    salvage is rejected (use Straight Line for assets that fully depreciate).
+    The rate is either given explicitly (``rate_pct`` — e.g. a statutory IT-Act block rate)
+    or derived from the salvage ratio over the life (ERPNext: ``1 − (salvage/gross)^(1/n)``).
+    The last row lands book value exactly on salvage. Returns ``(date, amount, accumulated)``.
+
+    A *derived* rate needs salvage > 0 (a declining balance can't reach zero); an *explicit*
+    rate works with any salvage (incl. 0 — the last row then zeroes the book).
     """
     if number_of_depreciations <= 0:
         raise ValidationError(
             "Asset Category needs a positive 'number of depreciations'",
             field="total_number_of_depreciations",
         )
-    if salvage <= ZERO:
-        raise ValidationError(
-            "Written Down Value needs a salvage value above 0% (declining balance never "
-            "reaches zero) — use Straight Line for fully-depreciating assets",
-            field="salvage_value_percent",
-        )
     if salvage >= gross:
         raise ValidationError(
             "Salvage value must be below the asset's gross value", field="gross_purchase_amount"
         )
+    n = number_of_depreciations
+    if rate_pct is not None:
+        if rate_pct <= ZERO:
+            raise ValidationError("Rate of depreciation must be above 0%", field="rate_of_depreciation")
+        rate = rate_pct / Decimal(100)
+    else:
+        if salvage <= ZERO:
+            raise ValidationError(
+                "Written Down Value needs a salvage value above 0% (or set an explicit Rate of "
+                "Depreciation) — a declining balance never reaches zero",
+                field="salvage_value_percent",
+            )
+        rate = Decimal(1) - (salvage / gross) ** (Decimal(1) / Decimal(n))
     opening_book = gross - opening_accumulated
     if opening_book <= salvage:
         raise ValidationError(
             "Asset is already at or below its salvage value", field="opening_accumulated_depreciation"
         )
-    n = number_of_depreciations
-    rate = Decimal(1) - (salvage / gross) ** (Decimal(1) / Decimal(n))
     rows: list[tuple[date, Decimal, Decimal]] = []
     book = opening_book
     accumulated = opening_accumulated
@@ -198,17 +221,7 @@ def _build_schedule_rows(
             )
         return out
 
-    generators = {
-        "Straight Line": straight_line_schedule,
-        "Written Down Value": written_down_value_schedule,
-    }
-    generator = generators.get(category.depreciation_method)
-    if generator is None:
-        raise ValidationError(
-            f"Unknown depreciation method '{category.depreciation_method}'",
-            field="depreciation_method",
-        )
-    triples = generator(
+    common = dict(
         gross=asset.gross_purchase_amount,
         salvage=salvage,
         opening_accumulated=asset.opening_accumulated_depreciation,
@@ -216,6 +229,15 @@ def _build_schedule_rows(
         frequency_months=category.frequency_of_depreciation_months,
         start_date=asset.available_for_use_date,
     )
+    if category.depreciation_method == "Straight Line":
+        triples = straight_line_schedule(**common, daily_prorata=category.daily_prorata)
+    elif category.depreciation_method == "Written Down Value":
+        triples = written_down_value_schedule(**common, rate_pct=category.rate_of_depreciation)
+    else:
+        raise ValidationError(
+            f"Unknown depreciation method '{category.depreciation_method}'",
+            field="depreciation_method",
+        )
     return [
         AssetDepreciationSchedule(
             idx=idx, schedule_date=d, depreciation_amount=amt, accumulated_depreciation=acc,
@@ -478,6 +500,45 @@ async def depreciate_asset(
     return await depreciate_due(db, asset, on_date=on_date or date.today(), actor=user)
 
 
+async def cancel_depreciation(
+    db: AsyncSession, asset_id: uuid.UUID, user: CurrentUser
+) -> Asset:
+    """Reverse **all** posted depreciation for an asset: write reversing GL entries for each
+    depreciation Journal Entry, clear the rows' posted flags, and reopen the asset (status →
+    Submitted). The ledger stays append-only (reversing entries, never deletes). Use this to
+    correct a wrong schedule, then re-depreciate."""
+    asset = await get_asset(db, asset_id, user.company_id)
+    require_submitted(asset.docstatus)
+    if asset.status in ("Sold", "Scrapped"):
+        raise ValidationError(f"Cannot cancel depreciation of a {asset.status.lower()} asset",
+                              field="status")
+    posted = [r for r in asset.schedule if r.posted and r.journal_entry_id is not None]
+    if not posted:
+        raise ValidationError("No posted depreciation to cancel", field="status")
+
+    await set_company_context(db, asset.company_id)
+    for row in posted:
+        await gl.make_reverse_gl_entries(
+            db, voucher_type="Journal Entry", voucher_id=row.journal_entry_id, user_id=user.id
+        )
+        je = await db.get(JournalEntry, row.journal_entry_id)
+        if je is not None:
+            je.docstatus = DOCSTATUS_CANCELLED
+        row.posted = False
+        row.posted_date = None
+        row.journal_entry_id = None
+    _update_status(asset)
+    asset.modified_by = user.id
+    await db.flush()
+    await log_audit(
+        db, doctype="Asset", document_id=asset.id, action="UPDATE",
+        user_id=user.id, company_id=asset.company_id,
+    )
+    await db.commit()
+    logger.info("asset_depreciation_cancelled", asset=str(asset.id), reversed=len(posted))
+    return await get_asset(db, asset.id, user.company_id)
+
+
 # --- disposal (sell / scrap) -------------------------------------------------------
 
 
@@ -613,7 +674,10 @@ def _reschedule_unposted(asset: Asset, category: AssetCategory, new_book_value: 
 
     amounts: list[Decimal] = []
     if category.depreciation_method == "Written Down Value" and depreciable > ZERO:
-        rate = Decimal(1) - (salvage / new_book_value) ** (Decimal(1) / Decimal(n))
+        if category.rate_of_depreciation is not None and category.rate_of_depreciation > ZERO:
+            rate = category.rate_of_depreciation / Decimal(100)
+        else:
+            rate = Decimal(1) - (salvage / new_book_value) ** (Decimal(1) / Decimal(n))
         book = new_book_value
         for i in range(1, n + 1):
             if i < n:

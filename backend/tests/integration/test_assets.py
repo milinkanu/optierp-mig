@@ -170,6 +170,65 @@ async def test_reports_register_and_ledger(ctx):
     assert any(r["asset_name"] == "Generator Set" for r in reg3)
 
 
+async def test_cancel_depreciation_reverses_and_reopens(ctx):
+    """Cancelling depreciation reverses the posted entries and reopens the asset."""
+    client, company, headers = ctx
+    cat = await _category(client, company, headers, name="Reopenable")
+    fy_start = _fy_start(date.today())
+    asset = (
+        await client.post(
+            f"{API}/assets",
+            json={
+                "asset_name": "Compressor",
+                "asset_category_id": cat["id"],
+                "gross_purchase_amount": "120000",
+                "available_for_use_date": str(fy_start),
+            },
+            headers=headers,
+        )
+    ).json()
+    await client.post(f"{API}/assets/{asset['id']}/submit", headers=headers)
+    res = (await client.post(f"{API}/assets/{asset['id']}/depreciate", headers=headers)).json()
+    assert res["posted_count"] >= 1
+
+    r = await client.post(f"{API}/assets/{asset['id']}/cancel-depreciation", headers=headers)
+    assert r.status_code == 200, r.text
+    reopened = r.json()
+    assert reopened["status"] == "Submitted"
+    assert Decimal(reopened["accumulated_depreciation"]) == Decimal("0.000000")
+    assert Decimal(reopened["book_value"]) == Decimal("120000.000000")
+    assert all(not row["posted"] for row in reopened["schedule"])
+
+    # the asset can be re-depreciated afterwards
+    again = (await client.post(f"{API}/assets/{asset['id']}/depreciate", headers=headers)).json()
+    assert again["posted_count"] == res["posted_count"]
+
+
+async def test_wdv_explicit_rate_category(ctx):
+    """A WDV category with an explicit rate applies that rate to the schedule."""
+    client, company, headers = ctx
+    cat = await _category(
+        client, company, headers, name="IT-Act Block",
+        depreciation_method="Written Down Value", salvage_value_percent=0,
+        rate_of_depreciation=40, total_number_of_depreciations=5,
+        frequency_of_depreciation_months=12,
+    )
+    fy_start = _fy_start(date.today())
+    asset = (
+        await client.post(
+            f"{API}/assets",
+            json={
+                "asset_name": "Server", "asset_category_id": cat["id"],
+                "gross_purchase_amount": "100000", "available_for_use_date": str(fy_start),
+            },
+            headers=headers,
+        )
+    ).json()
+    sched = asset["schedule"]
+    assert Decimal(sched[0]["depreciation_amount"]) == Decimal("40000.000000")  # 40% of 100k
+    assert Decimal(sched[1]["depreciation_amount"]) == Decimal("24000.000000")  # 40% of 60k
+
+
 async def test_cannot_cancel_after_depreciation(ctx):
     client, company, headers = ctx
     cat = await _category(client, company, headers, name="Computers")

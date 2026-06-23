@@ -142,6 +142,44 @@ def test_wdv_requires_positive_salvage():
         )
 
 
+def test_wdv_explicit_rate_overrides_derived():
+    """An explicit WDV rate is applied per period (and works with zero salvage)."""
+    rows = written_down_value_schedule(
+        gross=Decimal("100000"), salvage=Decimal("0"), opening_accumulated=Decimal("0"),
+        number_of_depreciations=3, frequency_months=12, start_date=date(2026, 4, 1),
+        rate_pct=Decimal("40"),
+    )
+    # 40% of falling book value: 40000, then 24000 (40% of 60000)…
+    assert rows[0][1] == Decimal("40000.00")
+    assert rows[1][1] == Decimal("24000.00")
+    # last row zeroes the book (salvage 0)
+    assert rows[-1][2] == Decimal("100000.00")
+
+
+def test_straight_line_daily_prorata_weights_by_days():
+    """With daily pro-rata, periods are day-weighted; the total still equals the base."""
+    rows = straight_line_schedule(
+        gross=Decimal("120000"), salvage=Decimal("0"), opening_accumulated=Decimal("0"),
+        number_of_depreciations=12, frequency_months=1, start_date=date(2026, 1, 1),
+        daily_prorata=True,
+    )
+    amounts = [a for _d, a, _acc in rows]
+    # day counts differ (Jan=31, Feb=28…), so amounts are not all identical
+    assert len({a for a in amounts}) > 1
+    # but the total is exactly the depreciable base, ending at 120000
+    assert sum(amounts) == Decimal("120000.00")
+    assert rows[-1][2] == Decimal("120000.00")
+
+
+def test_wdv_explicit_rate_must_be_positive():
+    with pytest.raises(ValidationError):
+        written_down_value_schedule(
+            gross=Decimal("100000"), salvage=Decimal("0"), opening_accumulated=Decimal("0"),
+            number_of_depreciations=3, frequency_months=12, start_date=date(2026, 4, 1),
+            rate_pct=Decimal("0"),
+        )
+
+
 def test_wdv_steps_dates_by_frequency():
     rows = written_down_value_schedule(
         gross=Decimal("100000"), salvage=Decimal("10000"), opening_accumulated=Decimal("0"),

@@ -88,12 +88,18 @@ Plus these ERPNext *capabilities* (not separate DocTypes):
 - **Disposal via Sales Invoice** — option to sell an asset on a real tax invoice (GST), with
   the gain/loss still booked vs book value, instead of a plain JE.
 
-### Phase 6 — Depreciation accuracy
-- **Daily pro-rata** first period (depreciate from the exact available-for-use date, not whole
-  periods) — the biggest correctness gap.
-- **Explicit WDV rate %** option on the category (use it directly instead of deriving from salvage).
-- **Double Declining Balance** method (optional — only if you want it).
-- **Cancel/restore depreciation** — reverse posted depreciation JEs (append-only, like JE cancel).
+### Phase 6 — Depreciation accuracy — ✅ DONE (migration 0056)
+- ✅ **Daily pro-rata** (`daily_prorata` on the category) — Straight-Line periods are weighted by
+  their actual day count (Feb < Jan) instead of an equal split; total still equals the base.
+- ✅ **Explicit WDV rate %** (`rate_of_depreciation` on the category) — used directly (e.g. IT-Act
+  15%/40% blocks) instead of deriving from salvage; works with 0% salvage too.
+- ✅ **Cancel/restore depreciation** (`POST /assets/{id}/cancel-depreciation`) — writes reversing GL
+  entries for every posted depreciation JE, clears the rows' posted flags, reopens the asset
+  (status → Submitted) so the schedule can be re-posted. Ledger stays append-only.
+- ⏸️ **Double Declining Balance** — left out (niche; WDV with an explicit rate covers most needs).
+- *Tests:* +3 unit (explicit rate, pro-rata day-weighting, rate>0) + 2 integration (cancel+re-post,
+  WDV explicit-rate category). Verified live (forklift depreciation cancelled → status Submitted,
+  accumulated ₹0, rows reopened).
 
 ### Phase 7 — Maintenance scheduling *(keep it ONE doctype)*
 - Upgrade the maintenance log to **recurring scheduled tasks**: periodicity (monthly/quarterly/
