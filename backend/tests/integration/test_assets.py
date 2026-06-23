@@ -114,6 +114,62 @@ async def test_asset_register_and_straight_line_depreciation(ctx):
     assert sum(1 for row in asset["schedule"] if row["posted"]) == 11
 
 
+async def test_reports_register_and_ledger(ctx):
+    """Fixed Asset Register shows net block; Depreciation Ledger lists posted entries."""
+    client, company, headers = ctx
+    cat = await _category(client, company, headers, name="Reportable")
+    fy_start = _fy_start(date.today())
+    asset = (
+        await client.post(
+            f"{API}/assets",
+            json={
+                "asset_name": "Generator Set",
+                "asset_category_id": cat["id"],
+                "gross_purchase_amount": "120000",
+                "available_for_use_date": str(fy_start),
+            },
+            headers=headers,
+        )
+    ).json()
+    await client.post(f"{API}/assets/{asset['id']}/submit", headers=headers)
+    # post depreciation due as of today (the rows dated on/before today)
+    res = (await client.post(f"{API}/assets/{asset['id']}/depreciate", headers=headers)).json()
+    posted = res["posted_count"]
+    assert posted >= 1
+    expected = Decimal(2000 * posted)
+
+    # register: net block as of today reflects the posted depreciation
+    reg = (await client.get(f"{API}/asset-reports/fixed-asset-register", headers=headers)).json()
+    row = next(r for r in reg if r["asset_name"] == "Generator Set")
+    assert Decimal(row["gross_purchase_amount"]) == Decimal("120000.000000")
+    assert Decimal(row["accumulated_depreciation"]) == expected
+    assert Decimal(row["book_value"]) == Decimal("120000") - expected
+
+    # ledger: one entry per posted row, each with its Journal Entry number
+    led = (await client.get(f"{API}/asset-reports/depreciation-ledger", headers=headers)).json()
+    mine = [r for r in led if r["asset_name"] == "Generator Set"]
+    assert len(mine) == posted
+    assert all(r["journal_entry_no"] for r in mine)
+    assert Decimal(mine[-1]["accumulated_depreciation"]) == expected
+
+    # a disposed asset drops off the register by default
+    cash = await coa_account(client, company, headers, "Cash")
+    gl = await coa_account(client, company, headers, "Gain/Loss on Asset Disposal")
+    await client.post(
+        f"{API}/assets/{asset['id']}/dispose",
+        json={"disposal_type": "Sell", "disposal_date": str(date.today()),
+              "sale_amount": "90000", "proceeds_account_id": cash["id"], "gain_loss_account_id": gl["id"]},
+        headers=headers,
+    )
+    reg2 = (await client.get(f"{API}/asset-reports/fixed-asset-register", headers=headers)).json()
+    assert not any(r["asset_name"] == "Generator Set" for r in reg2)
+    reg3 = (
+        await client.get(f"{API}/asset-reports/fixed-asset-register",
+                         params={"include_disposed": "true"}, headers=headers)
+    ).json()
+    assert any(r["asset_name"] == "Generator Set" for r in reg3)
+
+
 async def test_cannot_cancel_after_depreciation(ctx):
     client, company, headers = ctx
     cat = await _category(client, company, headers, name="Computers")

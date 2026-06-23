@@ -2,11 +2,13 @@
 
 **Scope:** a new top-level **Assets** module for OptiReach ERP, modelled on ERPNext v15 Assets, with
 MSME simplifications (single appliance-distribution company, India GAAP, no multi-finance-book).
-**Status:** 🟢 **Phases 1–3 BUILT & verified** (2026-06-22/23, migrations 0051–0053) — register +
-SL/WDV/manual depreciation + posting job (P1); disposal + movement (P2); **maintenance/repair
-logs, value adjustment (revalue→JE+reschedule), and auto-create-Asset-from-Purchase-Invoice** (P3).
-Live end-to-end (UI + GL). **Only Phase 4 (reports) remains.** Started as a build plan.
-**Designed:** 2026-06-22.
+**Status:** 🟢 **Phases 1–4 BUILT & verified** (2026-06-22/23, migrations 0051–0055) — register +
+SL/WDV/manual depreciation + posting job (P1); disposal + movement (P2); maintenance/repair log, value
+adjustment (revalue→JE+reschedule), auto-create-Asset-from-Purchase-Invoice (P3); non-depreciable land +
+appreciation→Revaluation Surplus; **Reports — Fixed Asset Register + Depreciation Ledger (P4).** A further
+ERPNext-parity build-out is under way per [ASSETS_ERPNEXT_PARITY_PLAN.md](ASSETS_ERPNEXT_PARITY_PLAN.md):
+depreciation accuracy (pro-rata/cancel), CWIP + Capitalization + Sales-Invoice disposal, maintenance
+scheduling. Live end-to-end (UI + GL). **Designed:** 2026-06-22.
 
 > Mirrors the structure of [ACCOUNTING_GAP_AND_PLAN.md](ACCOUNTING_GAP_AND_PLAN.md): plain-language
 > summary → what ERPNext provides → what we simplify → data model → the depreciation engine → GL
@@ -221,10 +223,17 @@ to be completed. *MSME-lean:* ship **manual asset creation first**; auto-from-pu
 - **Tests:** +3 integration (value-adjustment, auto-from-PI, maintenance-link); 119 unit + 13 asset
   integration + 8 module02 PI (no regression). ruff + vue-tsc clean.
 
-### Phase 4 — Reports
-- **Fixed Asset Register / Net Block** (gross, accumulated dep, book value per asset/category),
-  **Asset Depreciation Ledger** (posted entries), **Asset-wise depreciation** schedule — read-only
-  endpoints + a Reports surface (its own module reports view or tabs).
+### Phase 4 — Reports — ✅ DONE
+- ✅ **Fixed Asset Register / Net Block** (`GET /asset-reports/fixed-asset-register?as_of=&category_id=&
+  include_disposed=`): per-asset gross, accumulated depreciation (as of a date) and book value, with a
+  totals row; disposed assets excluded by default. Per-asset accumulated is derived from the asset's own
+  schedule (the GL Accumulated Depreciation account is shared, so it can't give a per-asset figure).
+- ✅ **Asset Depreciation Ledger** (`GET /asset-reports/depreciation-ledger?from_date=&to_date=&asset_id=`):
+  every posted depreciation entry with date, asset, category, amount, running accumulated, and Journal
+  Entry no.
+- ✅ Frontend `AssetReportsView` at `/asset-reports` (two tabs) + Assets sidebar Reports links.
+- **Tests:** +1 integration (register net block + disposed-excluded + ledger entries with JE links).
+  Verified live against the seeded data (8-asset net block, WDV decline visible in the ledger).
 
 ---
 

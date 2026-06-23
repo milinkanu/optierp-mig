@@ -523,8 +523,9 @@ const ASSETS: WorkspaceConfig = {
     {
       title: "Reports",
       items: [
+        { label: "Fixed Asset Register", to: "/asset-reports" },
+        { label: "Depreciation Ledger", to: "/asset-reports?tab=ledger" },
         { label: "General Ledger", to: "/reports?tab=general-ledger" },
-        { label: "Financial Reports", to: "/reports" },
       ],
     },
   ],
@@ -533,6 +534,7 @@ const ASSETS: WorkspaceConfig = {
       title: "Assets",
       links: [
         { label: "Asset Register", to: "/assets" },
+        { label: "Asset Reports", to: "/asset-reports" },
         { label: "Asset Category", to: "/m/asset-category" },
         { label: "Location", to: "/m/location" },
       ],
