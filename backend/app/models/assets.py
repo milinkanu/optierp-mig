@@ -266,16 +266,17 @@ class AssetMovement(Base, DocumentMixin, CompanyScopedMixin):
         return self.to_location.location_name if self.to_location else None
 
 
-# Phase 3 lean log masters (engine-served, no GL). ERPNext's maintenance teams /
-# tasks / SLAs and the repair-capitalization machinery are dropped (master §2): a
-# repair that should be expensed/capitalised is a normal Journal Entry, kept separate.
-MAINTENANCE_TYPES = ("Preventive", "Calibration", "Inspection", "Other")
-MAINTENANCE_STATUSES = ("Planned", "Completed", "Cancelled")
-REPAIR_STATUSES = ("Pending", "Completed")
+# Phase 3 lean log master (engine-served, no GL). ONE master covers both preventive
+# maintenance AND breakdown repairs — they were near-identical records, so the "Repair"
+# kind is just a maintenance_type rather than a second DocType (master §2 simplification;
+# ERPNext's separate Asset Repair + maintenance teams/tasks/SLAs are dropped). A repair
+# that should hit the books is a normal Journal Entry, kept separate.
+MAINTENANCE_TYPES = ("Preventive", "Calibration", "Inspection", "Repair", "Other")
+MAINTENANCE_STATUSES = ("Open", "Completed", "Cancelled")
 
 
 class AssetMaintenance(Base, DocumentMixin, CompanyScopedMixin):
-    """A maintenance log entry for an asset — engine master (auto-numbered, no GL)."""
+    """A maintenance / repair log entry for an asset — engine master (auto-numbered, no GL)."""
 
     __tablename__ = "asset_maintenances"
     __table_args__ = (UniqueConstraint("company_id", "name", name="uq_asset_maintenance_name"),)
@@ -286,30 +287,10 @@ class AssetMaintenance(Base, DocumentMixin, CompanyScopedMixin):
     )
     maintenance_type: Mapped[str] = mapped_column(
         String(20), nullable=False, default="Preventive", server_default=text("'Preventive'")
-    )
+    )  # Preventive | Calibration | Inspection | Repair | Other
     maintenance_date: Mapped[date] = mapped_column(Date, nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
     cost: Mapped[Decimal] = mapped_column(Numeric(21, 6), nullable=False, default=0, server_default=text("0"))
     status: Mapped[str] = mapped_column(
-        String(20), nullable=False, default="Planned", server_default=text("'Planned'")
-    )
-
-
-class AssetRepair(Base, DocumentMixin, CompanyScopedMixin):
-    """A breakdown-repair log entry for an asset — engine master (auto-numbered, no GL)."""
-
-    __tablename__ = "asset_repairs"
-    __table_args__ = (UniqueConstraint("company_id", "name", name="uq_asset_repair_name"),)
-
-    name: Mapped[str] = mapped_column(String(140), nullable=False)  # series doc number
-    asset_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("assets.id", ondelete="CASCADE"), nullable=False
-    )
-    repair_date: Mapped[date] = mapped_column(Date, nullable=False)
-    description: Mapped[str | None] = mapped_column(Text)
-    repair_cost: Mapped[Decimal] = mapped_column(Numeric(21, 6), nullable=False, default=0, server_default=text("0"))
-    downtime_hours: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, default=0, server_default=text("0"))
-    status: Mapped[str] = mapped_column(
-        String(20), nullable=False, default="Pending", server_default=text("'Pending'")
-    )
-    completion_date: Mapped[date | None] = mapped_column(Date)
+        String(20), nullable=False, default="Open", server_default=text("'Open'")
+    )  # Open | Completed | Cancelled

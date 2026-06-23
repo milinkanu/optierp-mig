@@ -510,8 +510,7 @@ const ASSETS: WorkspaceConfig = {
     {
       title: "Maintenance",
       items: [
-        { label: "Asset Maintenance", to: "/m/asset-maintenance" },
-        { label: "Asset Repair", to: "/m/asset-repair" },
+        { label: "Maintenance & Repair", to: "/m/asset-maintenance" },
       ],
     },
     {
@@ -541,8 +540,7 @@ const ASSETS: WorkspaceConfig = {
     {
       title: "Maintenance",
       links: [
-        { label: "Asset Maintenance", to: "/m/asset-maintenance" },
-        { label: "Asset Repair", to: "/m/asset-repair" },
+        { label: "Maintenance & Repair", to: "/m/asset-maintenance" },
       ],
     },
   ],

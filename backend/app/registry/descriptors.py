@@ -25,7 +25,7 @@ from app.models.accounts import (
     TaxCategory,
     TaxWithholdingCategory,
 )
-from app.models.assets import Asset, AssetCategory, AssetMaintenance, AssetRepair, Location
+from app.models.assets import Asset, AssetCategory, AssetMaintenance, Location
 from app.models.buying import Supplier, SupplierGroup
 from app.models.selling import (
     Address,
@@ -905,8 +905,9 @@ register(
     )
 )
 
-# Lean maintenance / repair logs (auto-numbered, no GL). A repair that should hit
-# the books is a separate Journal Entry — kept uncoupled (master §2).
+# One lean maintenance/repair log (auto-numbered, no GL) — preventive maintenance and
+# breakdown repairs are the same record, distinguished by the "Type" (Repair is just one
+# type), not two DocTypes. A repair that should hit the books is a separate Journal Entry.
 register(
     DocTypeDescriptor(
         name="Asset Maintenance",
@@ -923,41 +924,15 @@ register(
         fields=(
             FieldSpec("asset_id", "Asset", "Link", options="asset", required=True, in_list=True),
             FieldSpec("maintenance_type", "Type", "Select",
-                      options="Preventive\nCalibration\nInspection\nOther", in_list=True),
+                      options="Preventive\nCalibration\nInspection\nRepair\nOther", in_list=True,
+                      help="Use 'Repair' for a breakdown fix; the others are planned maintenance."),
             FieldSpec("maintenance_date", "Date", "Date", required=True, in_list=True),
-            FieldSpec("description", "Description", "Text", span=2),
+            FieldSpec("description", "Description / Work Done", "Text", span=2),
             FieldSpec("cost", "Cost", "Currency", in_list=True,
                       help="Informational — post a Journal Entry if you need it in the books."),
-            FieldSpec("status", "Status", "Select", options="Planned\nCompleted\nCancelled", in_list=True),
+            FieldSpec("status", "Status", "Select", options="Open\nCompleted\nCancelled", in_list=True),
         ),
         list_fields=("name", "asset_id", "maintenance_type", "maintenance_date", "status"),
-    )
-)
-
-register(
-    DocTypeDescriptor(
-        name="Asset Repair",
-        slug="asset-repair",
-        model=AssetRepair,
-        title_field="name",
-        naming="series:ASSET-RPR-.YYYY.-",
-        group="Assets",
-        permission_name="Asset Repair",
-        permissions={
-            "Accounts Manager": _ACCOUNTS_MANAGER,
-            "Accounts User": _ACCOUNTS_USER,
-        },
-        fields=(
-            FieldSpec("asset_id", "Asset", "Link", options="asset", required=True, in_list=True),
-            FieldSpec("repair_date", "Failure / Repair Date", "Date", required=True, in_list=True),
-            FieldSpec("description", "Problem / Work Done", "Text", span=2),
-            FieldSpec("repair_cost", "Repair Cost", "Currency", in_list=True,
-                      help="Informational — post a Journal Entry if you need it in the books."),
-            FieldSpec("downtime_hours", "Downtime (hours)", "Float"),
-            FieldSpec("status", "Status", "Select", options="Pending\nCompleted", in_list=True),
-            FieldSpec("completion_date", "Completion Date", "Date", depends_on="status"),
-        ),
-        list_fields=("name", "asset_id", "repair_date", "status"),
     )
 )
 
