@@ -113,9 +113,14 @@ onMounted(async () => {
           <RouterLink to="/m/location" class="text-blue-600 hover:underline">Locations</RouterLink> first.
         </p>
       </div>
-      <button class="btn-primary" @click="showForm = !showForm">
-        {{ showForm ? "Close" : "New Asset" }}
-      </button>
+      <div class="flex gap-2">
+        <RouterLink to="/asset-capitalize" class="rounded-md border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50">
+          Capitalize
+        </RouterLink>
+        <button class="btn-primary" @click="showForm = !showForm">
+          {{ showForm ? "Close" : "New Asset" }}
+        </button>
+      </div>
     </div>
 
     <form v-if="showForm" class="mb-6 rounded-lg border border-gray-200 bg-white p-5 shadow-sm" @submit.prevent="save">

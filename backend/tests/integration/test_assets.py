@@ -569,6 +569,41 @@ async def test_auto_create_asset_from_purchase_invoice(ctx):
     assert Decimal(server["gross_purchase_amount"]) == Decimal("200000.000000")
 
 
+async def test_capitalize_asset_from_components(ctx):
+    """Capitalize a new asset from costed components: Dr Fixed Asset / Cr each source."""
+    client, company, headers = ctx
+    cat = await _category(client, company, headers, name="Assembled Plant")
+    stock = await coa_account(client, company, headers, "Stock In Hand")
+    bank = await coa_account(client, company, headers, "Cash")
+    fy_start = _fy_start(date.today())
+    r = await client.post(
+        f"{API}/assets/capitalize",
+        json={
+            "asset_name": "Cold Storage Unit",
+            "asset_category_id": cat["id"],
+            "posting_date": str(fy_start),
+            "available_for_use_date": str(fy_start),
+            "components": [
+                {"description": "Compressor + panels (parts)", "amount": "180000", "account_id": stock["id"]},
+                {"description": "Installation labour", "amount": "20000", "account_id": bank["id"]},
+            ],
+        },
+        headers=headers,
+    )
+    assert r.status_code == 201, r.text
+    asset = r.json()
+    assert asset["status"] == "Submitted"
+    assert Decimal(asset["gross_purchase_amount"]) == Decimal("200000.000000")  # 180k + 20k
+    assert len(asset["schedule"]) == 60  # depreciable, schedule generated
+
+    # the capitalization Journal Entry is balanced: Dr Fixed Asset 200k / Cr sources 200k
+    je = (await client.get(f"{API}/journal-entries", params={"docstatus": 1}, headers=headers)).json()["items"]
+    assert any(
+        j["voucher_type"] == "Asset Capitalization" and Decimal(j["total_debit"]) == Decimal("200000.000000")
+        for j in je
+    )
+
+
 async def test_maintenance_log_links_to_asset(ctx):
     """The Asset Maintenance engine master accepts an asset link and auto-numbers."""
     client, company, headers = ctx
