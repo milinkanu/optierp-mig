@@ -110,10 +110,28 @@ Plus these ERPNext *capabilities* (not separate DocTypes):
   WDV explicit-rate category). Verified live (forklift depreciation cancelled → status Submitted,
   accumulated ₹0, rows reopened).
 
-### Phase 7 — Maintenance scheduling *(keep it ONE doctype)*
-- Upgrade the maintenance log to **recurring scheduled tasks**: periodicity (monthly/quarterly/
-  yearly), `next_due_date`, an **Overdue** view, mark-complete → roll the next due date forward.
-- **Keep** the single merged Maintenance & Repair master (no teams, members, or SLAs).
+### Phase 7 — Maintenance scheduling *(kept ONE doctype)* — ✅ DONE (migration 0057)
+- ✅ Asset Maintenance gains `periodicity` (One-time/Monthly/Quarterly/Half-yearly/Yearly),
+  `next_due_date` and `assigned_to` — preventive maintenance can be scheduled, still on the single
+  engine-served master (no teams/members/SLAs).
+- ✅ **Maintenance Due report** (`GET /asset-reports/maintenance-due`, `only_overdue` filter) — Open
+  scheduled maintenance by next-due date, **overdue first** with a days-overdue figure; a third tab in
+  the Asset Reports view (overdue rows highlighted) + a sidebar link.
+- *Tests:* +1 integration (overdue vs upcoming + only_overdue filter). Verified live (a Forklift
+  preventive service 22 days overdue surfaced in red).
+- *Note:* auto-rolling the next-due date on completion was left out (lean) — log the service done and
+  set the next due date, or create the next occurrence. Easy to add later if it becomes routine.
+
+---
+
+## ✅ Recommended BUILD set complete
+
+All four phases of the agreed scope are built, tested, verified live and pushed on
+`feat/assets-phase-1`: **P4 Reports**, **P6 depreciation accuracy**, **P5 capitalization (+CWIP)**,
+**P7 maintenance scheduling**. Deliberately skipped (enterprise ceremony): multiple finance books,
+shift-based depreciation, maintenance teams/SLAs, location tree+geo, asset-activity timeline,
+multi-asset movement, Double Declining Balance. Deferred with rationale: disposal via Sales Invoice
+(cross-module GL risk for an occasional event).
 
 ### Deliberately SKIPPED (enterprise ceremony — revisit only on a real need)
 - **Multiple Finance Books** + Asset Category Account child (dual-book parallel depreciation).

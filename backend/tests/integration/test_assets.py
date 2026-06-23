@@ -5,7 +5,7 @@ monthly entries of ₹2,000; submit then depreciate posts due rows as balanced J
 Entries; book value declines correctly; re-running posts nothing (idempotent).
 """
 
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 
 import pytest
@@ -632,6 +632,54 @@ async def test_maintenance_log_links_to_asset(ctx):
     )
     assert r.status_code == 201, r.text
     assert r.json()["name"].startswith("ASSET-MNT-")
+
+
+async def test_maintenance_due_report_flags_overdue(ctx):
+    """Scheduled maintenance with a past next-due date shows up as overdue."""
+    client, company, headers = ctx
+    cat = await _category(client, company, headers, name="Schedulable")
+    fy_start = _fy_start(date.today())
+    asset = (
+        await client.post(
+            f"{API}/assets",
+            json={
+                "asset_name": "Chiller", "asset_category_id": cat["id"],
+                "gross_purchase_amount": "200000", "available_for_use_date": str(fy_start),
+            },
+            headers=headers,
+        )
+    ).json()
+    overdue_date = date.today() - timedelta(days=10)
+    future_date = date.today() + timedelta(days=30)
+    await client.post(
+        f"{API}/registry/asset-maintenance",
+        json={"asset_id": asset["id"], "maintenance_type": "Preventive", "periodicity": "Quarterly",
+              "maintenance_date": str(fy_start), "next_due_date": str(overdue_date),
+              "assigned_to": "Tech Team", "status": "Open"},
+        headers=headers,
+    )
+    await client.post(
+        f"{API}/registry/asset-maintenance",
+        json={"asset_id": asset["id"], "maintenance_type": "Inspection", "periodicity": "Yearly",
+              "maintenance_date": str(fy_start), "next_due_date": str(future_date), "status": "Open"},
+        headers=headers,
+    )
+
+    due = (await client.get(f"{API}/asset-reports/maintenance-due", headers=headers)).json()
+    mine = [d for d in due if d["asset_name"] == "Chiller"]
+    assert len(mine) == 2
+    overdue = next(d for d in mine if d["maintenance_type"] == "Preventive")
+    assert overdue["days_overdue"] == 10  # 10 days past due
+    upcoming = next(d for d in mine if d["maintenance_type"] == "Inspection")
+    assert upcoming["days_overdue"] == -30  # due in 30 days
+
+    # only_overdue filters to the past-due one
+    od = (
+        await client.get(f"{API}/asset-reports/maintenance-due",
+                         params={"only_overdue": "true"}, headers=headers)
+    ).json()
+    assert all(d["days_overdue"] >= 0 for d in od)
+    assert any(d["asset_name"] == "Chiller" for d in od)
 
 
 async def test_depreciation_blocked_without_category_accounts(ctx):

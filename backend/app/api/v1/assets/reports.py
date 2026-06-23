@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.exceptions import ValidationError
 from app.core.permissions import require_permission
 from app.core.security import CurrentUser, get_tenant_db
-from app.schemas.assets import DepreciationLedgerRow, FixedAssetRegisterRow
+from app.schemas.assets import DepreciationLedgerRow, FixedAssetRegisterRow, MaintenanceDueRow
 from app.services import asset_reports as svc
 
 router = APIRouter(prefix="/asset-reports", tags=["assets: reports"])
@@ -55,4 +55,23 @@ async def depreciation_ledger(
         raise ValidationError("An active company is required")
     return await svc.depreciation_ledger(
         db, current_user.company_id, from_date=from_date, to_date=to_date, asset_id=asset_id,
+    )
+
+
+@router.get(
+    "/maintenance-due",
+    response_model=list[MaintenanceDueRow],
+    summary="Maintenance Due",
+    description="Open scheduled maintenance with a next-due date, most overdue first.",
+)
+async def maintenance_due(
+    current_user: Annotated[CurrentUser, Depends(require_permission("Asset Maintenance", "report"))],
+    db: Annotated[AsyncSession, Depends(get_tenant_db)],
+    as_of: date | None = None,
+    only_overdue: bool = False,
+) -> list[MaintenanceDueRow]:
+    if current_user.company_id is None:
+        raise ValidationError("An active company is required")
+    return await svc.maintenance_due(
+        db, current_user.company_id, as_of=as_of, only_overdue=only_overdue,
     )

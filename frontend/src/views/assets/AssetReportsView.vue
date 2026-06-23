@@ -29,9 +29,24 @@ interface LedgerRow {
   accumulated_depreciation: string;
   journal_entry_no: string | null;
 }
+interface MaintenanceRow {
+  id: string;
+  name: string;
+  asset_name: string | null;
+  maintenance_type: string;
+  periodicity: string;
+  next_due_date: string;
+  assigned_to: string | null;
+  status: string;
+  days_overdue: number;
+}
 
 const route = useRoute();
-const tab = ref<"register" | "ledger">(route.query.tab === "ledger" ? "ledger" : "register");
+type Tab = "register" | "ledger" | "maintenance";
+const initialTab = ["ledger", "maintenance"].includes(String(route.query.tab))
+  ? (route.query.tab as Tab)
+  : "register";
+const tab = ref<Tab>(initialTab);
 const today = new Date().toISOString().slice(0, 10);
 const asOf = ref(today);
 const includeDisposed = ref(false);
@@ -40,6 +55,7 @@ const toDate = ref(today);
 
 const register = ref<RegisterRow[]>([]);
 const ledger = ref<LedgerRow[]>([]);
+const maintenance = ref<MaintenanceRow[]>([]);
 const loading = ref(false);
 const error = ref<ErrorEnvelope | null>(null);
 
@@ -81,9 +97,22 @@ async function loadLedger(): Promise<void> {
   }
 }
 
+async function loadMaintenance(): Promise<void> {
+  loading.value = true;
+  error.value = null;
+  try {
+    maintenance.value = (await api.get<MaintenanceRow[]>("/asset-reports/maintenance-due")).data;
+  } catch (e) {
+    error.value = e as ErrorEnvelope;
+  } finally {
+    loading.value = false;
+  }
+}
+
 function reload(): void {
   if (tab.value === "register") void loadRegister();
-  else void loadLedger();
+  else if (tab.value === "ledger") void loadLedger();
+  else void loadMaintenance();
 }
 
 watch(tab, reload);
@@ -109,6 +138,13 @@ onMounted(reload);
         @click="tab = 'ledger'"
       >
         Depreciation Ledger
+      </button>
+      <button
+        class="px-3 py-2 text-sm font-medium"
+        :class="tab === 'maintenance' ? 'border-b-2 border-primary text-primary' : 'text-gray-500'"
+        @click="tab = 'maintenance'"
+      >
+        Maintenance Due
       </button>
     </div>
 
@@ -166,8 +202,44 @@ onMounted(reload);
       </div>
     </template>
 
+    <!-- Maintenance Due -->
+    <template v-else-if="tab === 'maintenance'">
+      <div class="overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm">
+        <table class="min-w-full text-sm">
+          <thead class="bg-gray-50 text-left text-xs uppercase text-gray-500">
+            <tr>
+              <th class="px-4 py-2">Asset</th><th class="px-4 py-2">Type</th>
+              <th class="px-4 py-2">Recurs</th><th class="px-4 py-2">Next Due</th>
+              <th class="px-4 py-2">Assigned To</th><th class="px-4 py-2">Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="m in maintenance" :key="m.id" class="border-t border-gray-100" :class="{ 'bg-red-50/40': m.days_overdue > 0 }">
+              <td class="px-4 py-1.5 font-medium text-gray-900">{{ m.asset_name ?? "—" }}</td>
+              <td class="px-4 py-1.5">{{ m.maintenance_type }}</td>
+              <td class="px-4 py-1.5 text-gray-500">{{ m.periodicity }}</td>
+              <td class="px-4 py-1.5">
+                {{ formatDate(m.next_due_date) }}
+                <span v-if="m.days_overdue > 0" class="ml-1 text-xs font-medium text-red-600">
+                  ({{ m.days_overdue }}d overdue)
+                </span>
+                <span v-else class="ml-1 text-xs text-gray-400">(in {{ -m.days_overdue }}d)</span>
+              </td>
+              <td class="px-4 py-1.5 text-gray-500">{{ m.assigned_to ?? "—" }}</td>
+              <td class="px-4 py-1.5">{{ m.status }}</td>
+            </tr>
+            <tr v-if="!maintenance.length && !loading">
+              <td colspan="6" class="px-4 py-8 text-center text-gray-400">
+                No scheduled maintenance due. Set a "Next Due" date on a Maintenance record.
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </template>
+
     <!-- Depreciation Ledger -->
-    <template v-else>
+    <template v-else-if="tab === 'ledger'">
       <div class="mb-3 flex flex-wrap items-end gap-4">
         <div>
           <label class="form-label">From</label>

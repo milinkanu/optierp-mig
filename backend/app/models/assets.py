@@ -284,6 +284,7 @@ class AssetMovement(Base, DocumentMixin, CompanyScopedMixin):
 # that should hit the books is a normal Journal Entry, kept separate.
 MAINTENANCE_TYPES = ("Preventive", "Calibration", "Inspection", "Repair", "Other")
 MAINTENANCE_STATUSES = ("Open", "Completed", "Cancelled")
+MAINTENANCE_PERIODICITY = ("One-time", "Monthly", "Quarterly", "Half-yearly", "Yearly")
 
 
 class AssetMaintenance(Base, DocumentMixin, CompanyScopedMixin):
@@ -305,3 +306,16 @@ class AssetMaintenance(Base, DocumentMixin, CompanyScopedMixin):
     status: Mapped[str] = mapped_column(
         String(20), nullable=False, default="Open", server_default=text("'Open'")
     )  # Open | Completed | Cancelled
+    # scheduling: how often this recurs + when it's next due + who's responsible. The
+    # Maintenance Due report surfaces Open items by next_due_date (overdue first).
+    periodicity: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="One-time", server_default=text("'One-time'")
+    )
+    next_due_date: Mapped[date | None] = mapped_column(Date)
+    assigned_to: Mapped[str | None] = mapped_column(String(140))
+
+    asset = relationship("Asset", lazy="joined", viewonly=True)
+
+    @property
+    def asset_name(self) -> str | None:
+        return self.asset.asset_name if self.asset else None

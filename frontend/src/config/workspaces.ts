@@ -512,6 +512,7 @@ const ASSETS: WorkspaceConfig = {
       title: "Maintenance",
       items: [
         { label: "Maintenance & Repair", to: "/m/asset-maintenance" },
+        { label: "Maintenance Due", to: "/asset-reports?tab=maintenance" },
       ],
     },
     {
