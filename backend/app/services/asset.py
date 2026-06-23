@@ -174,6 +174,8 @@ def written_down_value_schedule(
 def _build_schedule_rows(
     asset: Asset, category: AssetCategory, payload: AssetCreate
 ) -> list[AssetDepreciationSchedule]:
+    if category.is_non_depreciable:
+        return []  # land / freehold: held at cost, no depreciation schedule
     salvage = (
         asset.gross_purchase_amount * category.salvage_value_percent / Decimal("100")
     ).quantize(TWOPLACES, rounding=ROUND_HALF_UP)
@@ -311,9 +313,11 @@ async def create_asset(db: AsyncSession, payload: AssetCreate, user: CurrentUser
 async def submit_asset(db: AsyncSession, asset_id: uuid.UUID, user: CurrentUser) -> Asset:
     asset = await get_asset(db, asset_id, user.company_id)
     require_draft(asset.docstatus)
-    # the 3 GL accounts must be set on the category before the asset can depreciate
+    # depreciation accounts must be set before the asset can depreciate (skipped for
+    # non-depreciable categories like land, which never post depreciation)
     category = await _get_category(db, asset.asset_category_id, asset.company_id)
-    _require_accounts(category)
+    if not category.is_non_depreciable:
+        _require_accounts(category)
     asset.docstatus = DOCSTATUS_SUBMITTED
     asset.status = "Submitted"
     asset.modified_by = user.id
@@ -419,11 +423,15 @@ async def depreciate_due(
     if asset.status in ("Sold", "Scrapped"):
         return DepreciateResult(asset_id=asset.id, posted_count=0, status=asset.status,
                                 detail="Asset has been disposed")
+
+    due = [r for r in asset.schedule if not r.posted and r.schedule_date <= on_date]
+    if not due:  # nothing to post (incl. non-depreciable assets with no schedule)
+        return DepreciateResult(asset_id=asset.id, posted_count=0, status=asset.status,
+                                detail="Nothing due")
     category = await _get_category(db, asset.asset_category_id, asset.company_id)
     _require_accounts(category)
     await set_company_context(db, asset.company_id)
 
-    due = [r for r in asset.schedule if not r.posted and r.schedule_date <= on_date]
     je_ids: list[uuid.UUID] = []
     for row in due:
         try:
@@ -637,19 +645,21 @@ def _reschedule_unposted(asset: Asset, category: AssetCategory, new_book_value: 
 async def adjust_asset_value(
     db: AsyncSession, asset_id: uuid.UUID, payload: AssetValueAdjustIn, user: CurrentUser
 ) -> Asset:
-    """Revalue an asset to a new book value: post the difference and reschedule the
-    remaining depreciation. Write-down (value falls): Dr difference account (impairment),
-    Cr Accumulated Depreciation. Write-up: the reverse."""
+    """Revalue an asset to a new book value, then reschedule remaining depreciation.
+
+    * **Write-down (impairment):** value falls → Dr difference account (impairment loss) /
+      Cr Accumulated Depreciation. Tracked on ``accumulated_depreciation_adjustment``.
+    * **Write-up (appreciation / revaluation):** value rises → Dr the Fixed Asset account
+      (the carrying value on the balance sheet goes up) / Cr the difference account (a
+      **Revaluation Surplus** in equity — appreciation is *not* income). This is how an
+      asset that gains value (e.g. land) is handled: you revalue it, the gain sits in
+      equity. Increases the asset's gross/carrying value.
+    """
     asset = await get_asset(db, asset_id, user.company_id)
     require_submitted(asset.docstatus)
     if asset.status in ("Sold", "Scrapped"):
         raise ValidationError(f"Cannot revalue a {asset.status.lower()} asset", field="status")
     category = await _get_category(db, asset.asset_category_id, asset.company_id)
-    if not category.accumulated_depreciation_account_id:
-        raise ValidationError(
-            f"Asset Category '{category.category_name}' needs an Accumulated Depreciation account",
-            field="asset_category_id",
-        )
 
     current_book = asset.book_value
     new_value = payload.new_asset_value
@@ -658,16 +668,28 @@ async def adjust_asset_value(
         raise ValidationError("New value equals the current book value — nothing to adjust",
                               field="new_asset_value")
 
-    if difference > ZERO:  # write-down
-        lines = [
-            (payload.difference_account_id, difference, ZERO),  # Dr impairment/expense
-            (category.accumulated_depreciation_account_id, ZERO, difference),  # Cr accum dep
-        ]
-    else:  # write-up
+    write_up = difference < ZERO
+    if write_up and not category.fixed_asset_account_id:
+        raise ValidationError(
+            f"Asset Category '{category.category_name}' needs a Fixed Asset account to revalue up",
+            field="asset_category_id",
+        )
+    if not write_up and not category.accumulated_depreciation_account_id:
+        raise ValidationError(
+            f"Asset Category '{category.category_name}' needs an Accumulated Depreciation account",
+            field="asset_category_id",
+        )
+
+    if write_up:  # appreciation: raise carrying value, credit revaluation surplus
         amt = -difference
         lines = [
-            (category.accumulated_depreciation_account_id, amt, ZERO),  # Dr accum dep
-            (payload.difference_account_id, ZERO, amt),  # Cr surplus/income
+            (category.fixed_asset_account_id, amt, ZERO),  # Dr fixed asset (carrying value ↑)
+            (payload.difference_account_id, ZERO, amt),  # Cr revaluation surplus (equity)
+        ]
+    else:  # impairment: reduce carrying value via accumulated depreciation
+        lines = [
+            (payload.difference_account_id, difference, ZERO),  # Dr impairment loss
+            (category.accumulated_depreciation_account_id, ZERO, difference),  # Cr accum dep
         ]
 
     await set_company_context(db, asset.company_id)
@@ -678,7 +700,10 @@ async def adjust_asset_value(
         db, company_id=asset.company_id, posting_date=payload.adjustment_date,
         voucher_type="Asset Value Adjustment", lines=lines, remark=remark, actor=user,
     )
-    asset.accumulated_depreciation_adjustment += difference
+    if write_up:
+        asset.gross_purchase_amount += -difference  # carrying value rises
+    else:
+        asset.accumulated_depreciation_adjustment += difference  # accumulated dep rises
     _reschedule_unposted(asset, category, new_value)
     asset.modified_by = user.id
     await db.flush()

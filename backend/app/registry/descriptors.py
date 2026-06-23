@@ -861,11 +861,15 @@ register(
         fields=(
             FieldSpec("category_name", "Category Name", "Data", required=True, in_list=True, span=2,
                       unique=True, help="e.g. Vehicles, Computers, Plant & Machinery."),
+            FieldSpec("is_non_depreciable", "Non-depreciable (e.g. land)", "Check", in_list=True,
+                      help="Tick for land/freehold held at cost — no depreciation schedule. Its value "
+                      "only changes via a Value Adjustment (revaluation up = appreciation)."),
             FieldSpec("depreciation_method", "Depreciation Method", "Select",
                       options="Straight Line\nWritten Down Value\nManual", required=True, in_list=True,
                       help="Straight Line spreads cost evenly; Written Down Value depreciates a fixed "
-                      "% of the falling book value (needs a salvage value); Manual = you enter rows."),
-            FieldSpec("total_number_of_depreciations", "Number of Depreciations", "Int", required=True,
+                      "% of the falling book value (needs a salvage value); Manual = you enter rows. "
+                      "Ignored when 'Non-depreciable' is ticked."),
+            FieldSpec("total_number_of_depreciations", "Number of Depreciations", "Int",
                       help="How many depreciation entries over the asset's life (e.g. 60)."),
             FieldSpec("frequency_of_depreciation_months", "Months Between Depreciations", "Int",
                       help="1 = monthly, 3 = quarterly, 12 = yearly. So 60 × 1 = 5 years monthly."),

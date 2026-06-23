@@ -341,6 +341,69 @@ async def test_value_adjustment_writedown_and_reschedule(ctx):
     assert any(j["voucher_type"] == "Asset Value Adjustment" and Decimal(j["total_debit"]) == Decimal("40000.000000") for j in je)
 
 
+async def test_non_depreciable_land_appreciates(ctx):
+    """Land: a non-depreciable category has no schedule; revaluing it UP books the gain to
+    Revaluation Surplus and raises its carrying value (appreciation, not income)."""
+    client, company, headers = ctx
+    fixed = await coa_account(client, company, headers, "Buildings")
+    cat = (
+        await client.post(
+            f"{API}/registry/asset-category",
+            json={
+                "category_name": "Land & Freehold",
+                "is_non_depreciable": True,
+                "depreciation_method": "Straight Line",  # ignored when non-depreciable
+                "total_number_of_depreciations": 0,
+                "fixed_asset_account_id": fixed["id"],
+            },
+            headers=headers,
+        )
+    ).json()
+    assert cat["is_non_depreciable"] is True
+
+    fy_start = _fy_start(date.today())
+    asset = (
+        await client.post(
+            f"{API}/assets",
+            json={
+                "asset_name": "Plot 42",
+                "asset_category_id": cat["id"],
+                "gross_purchase_amount": "1000000",
+                "available_for_use_date": str(fy_start),
+            },
+            headers=headers,
+        )
+    ).json()
+    # no depreciation schedule is generated for land
+    assert asset["schedule"] == []
+    await client.post(f"{API}/assets/{asset['id']}/submit", headers=headers)
+    # "depreciate now" is a no-op
+    r = await client.post(f"{API}/assets/{asset['id']}/depreciate", headers=headers)
+    assert r.json()["posted_count"] == 0
+
+    # appreciation: revalue UP to 1.2M → Dr Buildings 200k / Cr Revaluation Surplus 200k
+    surplus = await coa_account(client, company, headers, "Revaluation Surplus")
+    r = await client.post(
+        f"{API}/assets/{asset['id']}/adjust-value",
+        json={
+            "adjustment_date": str(date.today()),
+            "new_asset_value": "1200000",
+            "difference_account_id": surplus["id"],
+        },
+        headers=headers,
+    )
+    assert r.status_code == 200, r.text
+    revalued = r.json()
+    assert Decimal(revalued["book_value"]) == Decimal("1200000.000000")
+    assert Decimal(revalued["gross_purchase_amount"]) == Decimal("1200000.000000")  # carrying value ↑
+
+    je = (await client.get(f"{API}/journal-entries", params={"docstatus": 1}, headers=headers)).json()["items"]
+    assert any(
+        j["voucher_type"] == "Asset Value Adjustment" and Decimal(j["total_debit"]) == Decimal("200000.000000")
+        for j in je
+    )
+
+
 async def test_auto_create_asset_from_purchase_invoice(ctx):
     """A Purchase Invoice line for a fixed-asset item auto-creates a draft Asset."""
     client, company, headers = ctx

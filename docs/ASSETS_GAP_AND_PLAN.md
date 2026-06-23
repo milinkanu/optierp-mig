@@ -200,10 +200,14 @@ to be completed. *MSME-lean:* ship **manual asset creation first**; auto-from-pu
   breakdown repairs (they were near-identical records, so "Repair" is just a `maintenance_type`, not a
   second DocType). Auto-numbered `ASSET-MNT-`, Links to the Asset via the new `asset` LINK_SOURCES entry;
   a pure log, no GL — a repair that should hit the books is a separate JE, kept uncoupled.
-- ✅ **Asset Value Adjustment** (`POST /assets/{id}/adjust-value`): revalue to a new book value — posts
-  the difference (Dr impairment / Cr Accumulated Depreciation for a write-down, reverse for a write-up)
-  via the shared `_post_journal`, tracks it on `accumulated_depreciation_adjustment` (part of book value),
-  and **reschedules the unposted rows** (SL/WDV) to depreciate the new value down to salvage.
+- ✅ **Asset Value Adjustment** (`POST /assets/{id}/adjust-value`): revalue to a new book value and
+  reschedule the unposted rows (SL/WDV). **Write-down (impairment):** Dr impairment loss / Cr Accumulated
+  Depreciation (tracked on `accumulated_depreciation_adjustment`). **Write-up (appreciation / revaluation):**
+  Dr the Fixed Asset account (carrying value ↑) / Cr **Revaluation Surplus** (equity, not income) and raise
+  the asset's gross — this is how an appreciating asset is handled (you don't passively appreciate; you
+  revalue, and the gain sits in equity).
+- ✅ **Non-depreciable categories** (`is_non_depreciable`, e.g. **Land / freehold**): held at cost with no
+  depreciation schedule; their value moves only via a Value Adjustment. Buildings still depreciate.
 - ✅ **Auto-create Asset from a fixed-asset Purchase Invoice line**: `is_fixed_asset` + `asset_category_id`
   on **Item** (the deferred-from-Phase-1 fields); on PI submit a best-effort post-commit hook creates one
   **draft** Asset per fixed-asset line (gross = line net amount, dates = posting date). The PI debits the

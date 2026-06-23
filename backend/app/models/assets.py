@@ -77,6 +77,11 @@ class AssetCategory(Base, DocumentMixin, CompanyScopedMixin):
     salvage_value_percent: Mapped[Decimal] = mapped_column(
         Numeric(9, 4), nullable=False, default=0, server_default=text("0")
     )  # residual value as a % of gross; depreciation never goes below it
+    # land / freehold property: held at cost, never depreciated (no schedule). Its value
+    # only changes via a Value Adjustment (revaluation up = appreciation, down = impairment).
+    is_non_depreciable: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false")
+    )
     fixed_asset_account_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("accounts.id")
     )
