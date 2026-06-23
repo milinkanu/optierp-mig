@@ -176,3 +176,18 @@ class DepreciationLedgerRow(BaseModel):
     accumulated_depreciation: Decimal
     journal_entry_id: uuid.UUID | None
     journal_entry_no: str | None
+
+
+class MaintenanceDueRow(BaseModel):
+    """One scheduled maintenance item, with how overdue it is."""
+
+    id: uuid.UUID
+    name: str
+    asset_id: uuid.UUID
+    asset_name: str | None
+    maintenance_type: str
+    periodicity: str
+    next_due_date: date
+    assigned_to: str | None
+    status: str
+    days_overdue: int  # positive = overdue, negative = days until due

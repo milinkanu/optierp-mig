@@ -19,9 +19,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models.accounts import JournalEntry
-from app.models.assets import Asset, AssetDepreciationSchedule
+from app.models.assets import Asset, AssetDepreciationSchedule, AssetMaintenance
 from app.models.base import DOCSTATUS_SUBMITTED
-from app.schemas.assets import DepreciationLedgerRow, FixedAssetRegisterRow
+from app.schemas.assets import DepreciationLedgerRow, FixedAssetRegisterRow, MaintenanceDueRow
 
 ZERO = Decimal("0")
 
@@ -108,6 +108,46 @@ async def depreciation_ledger(
                 accumulated_depreciation=sched.accumulated_depreciation,
                 journal_entry_id=sched.journal_entry_id,
                 journal_entry_no=je_no,
+            )
+        )
+    return rows
+
+
+async def maintenance_due(
+    db: AsyncSession,
+    company_id: uuid.UUID,
+    *,
+    as_of: date | None = None,
+    only_overdue: bool = False,
+) -> list[MaintenanceDueRow]:
+    """Open scheduled maintenance with a next-due date, soonest (most overdue) first."""
+    as_of = as_of or date.today()
+    stmt = (
+        select(AssetMaintenance)
+        .where(
+            AssetMaintenance.company_id == company_id,
+            AssetMaintenance.status == "Open",
+            AssetMaintenance.next_due_date.isnot(None),
+        )
+        .order_by(AssetMaintenance.next_due_date)
+    )
+    rows: list[MaintenanceDueRow] = []
+    for m in (await db.execute(stmt)).scalars():
+        days_overdue = (as_of - m.next_due_date).days
+        if only_overdue and days_overdue < 0:
+            continue
+        rows.append(
+            MaintenanceDueRow(
+                id=m.id,
+                name=m.name,
+                asset_id=m.asset_id,
+                asset_name=m.asset_name,
+                maintenance_type=m.maintenance_type,
+                periodicity=m.periodicity,
+                next_due_date=m.next_due_date,
+                assigned_to=m.assigned_to,
+                status=m.status,
+                days_overdue=days_overdue,
             )
         )
     return rows

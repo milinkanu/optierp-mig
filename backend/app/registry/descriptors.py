@@ -937,12 +937,18 @@ register(
                       options="Preventive\nCalibration\nInspection\nRepair\nOther", in_list=True,
                       help="Use 'Repair' for a breakdown fix; the others are planned maintenance."),
             FieldSpec("maintenance_date", "Date", "Date", required=True, in_list=True),
+            FieldSpec("periodicity", "Recurs", "Select",
+                      options="One-time\nMonthly\nQuarterly\nHalf-yearly\nYearly",
+                      help="How often this maintenance recurs (informational cadence)."),
+            FieldSpec("next_due_date", "Next Due", "Date", in_list=True,
+                      help="When the next service is due — drives the Maintenance Due report."),
+            FieldSpec("assigned_to", "Assigned To", "Data", help="Who is responsible."),
             FieldSpec("description", "Description / Work Done", "Text", span=2),
             FieldSpec("cost", "Cost", "Currency", in_list=True,
                       help="Informational — post a Journal Entry if you need it in the books."),
             FieldSpec("status", "Status", "Select", options="Open\nCompleted\nCancelled", in_list=True),
         ),
-        list_fields=("name", "asset_id", "maintenance_type", "maintenance_date", "status"),
+        list_fields=("name", "asset_id", "maintenance_type", "next_due_date", "status"),
     )
 )
 
