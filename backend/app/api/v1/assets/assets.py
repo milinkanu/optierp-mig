@@ -104,6 +104,21 @@ async def depreciate_asset(
 
 
 @router.post(
+    "/{asset_id}/cancel-depreciation",
+    response_model=AssetResponse,
+    summary="Cancel posted depreciation",
+    description="Reverses all posted depreciation (reversing Journal Entries) and reopens the "
+    "asset so its schedule can be re-posted. The ledger stays append-only.",
+)
+async def cancel_depreciation(
+    asset_id: uuid.UUID,
+    current_user: Annotated[CurrentUser, Depends(require_permission("Asset", "cancel"))],
+    db: Annotated[AsyncSession, Depends(get_tenant_db)],
+) -> AssetResponse:
+    return AssetResponse.model_validate(await service.cancel_depreciation(db, asset_id, current_user))
+
+
+@router.post(
     "/{asset_id}/dispose",
     response_model=AssetResponse,
     summary="Sell or scrap an asset",

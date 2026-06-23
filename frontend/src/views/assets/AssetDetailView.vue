@@ -155,6 +155,21 @@ async function depreciate(): Promise<void> {
   }
 }
 
+async function cancelDepreciation(): Promise<void> {
+  busy.value = true;
+  error.value = null;
+  notice.value = null;
+  try {
+    await api.post(`/assets/${props.id}/cancel-depreciation`);
+    notice.value = "Posted depreciation reversed.";
+    await fetchAsset();
+  } catch (e) {
+    error.value = e as ErrorEnvelope;
+  } finally {
+    busy.value = false;
+  }
+}
+
 async function dispose(): Promise<void> {
   if (!dGainLoss.value) return;
   busy.value = true;
@@ -255,6 +270,14 @@ onMounted(async () => {
         </button>
         <button v-if="active" class="rounded-md border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50" :disabled="busy" @click="openForm('revalue')">
           Revalue
+        </button>
+        <button
+          v-if="asset.status === 'Partially Depreciated' || asset.status === 'Fully Depreciated'"
+          class="rounded-md border border-red-200 px-3 py-1.5 text-sm font-medium text-red-600 hover:bg-red-50"
+          :disabled="busy"
+          @click="cancelDepreciation"
+        >
+          Cancel depreciation
         </button>
         <button v-if="active" class="rounded-md border border-amber-300 px-3 py-1.5 text-sm font-medium text-amber-700 hover:bg-amber-50" :disabled="busy" @click="openForm('dispose')">
           Dispose

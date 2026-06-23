@@ -77,6 +77,12 @@ class AssetCategory(Base, DocumentMixin, CompanyScopedMixin):
     salvage_value_percent: Mapped[Decimal] = mapped_column(
         Numeric(9, 4), nullable=False, default=0, server_default=text("0")
     )  # residual value as a % of gross; depreciation never goes below it
+    # Written Down Value: an explicit statutory rate (e.g. India IT-Act 15%/40%). When set,
+    # it replaces the rate derived from salvage. Null = derive from salvage over the life.
+    rate_of_depreciation: Mapped[Decimal | None] = mapped_column(Numeric(9, 4))
+    # day-weight each period's depreciation by its actual day count (Feb < Jan), so an
+    # asset gets depreciation proportional to the days in each period (ERPNext daily pro-rata).
+    daily_prorata: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
     # land / freehold property: held at cost, never depreciated (no schedule). Its value
     # only changes via a Value Adjustment (revaluation up = appreciation, down = impairment).
     is_non_depreciable: Mapped[bool] = mapped_column(
