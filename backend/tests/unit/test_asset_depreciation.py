@@ -1,0 +1,188 @@
+"""Unit: straight-line depreciation schedule generation (pure, no DB)."""
+
+from datetime import date
+from decimal import Decimal
+
+import pytest
+
+from app.core.exceptions import ValidationError
+from app.services.asset import add_months, straight_line_schedule, written_down_value_schedule
+
+
+def test_straight_line_60_months_zero_salvage():
+    """Acceptance: ₹120k, 60-month SL life, ₹0 salvage → 60 monthly entries of ₹2,000;
+    accumulated climbs to the full ₹120k; book value reaches ₹0 on the last row."""
+    rows = straight_line_schedule(
+        gross=Decimal("120000"),
+        salvage=Decimal("0"),
+        opening_accumulated=Decimal("0"),
+        number_of_depreciations=60,
+        frequency_months=1,
+        start_date=date(2026, 1, 1),
+    )
+    assert len(rows) == 60
+    assert all(amount == Decimal("2000.00") for _d, amount, _acc in rows)
+    # accumulated is monotonic and ends exactly at the depreciable base
+    assert rows[0][2] == Decimal("2000.00")
+    assert rows[-1][2] == Decimal("120000.00")
+    # dates step one month at a time, ending 60 months after the in-use date
+    assert rows[0][0] == date(2026, 2, 1)
+    assert rows[-1][0] == date(2031, 1, 1)
+
+
+def test_straight_line_last_row_absorbs_rounding():
+    """A base that doesn't divide evenly: every row equal except the last, and the
+    total equals the depreciable base exactly (no lost/extra paise)."""
+    rows = straight_line_schedule(
+        gross=Decimal("10000"),
+        salvage=Decimal("0"),
+        opening_accumulated=Decimal("0"),
+        number_of_depreciations=3,
+        frequency_months=1,
+        start_date=date(2026, 1, 31),
+    )
+    amounts = [amount for _d, amount, _acc in rows]
+    assert amounts[0] == amounts[1] == Decimal("3333.33")
+    assert amounts[2] == Decimal("3333.34")  # last absorbs the remainder
+    assert sum(amounts) == Decimal("10000.00")
+    assert rows[-1][2] == Decimal("10000.00")
+
+
+def test_straight_line_salvage_floors_book_value():
+    """With salvage, the schedule depreciates only down to the residual value."""
+    rows = straight_line_schedule(
+        gross=Decimal("100000"),
+        salvage=Decimal("10000"),
+        opening_accumulated=Decimal("0"),
+        number_of_depreciations=10,
+        frequency_months=1,
+        start_date=date(2026, 1, 1),
+    )
+    assert sum(amount for _d, amount, _acc in rows) == Decimal("90000.00")
+    assert rows[-1][2] == Decimal("90000.00")  # accumulated stops at gross − salvage
+
+
+def test_straight_line_opening_accumulated_reduces_base():
+    """An asset onboarded part-way through life depreciates only the remaining base."""
+    rows = straight_line_schedule(
+        gross=Decimal("120000"),
+        salvage=Decimal("0"),
+        opening_accumulated=Decimal("48000"),  # 24 months already used elsewhere
+        number_of_depreciations=36,
+        frequency_months=1,
+        start_date=date(2026, 1, 1),
+    )
+    assert len(rows) == 36
+    assert sum(amount for _d, amount, _acc in rows) == Decimal("72000.00")
+    assert rows[-1][2] == Decimal("120000.00")  # accumulated includes the opening
+
+
+def test_quarterly_frequency_steps_three_months():
+    rows = straight_line_schedule(
+        gross=Decimal("12000"), salvage=Decimal("0"), opening_accumulated=Decimal("0"),
+        number_of_depreciations=4, frequency_months=3, start_date=date(2026, 1, 1),
+    )
+    assert [d for d, _a, _acc in rows] == [
+        date(2026, 4, 1), date(2026, 7, 1), date(2026, 10, 1), date(2027, 1, 1),
+    ]
+
+
+def test_zero_depreciations_rejected():
+    with pytest.raises(ValidationError):
+        straight_line_schedule(
+            gross=Decimal("1000"), salvage=Decimal("0"), opening_accumulated=Decimal("0"),
+            number_of_depreciations=0, frequency_months=1, start_date=date(2026, 1, 1),
+        )
+
+
+def test_salvage_above_gross_rejected():
+    with pytest.raises(ValidationError):
+        straight_line_schedule(
+            gross=Decimal("1000"), salvage=Decimal("1500"), opening_accumulated=Decimal("0"),
+            number_of_depreciations=12, frequency_months=1, start_date=date(2026, 1, 1),
+        )
+
+
+def test_add_months_clamps_to_month_end():
+    assert add_months(date(2026, 1, 31), 1) == date(2026, 2, 28)  # non-leap
+    assert add_months(date(2028, 1, 31), 1) == date(2028, 2, 29)  # leap
+    assert add_months(date(2026, 1, 15), 12) == date(2027, 1, 15)
+
+
+# --- Written Down Value (declining balance, Phase 2) -------------------------------
+
+
+def test_wdv_declining_balance_lands_on_salvage():
+    """WDV depreciates more early, less later, and ends exactly at salvage; the total
+    written off equals gross − salvage."""
+    rows = written_down_value_schedule(
+        gross=Decimal("120000"),
+        salvage=Decimal("12000"),  # 10%
+        opening_accumulated=Decimal("0"),
+        number_of_depreciations=5,
+        frequency_months=12,
+        start_date=date(2026, 4, 1),
+    )
+    amounts = [amount for _d, amount, _acc in rows]
+    assert len(rows) == 5
+    # declining: each period's charge is smaller than the previous
+    assert all(amounts[i] > amounts[i + 1] for i in range(len(amounts) - 1))
+    # first-year charge is the largest (≈ 36.9% of 120k)
+    assert amounts[0] > Decimal("40000")
+    # ends exactly on salvage; total written off = gross − salvage
+    assert rows[-1][2] == Decimal("108000.00")
+    assert sum(amounts) == Decimal("108000.00")
+
+
+def test_wdv_requires_positive_salvage():
+    with pytest.raises(ValidationError):
+        written_down_value_schedule(
+            gross=Decimal("100000"), salvage=Decimal("0"), opening_accumulated=Decimal("0"),
+            number_of_depreciations=5, frequency_months=12, start_date=date(2026, 4, 1),
+        )
+
+
+def test_wdv_explicit_rate_overrides_derived():
+    """An explicit WDV rate is applied per period (and works with zero salvage)."""
+    rows = written_down_value_schedule(
+        gross=Decimal("100000"), salvage=Decimal("0"), opening_accumulated=Decimal("0"),
+        number_of_depreciations=3, frequency_months=12, start_date=date(2026, 4, 1),
+        rate_pct=Decimal("40"),
+    )
+    # 40% of falling book value: 40000, then 24000 (40% of 60000)…
+    assert rows[0][1] == Decimal("40000.00")
+    assert rows[1][1] == Decimal("24000.00")
+    # last row zeroes the book (salvage 0)
+    assert rows[-1][2] == Decimal("100000.00")
+
+
+def test_straight_line_daily_prorata_weights_by_days():
+    """With daily pro-rata, periods are day-weighted; the total still equals the base."""
+    rows = straight_line_schedule(
+        gross=Decimal("120000"), salvage=Decimal("0"), opening_accumulated=Decimal("0"),
+        number_of_depreciations=12, frequency_months=1, start_date=date(2026, 1, 1),
+        daily_prorata=True,
+    )
+    amounts = [a for _d, a, _acc in rows]
+    # day counts differ (Jan=31, Feb=28…), so amounts are not all identical
+    assert len({a for a in amounts}) > 1
+    # but the total is exactly the depreciable base, ending at 120000
+    assert sum(amounts) == Decimal("120000.00")
+    assert rows[-1][2] == Decimal("120000.00")
+
+
+def test_wdv_explicit_rate_must_be_positive():
+    with pytest.raises(ValidationError):
+        written_down_value_schedule(
+            gross=Decimal("100000"), salvage=Decimal("0"), opening_accumulated=Decimal("0"),
+            number_of_depreciations=3, frequency_months=12, start_date=date(2026, 4, 1),
+            rate_pct=Decimal("0"),
+        )
+
+
+def test_wdv_steps_dates_by_frequency():
+    rows = written_down_value_schedule(
+        gross=Decimal("100000"), salvage=Decimal("10000"), opening_accumulated=Decimal("0"),
+        number_of_depreciations=3, frequency_months=12, start_date=date(2026, 4, 1),
+    )
+    assert [d for d, _a, _acc in rows] == [date(2027, 4, 1), date(2028, 4, 1), date(2029, 4, 1)]

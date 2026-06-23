@@ -164,6 +164,13 @@ class Item(Base, DocumentMixin, CompanyScopedMixin):
     lead_time_days: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default=text("0"))
     brand: Mapped[str | None] = mapped_column(String(140))
     barcode: Mapped[str | None] = mapped_column(String(140))
+    # Fixed-asset flag (Assets module Phase 3): a Purchase Invoice line for such an item
+    # auto-creates a draft Asset under this category. Point the item's expense account at
+    # the Fixed Asset COA account so the purchase debits the asset, not an expense.
+    is_fixed_asset: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+    asset_category_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("asset_categories.id")
+    )
     disabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
 
     item_group = relationship("ItemGroup", lazy="joined", viewonly=True)

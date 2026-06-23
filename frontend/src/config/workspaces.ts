@@ -493,9 +493,67 @@ const ACCOUNTING: WorkspaceConfig = {
   ],
 };
 
+// Assets module (Phase 1): the fixed-asset register + its two engine masters.
+// `/assets` is the register list itself (not a separate dashboard), so statsEndpoint
+// is unused until a workspace dashboard lands in a later phase.
+const ASSETS: WorkspaceConfig = {
+  key: "assets",
+  title: "Assets",
+  statsEndpoint: "/assets/workspace",
+  sidebar: [
+    {
+      items: [
+        { label: "Home", to: "/", icon: "⌂" },
+        { label: "Assets", to: "/assets", icon: "🏗" },
+        { label: "Capitalize Asset", to: "/asset-capitalize", icon: "🧱" },
+      ],
+    },
+    {
+      title: "Maintenance",
+      items: [
+        { label: "Maintenance & Repair", to: "/m/asset-maintenance" },
+        { label: "Maintenance Due", to: "/asset-reports?tab=maintenance" },
+      ],
+    },
+    {
+      title: "Setup",
+      items: [
+        { label: "Asset Category", to: "/m/asset-category" },
+        { label: "Location", to: "/m/location" },
+      ],
+    },
+    {
+      title: "Reports",
+      items: [
+        { label: "Fixed Asset Register", to: "/asset-reports" },
+        { label: "Depreciation Ledger", to: "/asset-reports?tab=ledger" },
+        { label: "General Ledger", to: "/reports?tab=general-ledger" },
+      ],
+    },
+  ],
+  cards: [
+    {
+      title: "Assets",
+      links: [
+        { label: "Asset Register", to: "/assets" },
+        { label: "Asset Reports", to: "/asset-reports" },
+        { label: "Asset Category", to: "/m/asset-category" },
+        { label: "Location", to: "/m/location" },
+      ],
+    },
+    {
+      title: "Maintenance",
+      links: [
+        { label: "Maintenance & Repair", to: "/m/asset-maintenance" },
+      ],
+    },
+  ],
+};
+
 export const WORKSPACES: Record<string, WorkspaceConfig> = {
   selling: SELLING,
   buying: BUYING,
   stock: STOCK,
   accounting: ACCOUNTING,
+  assets: ASSETS,
 };

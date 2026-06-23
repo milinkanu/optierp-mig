@@ -25,6 +25,7 @@ from app.models.accounts import (
     TaxCategory,
     TaxWithholdingCategory,
 )
+from app.models.assets import Asset, AssetCategory, AssetMaintenance, Location
 from app.models.buying import Supplier, SupplierGroup
 from app.models.selling import (
     Address,
@@ -841,6 +842,117 @@ register(
 )
 
 
+# --- Assets: Asset Category + Location (engine masters) -----------------------
+# Accounts roles manage assets (no separate Assets role at MSME scale, matching
+# ERPNext where Asset Category sits under Accounts).
+register(
+    DocTypeDescriptor(
+        name="Asset Category",
+        slug="asset-category",
+        model=AssetCategory,
+        title_field="category_name",
+        naming="field:category_name",
+        group="Assets",
+        permission_name="Asset Category",
+        permissions={
+            "Accounts Manager": _ACCOUNTS_MANAGER,
+            "Accounts User": _ACCOUNTS_USER,
+        },
+        fields=(
+            FieldSpec("category_name", "Category Name", "Data", required=True, in_list=True, span=2,
+                      unique=True, help="e.g. Vehicles, Computers, Plant & Machinery."),
+            FieldSpec("is_non_depreciable", "Non-depreciable (e.g. land)", "Check", in_list=True,
+                      help="Tick for land/freehold held at cost — no depreciation schedule. Its value "
+                      "only changes via a Value Adjustment (revaluation up = appreciation)."),
+            FieldSpec("depreciation_method", "Depreciation Method", "Select",
+                      options="Straight Line\nWritten Down Value\nManual", required=True, in_list=True,
+                      help="Straight Line spreads cost evenly; Written Down Value depreciates a fixed "
+                      "% of the falling book value (needs a salvage value); Manual = you enter rows. "
+                      "Ignored when 'Non-depreciable' is ticked."),
+            FieldSpec("total_number_of_depreciations", "Number of Depreciations", "Int",
+                      help="How many depreciation entries over the asset's life (e.g. 60)."),
+            FieldSpec("frequency_of_depreciation_months", "Months Between Depreciations", "Int",
+                      help="1 = monthly, 3 = quarterly, 12 = yearly. So 60 × 1 = 5 years monthly."),
+            FieldSpec("salvage_value_percent", "Salvage Value (%)", "Float",
+                      help="Residual value as a % of cost; depreciation never goes below it. 0 = none."),
+            FieldSpec("rate_of_depreciation", "WDV Rate (%)", "Float",
+                      help="Written Down Value only: an explicit rate (e.g. IT-Act 15%/40%). "
+                      "Blank = derive it from salvage + life."),
+            FieldSpec("daily_prorata", "Daily pro-rata", "Check",
+                      help="Weight each period's depreciation by its actual day count "
+                      "(Straight Line) instead of an equal split."),
+            FieldSpec("fixed_asset_account_id", "Fixed Asset Account", "Link", options="account",
+                      help="Balance-sheet account the asset's cost sits in."),
+            FieldSpec("depreciation_expense_account_id", "Depreciation Expense Account", "Link",
+                      options="account", help="Expense account each depreciation entry debits."),
+            FieldSpec("accumulated_depreciation_account_id", "Accumulated Depreciation Account", "Link",
+                      options="account", help="Contra-asset account each depreciation entry credits."),
+            FieldSpec("disabled", "Disabled", "Check", in_list=True),
+        ),
+        list_fields=("category_name", "depreciation_method", "total_number_of_depreciations", "disabled"),
+    )
+)
+
+register(
+    DocTypeDescriptor(
+        name="Location",
+        slug="location",
+        model=Location,
+        title_field="location_name",
+        naming="field:location_name",
+        group="Assets",
+        permission_name="Location",
+        permissions={
+            "Accounts Manager": _ACCOUNTS_MANAGER,
+            "Accounts User": _ACCOUNTS_USER,
+        },
+        fields=(
+            FieldSpec("location_name", "Location Name", "Data", required=True, in_list=True, span=2,
+                      unique=True, help="Where assets physically sit, e.g. Head Office, Warehouse A."),
+            FieldSpec("disabled", "Disabled", "Check", in_list=True),
+        ),
+        list_fields=("location_name", "disabled"),
+    )
+)
+
+# One lean maintenance/repair log (auto-numbered, no GL) — preventive maintenance and
+# breakdown repairs are the same record, distinguished by the "Type" (Repair is just one
+# type), not two DocTypes. A repair that should hit the books is a separate Journal Entry.
+register(
+    DocTypeDescriptor(
+        name="Asset Maintenance",
+        slug="asset-maintenance",
+        model=AssetMaintenance,
+        title_field="name",
+        naming="series:ASSET-MNT-.YYYY.-",
+        group="Assets",
+        permission_name="Asset Maintenance",
+        permissions={
+            "Accounts Manager": _ACCOUNTS_MANAGER,
+            "Accounts User": _ACCOUNTS_USER,
+        },
+        fields=(
+            FieldSpec("asset_id", "Asset", "Link", options="asset", required=True, in_list=True),
+            FieldSpec("maintenance_type", "Type", "Select",
+                      options="Preventive\nCalibration\nInspection\nRepair\nOther", in_list=True,
+                      help="Use 'Repair' for a breakdown fix; the others are planned maintenance."),
+            FieldSpec("maintenance_date", "Date", "Date", required=True, in_list=True),
+            FieldSpec("periodicity", "Recurs", "Select",
+                      options="One-time\nMonthly\nQuarterly\nHalf-yearly\nYearly",
+                      help="How often this maintenance recurs (informational cadence)."),
+            FieldSpec("next_due_date", "Next Due", "Date", in_list=True,
+                      help="When the next service is due — drives the Maintenance Due report."),
+            FieldSpec("assigned_to", "Assigned To", "Data", help="Who is responsible."),
+            FieldSpec("description", "Description / Work Done", "Text", span=2),
+            FieldSpec("cost", "Cost", "Currency", in_list=True,
+                      help="Informational — post a Journal Entry if you need it in the books."),
+            FieldSpec("status", "Status", "Select", options="Open\nCompleted\nCancelled", in_list=True),
+        ),
+        list_fields=("name", "asset_id", "maintenance_type", "next_due_date", "status"),
+    )
+)
+
+
 # --- Items & Pricing: Pricing Rule (Phase 3) ---------------------------------
 register(
     DocTypeDescriptor(
@@ -1108,6 +1220,8 @@ LINK_SOURCES: dict[str, tuple[type, str, str]] = {
     "item": (Item, "item_code", "Item"),
     "item-group": (ItemGroup, "item_group_name", "Item Group"),
     "account": (Account, "account_name", "Account"),
+    # the bespoke Asset doc, so maintenance/repair logs can Link to it
+    "asset": (Asset, "asset_name", "Asset"),
 }
 
 

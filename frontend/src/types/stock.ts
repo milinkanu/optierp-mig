@@ -47,6 +47,8 @@ export interface Item extends DocumentMeta {
   lead_time_days: number;
   brand: string | null;
   barcode: string | null;
+  is_fixed_asset: boolean;
+  asset_category_id: string | null;
   disabled: boolean;
 }
 

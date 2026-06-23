@@ -339,6 +339,28 @@ const routes: RouteRecordRaw[] = [
         component: () => import("@/views/trade/OrderFormView.vue"),
         props: (route) => ({ kind: "sales-order", id: route.params.id as string }),
       },
+      // Module — Assets (fixed-asset register + depreciation)
+      {
+        path: "assets",
+        name: "assets",
+        component: () => import("@/views/assets/AssetView.vue"),
+      },
+      {
+        path: "asset-reports",
+        name: "asset-reports",
+        component: () => import("@/views/assets/AssetReportsView.vue"),
+      },
+      {
+        path: "asset-capitalize",
+        name: "asset-capitalize",
+        component: () => import("@/views/assets/AssetCapitalizeView.vue"),
+      },
+      {
+        path: "assets/:id",
+        name: "asset-detail",
+        component: () => import("@/views/assets/AssetDetailView.vue"),
+        props: true,
+      },
       // Metadata engine ("the machine") — generic list/form for any registered DocType.
       // Adding a master needs NO new route here; it is reached via /m/<slug>.
       {
