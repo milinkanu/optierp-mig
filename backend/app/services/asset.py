@@ -43,6 +43,7 @@ from app.models.assets import (
 )
 from app.models.base import DOCSTATUS_CANCELLED, DOCSTATUS_SUBMITTED
 from app.schemas.assets import (
+    AssetCapitalizeIn,
     AssetCreate,
     AssetDisposeIn,
     AssetMoveIn,
@@ -778,6 +779,83 @@ async def adjust_asset_value(
     await db.commit()
     logger.info("asset_value_adjusted", asset=str(asset.id), journal_entry=str(je.id))
     return await get_asset(db, asset.id, user.company_id)
+
+
+# --- capitalization (build an asset from costed components) -------------------------
+
+
+async def capitalize_asset(
+    db: AsyncSession, payload: AssetCapitalizeIn, user: CurrentUser
+) -> Asset:
+    """Build a new (submitted) asset by capitalising costed components into the category's
+    Fixed Asset account: Dr Fixed Asset (total) / Cr each component's source account. The
+    sources can be a CWIP account (clears capital-work-in-progress), Stock In Hand (parts
+    consumed), a labour/expense account, Bank, etc. The asset is created live with its
+    depreciation schedule (none for non-depreciable categories)."""
+    company = await get_company(db, user.company_id)
+    category = await _get_category(db, payload.asset_category_id, company.id)
+    if not category.fixed_asset_account_id:
+        raise ValidationError(
+            f"Asset Category '{category.category_name}' needs a Fixed Asset account to capitalise into",
+            field="asset_category_id",
+        )
+    if payload.location_id is not None:
+        loc = await db.get(Location, payload.location_id)
+        if loc is None or loc.company_id != company.id:
+            raise NotFoundError("Location not found")
+
+    total = sum((c.amount for c in payload.components), ZERO)
+    if total <= ZERO:
+        raise ValidationError("Capitalisation needs at least one positive component", field="components")
+    in_use = payload.available_for_use_date or payload.posting_date
+
+    name = await get_next_name(db, _SERIES, company.id, on_date=payload.posting_date)
+    asset = Asset(
+        id=uuid.uuid4(),
+        company_id=company.id,
+        name=name,
+        asset_name=payload.asset_name,
+        asset_category_id=category.id,
+        location_id=payload.location_id,
+        custodian=payload.custodian,
+        gross_purchase_amount=total,
+        purchase_date=payload.posting_date,
+        available_for_use_date=in_use,
+        status="Submitted",
+        docstatus=DOCSTATUS_SUBMITTED,
+        remarks=payload.remarks,
+        owner=user.id,
+        modified_by=user.id,
+    )
+    db.add(asset)
+    await db.flush()
+
+    sched_payload = AssetCreate(
+        asset_name=asset.asset_name, asset_category_id=category.id,
+        gross_purchase_amount=total, available_for_use_date=in_use,
+    )
+    for row in _build_schedule_rows(asset, category, sched_payload):
+        row.asset_id = asset.id
+        db.add(row)
+    await db.flush()
+
+    await set_company_context(db, company.id)
+    remark = f"Capitalization of {asset.asset_name} ({asset.name})"
+    lines: list[tuple[uuid.UUID, Decimal, Decimal]] = [
+        (category.fixed_asset_account_id, total, ZERO)  # Dr the new fixed asset
+    ]
+    lines += [(c.account_id, ZERO, c.amount) for c in payload.components]  # Cr each source
+    await _post_journal(
+        db, company_id=company.id, posting_date=payload.posting_date,
+        voucher_type="Asset Capitalization", lines=lines, remark=remark, actor=user,
+    )
+    await log_audit(
+        db, doctype="Asset", document_id=asset.id, action="INSERT",
+        user_id=user.id, company_id=company.id,
+    )
+    await db.commit()
+    logger.info("asset_capitalized", asset=str(asset.id))
+    return await get_asset(db, asset.id, company.id)
 
 
 # --- auto-create from a fixed-asset Purchase Invoice line --------------------------

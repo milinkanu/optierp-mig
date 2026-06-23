@@ -505,6 +505,7 @@ const ASSETS: WorkspaceConfig = {
       items: [
         { label: "Home", to: "/", icon: "⌂" },
         { label: "Assets", to: "/assets", icon: "🏗" },
+        { label: "Capitalize Asset", to: "/asset-capitalize", icon: "🧱" },
       ],
     },
     {

@@ -55,6 +55,27 @@ class AssetValueAdjustIn(BaseModel):
     difference_account_id: uuid.UUID  # impairment/expense (write-down) or surplus (write-up)
 
 
+class AssetCostComponentIn(BaseModel):
+    """One cost that goes into a capitalised asset (credited to its source account)."""
+
+    description: str
+    amount: Decimal = Field(gt=0)
+    account_id: uuid.UUID  # source account credited (e.g. CWIP, Stock In Hand, a labour expense, Bank)
+
+
+class AssetCapitalizeIn(BaseModel):
+    """Build a new asset by capitalising costed components into the Fixed Asset account."""
+
+    asset_name: str = Field(min_length=1)
+    asset_category_id: uuid.UUID
+    location_id: uuid.UUID | None = None
+    custodian: str | None = None
+    posting_date: date
+    available_for_use_date: date | None = None  # defaults to posting_date
+    remarks: str | None = None
+    components: list[AssetCostComponentIn] = Field(min_length=1)
+
+
 class AssetMovementResponse(ORMModel):
     id: uuid.UUID
     movement_date: date

@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.permissions import require_permission
 from app.core.security import CurrentUser, get_tenant_db
 from app.schemas.assets import (
+    AssetCapitalizeIn,
     AssetCreate,
     AssetDisposeIn,
     AssetListItem,
@@ -58,6 +59,22 @@ async def list_assets(
         items=[AssetListItem.model_validate(a) for a in items],
         total=total, page=page, page_size=page_size,
     )
+
+
+@router.post(
+    "/capitalize",
+    response_model=AssetResponse,
+    status_code=201,
+    summary="Capitalize a new asset from costed components",
+    description="Builds a new submitted asset: Dr the Fixed Asset account / Cr each component's "
+    "source account (CWIP, stock, labour, bank…). The asset is created live with its schedule.",
+)
+async def capitalize_asset(
+    payload: AssetCapitalizeIn,
+    current_user: Annotated[CurrentUser, Depends(require_permission("Asset", "create"))],
+    db: Annotated[AsyncSession, Depends(get_tenant_db)],
+) -> AssetResponse:
+    return AssetResponse.model_validate(await service.capitalize_asset(db, payload, current_user))
 
 
 @router.get("/{asset_id}", response_model=AssetResponse, summary="Get an asset")

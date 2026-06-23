@@ -78,15 +78,24 @@ Plus these ERPNext *capabilities* (not separate DocTypes):
 - **Asset-wise depreciation** — the schedule across assets, projected vs posted.
 - Read-only endpoints + a Reports surface in the Assets workspace.
 
-### Phase 5 — Acquisition completeness
-- **CWIP accounting** — a category flag (`enable_cwip`) so a fixed-asset purchase debits a
-  *Capital Work in Progress* account; the asset is **capitalised** (moved CWIP → Fixed Asset)
-  when it's ready for use and depreciation starts then.
-- **Asset Capitalization** — build a new asset by combining **stock items consumed + service/
-  labour costs (+ optionally scrapped assets)** into one capitalised value. (Lean: a bespoke
-  `POST /assets/capitalize` that posts the assembling JE and creates the asset.)
-- **Disposal via Sales Invoice** — option to sell an asset on a real tax invoice (GST), with
-  the gain/loss still booked vs book value, instead of a plain JE.
+### Phase 5 — Acquisition completeness — ◑ DONE (capitalization); SI-disposal deferred
+- ✅ **Asset Capitalization** (`POST /assets/capitalize`): build a new submitted asset from costed
+  components — Dr the category's Fixed Asset account (total) / Cr each component's source account.
+  The sources can be **CWIP** (so this also clears Capital-Work-in-Progress), **Stock In Hand**
+  (parts consumed), a **labour/expense** account, **Bank**, etc. Creates the asset live with its
+  depreciation schedule. Frontend `AssetCapitalizeView` at `/asset-capitalize` (component grid).
+- ✅ **CWIP** — covered *by* capitalization: an asset under construction accrues cost in a CWIP
+  account (via normal purchases/JEs), then you capitalize crediting that CWIP account → Fixed Asset.
+  No separate flag/lifecycle needed (lean).
+- ⏸️ **Disposal via Sales Invoice** — **deferred with rationale.** The existing Sell disposal already
+  books the receivable/proceeds + gain/loss vs book value correctly. Wiring the *asset removal* into a
+  GST Sales Invoice requires modifying the **core Sales-Invoice GL** to special-case fixed-asset-sale
+  lines (credit the asset, not income) — a cross-module change with real regression risk, for an
+  occasional event. Recommendation: for GST on a used-asset sale, raise a normal Sales Invoice and use
+  the Dispose (Sell) action for the asset removal; revisit a wired SI-disposal only if it becomes routine.
+- *Tests:* +1 integration (capitalize from 2 components → asset + balanced "Asset Capitalization" JE).
+  Verified live (₹2L Cold Storage Unit from ₹180k parts + ₹20k labour). Also added a "show first 12 /
+  show all" collapse to the depreciation-schedule table (long schedules like a 30-year building).
 
 ### Phase 6 — Depreciation accuracy — ✅ DONE (migration 0056)
 - ✅ **Daily pro-rata** (`daily_prorata` on the category) — Straight-Line periods are weighted by

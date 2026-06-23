@@ -351,6 +351,11 @@ const routes: RouteRecordRaw[] = [
         component: () => import("@/views/assets/AssetReportsView.vue"),
       },
       {
+        path: "asset-capitalize",
+        name: "asset-capitalize",
+        component: () => import("@/views/assets/AssetCapitalizeView.vue"),
+      },
+      {
         path: "assets/:id",
         name: "asset-detail",
         component: () => import("@/views/assets/AssetDetailView.vue"),

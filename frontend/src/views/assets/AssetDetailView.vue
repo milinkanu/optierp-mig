@@ -64,6 +64,10 @@ const notice = ref<string | null>(null);
 
 const accounts = ref<AccountOpt[]>([]);
 const locations = ref<LocationOpt[]>([]);
+const showAllRows = ref(false);
+const visibleSchedule = computed(() =>
+  showAllRows.value ? asset.value?.schedule ?? [] : (asset.value?.schedule ?? []).slice(0, 12),
+);
 
 const active = computed(() => asset.value && ["Submitted", "Partially Depreciated"].includes(asset.value.status));
 const disposed = computed(() => asset.value && ["Sold", "Scrapped"].includes(asset.value.status));
@@ -475,7 +479,7 @@ onMounted(async () => {
           </tr>
         </thead>
         <tbody>
-          <tr v-for="row in asset.schedule" :key="row.id" class="border-t border-gray-100" :class="{ 'bg-green-50/40': row.posted }">
+          <tr v-for="row in visibleSchedule" :key="row.id" class="border-t border-gray-100" :class="{ 'bg-green-50/40': row.posted }">
             <td class="px-4 py-1.5 text-gray-400">{{ row.idx }}</td>
             <td class="px-4 py-1.5">{{ formatDate(row.schedule_date) }}</td>
             <td class="px-4 py-1.5 text-right">{{ formatCurrency(row.depreciation_amount) }}</td>
@@ -489,6 +493,13 @@ onMounted(async () => {
           </tr>
           <tr v-if="!asset.schedule.length">
             <td colspan="5" class="px-4 py-8 text-center text-gray-400">No schedule rows.</td>
+          </tr>
+          <tr v-else-if="asset.schedule.length > 12" class="border-t border-gray-100">
+            <td colspan="5" class="px-4 py-2 text-center">
+              <button class="text-sm text-blue-600 hover:underline" @click="showAllRows = !showAllRows">
+                {{ showAllRows ? "Show less" : `Show all ${asset.schedule.length} rows` }}
+              </button>
+            </td>
           </tr>
         </tbody>
       </table>
