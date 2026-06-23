@@ -196,9 +196,10 @@ to be completed. *MSME-lean:* ship **manual asset creation first**; auto-from-pu
   All green; ruff + vue-tsc clean.
 
 ### Phase 3 — Maintenance, repair, value adjustment, auto-from-purchase — ✅ DONE
-- ✅ **Asset Maintenance** + **Asset Repair** — engine masters (auto-numbered `ASSET-MNT-`/`ASSET-RPR-`,
-  Link to the Asset via the new `asset` LINK_SOURCES entry; pure logs, no GL — a repair that should hit
-  the books is a separate JE, kept uncoupled).
+- ✅ **Asset Maintenance** — a single engine master covering both preventive maintenance **and**
+  breakdown repairs (they were near-identical records, so "Repair" is just a `maintenance_type`, not a
+  second DocType). Auto-numbered `ASSET-MNT-`, Links to the Asset via the new `asset` LINK_SOURCES entry;
+  a pure log, no GL — a repair that should hit the books is a separate JE, kept uncoupled.
 - ✅ **Asset Value Adjustment** (`POST /assets/{id}/adjust-value`): revalue to a new book value — posts
   the difference (Dr impairment / Cr Accumulated Depreciation for a write-down, reverse for a write-up)
   via the shared `_post_journal`, tracks it on `accumulated_depreciation_adjustment` (part of book value),
