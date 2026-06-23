@@ -123,3 +123,35 @@ class DepreciateResult(BaseModel):
     journal_entry_ids: list[uuid.UUID] = Field(default_factory=list)
     status: str
     detail: str | None = None
+
+
+# --- reports (Phase 4) -------------------------------------------------------------
+
+
+class FixedAssetRegisterRow(BaseModel):
+    """One asset's net-block line as of a date."""
+
+    asset_id: uuid.UUID
+    name: str
+    asset_name: str
+    category_name: str | None
+    location_name: str | None
+    purchase_date: date | None
+    gross_purchase_amount: Decimal
+    accumulated_depreciation: Decimal
+    book_value: Decimal
+    status: str
+
+
+class DepreciationLedgerRow(BaseModel):
+    """One posted depreciation entry."""
+
+    asset_id: uuid.UUID
+    asset_no: str
+    asset_name: str
+    category_name: str | None
+    schedule_date: date
+    depreciation_amount: Decimal
+    accumulated_depreciation: Decimal
+    journal_entry_id: uuid.UUID | None
+    journal_entry_no: str | None

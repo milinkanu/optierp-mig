@@ -3,7 +3,7 @@
 from fastapi import APIRouter
 
 from app.api.v1 import auth
-from app.api.v1.assets import assets as assets_module
+from app.api.v1.assets import assets as assets_module, reports as assets_reports
 from app.api.v1.accounts import (
     bank_reconciliation,
     budgets,
@@ -103,6 +103,7 @@ api_v1_router.include_router(selling_workspace.router)
 
 # Module — Assets (fixed-asset register + depreciation)
 api_v1_router.include_router(assets_module.router)
+api_v1_router.include_router(assets_reports.router)
 
 # Metadata engine ("the machine") — generic CRUD/list/form for every registered
 # DocType (app.registry). Adding a master needs no new router here.
