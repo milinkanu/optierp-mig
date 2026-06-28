@@ -360,6 +360,7 @@ const ACCOUNTING: WorkspaceConfig = {
         { label: "Item Tax Template", to: "/m/item-tax-template" },
         { label: "Tax Category", to: "/m/tax-category" },
         { label: "TDS / TCS", to: "/m/tax-withholding-category" },
+        { label: "GST Settings", to: "/gst-settings" },
       ],
     },
     {
@@ -436,6 +437,7 @@ const ACCOUNTING: WorkspaceConfig = {
         { label: "Item Tax Template", to: "/m/item-tax-template" },
         { label: "Tax Category", to: "/m/tax-category" },
         { label: "TDS / TCS Category", to: "/m/tax-withholding-category" },
+        { label: "GST Settings", to: "/gst-settings" },
       ],
     },
     {

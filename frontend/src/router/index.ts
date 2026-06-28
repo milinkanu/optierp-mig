@@ -45,6 +45,11 @@ const routes: RouteRecordRaw[] = [
         name: "print-settings",
         component: () => import("@/views/core/PrintSettingsView.vue"),
       },
+      {
+        path: "gst-settings",
+        name: "gst-settings",
+        component: () => import("@/views/compliance/GstSettingsView.vue"),
+      },
       // Module 02 — Accounts
       {
         path: "sales-invoices",
