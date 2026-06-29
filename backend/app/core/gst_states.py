@@ -9,6 +9,8 @@ gives its *registered state*; a transaction's *place of supply* is the **recipie
 state — a per-invoice value (Phase 1), not the supplier's state computed here.
 """
 
+import re
+
 # Statutory GST state/UT codes (incl. merged DNHDD = 26, new AP = 37, Ladakh = 38,
 # Other Territory = 97, Centre = 99). 25/28 are legacy but kept for old data.
 GST_STATE_CODES: dict[str, str] = {
@@ -53,6 +55,12 @@ GST_STATE_CODES: dict[str, str] = {
     "97": "Other Territory",
     "99": "Centre Jurisdiction",
 }
+
+
+# How an item/line is treated under GST — drives the GSTR-1 bucket + whether tax applies.
+GST_TREATMENTS = ("Taxable", "Nil-Rated", "Exempt", "Non-GST")
+# Single source of truth for schema validators (keep them from drifting from GST_TREATMENTS).
+GST_TREATMENT_PATTERN = "^(" + "|".join(re.escape(t) for t in GST_TREATMENTS) + ")$"
 
 
 def state_code_of(gstin: str | None) -> str | None:

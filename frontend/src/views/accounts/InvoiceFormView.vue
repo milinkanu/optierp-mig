@@ -94,6 +94,10 @@ const controlAccountOptions = computed(() =>
 );
 const postingDate = ref(new Date().toISOString().slice(0, 10));
 const dueDate = ref("");
+// India GST: place of supply ("NN-State") defaults on the server from the party/company
+// GSTIN when left blank; reverse charge = recipient pays the GST.
+const placeOfSupply = ref("");
+const isReverseCharge = ref(false);
 const items = ref<InvoiceItemIn[]>([{ item_name: "", qty: 1, rate: 0 }]);
 const taxes = ref<TaxRowIn[]>([]);
 const taxTemplateId = ref("");
@@ -241,6 +245,7 @@ const gridColumns = computed<GridColumn[]>(() => [
   { key: "stock_qty", label: "Stock Qty", type: "computed", align: "right", compute: stockQtyLabel },
   { key: "rate", label: "Rate", type: "number", align: "right", required: true },
   { key: "discount_percentage", label: "Discount %", type: "number", align: "right" },
+  { key: "hsn_sac_code", label: "HSN/SAC", type: "text" },
   {
     key: "account_id",
     label: props.kind === "sales" ? "Income Account" : "Expense Account",
@@ -272,7 +277,7 @@ const gridRows = computed<Record<string, unknown>[]>({
 function newItemRow(): Record<string, unknown> {
   return {
     item_id: "", item_name: "", qty: 1, rate: 0, uom: "",
-    discount_percentage: 0, account_id: null, cost_center_id: null, _rowKey: rowKey(),
+    discount_percentage: 0, hsn_sac_code: "", account_id: null, cost_center_id: null, _rowKey: rowKey(),
   };
 }
 
@@ -296,6 +301,8 @@ async function onItemChange(index: number): Promise<void> {
           ...r,
           item_name: item?.item_name ?? r.item_name,
           item_code: item?.item_code ?? r.item_code,
+          // snapshot HSN/SAC from the master, but keep a manual override the user already typed
+          hsn_sac_code: r.hsn_sac_code || item?.hsn_sac_code || null,
           uom,
           rate,
         }
@@ -391,6 +398,8 @@ async function save(): Promise<void> {
       payment_terms_template_id: paymentTermsTemplateId.value || null,
       is_return: isReturn.value,
       return_against_id: isReturn.value ? returnAgainstId.value || null : null,
+      place_of_supply: placeOfSupply.value || null,
+      is_reverse_charge: isReverseCharge.value,
     };
     if (props.kind === "sales") {
       payload.customer_id = partyId.value;
@@ -874,6 +883,16 @@ onMounted(async () => {
           <div>
             <label class="form-label">Company</label>
             <div class="form-input bg-gray-50 text-gray-600">{{ companyName || "—" }}</div>
+          </div>
+          <div>
+            <label class="form-label">Place of Supply (GST)</label>
+            <input v-model="placeOfSupply" class="form-input" placeholder="Auto from GSTIN (e.g. 27-Maharashtra)" />
+          </div>
+          <div class="flex items-end pb-2">
+            <label class="flex items-center gap-2 text-sm text-gray-700">
+              <input v-model="isReverseCharge" type="checkbox" class="rounded border-gray-300" />
+              Reverse charge
+            </label>
           </div>
           <div class="flex items-end pb-2">
             <label class="flex items-center gap-2 text-sm text-gray-700">

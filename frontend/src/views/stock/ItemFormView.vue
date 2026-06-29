@@ -57,6 +57,8 @@ const form = reactive({
   lead_time_days: 0,
   brand: "",
   barcode: "",
+  hsn_sac_code: "",
+  gst_treatment: "Taxable",
   is_fixed_asset: false,
   asset_category_id: "",
   disabled: false,
@@ -111,6 +113,8 @@ async function loadItem(): Promise<void> {
       lead_time_days: data.lead_time_days,
       brand: data.brand ?? "",
       barcode: data.barcode ?? "",
+      hsn_sac_code: data.hsn_sac_code ?? "",
+      gst_treatment: data.gst_treatment ?? "Taxable",
       is_fixed_asset: data.is_fixed_asset ?? false,
       asset_category_id: data.asset_category_id ?? "",
       disabled: data.disabled,
@@ -154,6 +158,8 @@ async function save(): Promise<void> {
         lead_time_days: form.lead_time_days || 0,
         brand: form.brand || null,
         barcode: form.barcode || null,
+        hsn_sac_code: form.hsn_sac_code || null,
+        gst_treatment: form.gst_treatment,
         is_fixed_asset: form.is_fixed_asset,
         asset_category_id: form.is_fixed_asset ? form.asset_category_id || null : null,
         disabled: form.disabled,
@@ -187,6 +193,8 @@ async function save(): Promise<void> {
         lead_time_days: form.lead_time_days || 0,
         brand: form.brand || null,
         barcode: form.barcode || null,
+        hsn_sac_code: form.hsn_sac_code || null,
+        gst_treatment: form.gst_treatment,
         is_fixed_asset: form.is_fixed_asset,
         asset_category_id: form.is_fixed_asset ? form.asset_category_id || null : null,
       });
@@ -419,6 +427,21 @@ onMounted(async () => {
             <option v-for="t in itemTaxTemplates" :key="t.id" :value="t.id">{{ t.title }}</option>
           </select>
         </template>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="form-label">HSN / SAC code</label>
+            <input v-model="form.hsn_sac_code" maxlength="8" class="form-input" placeholder="e.g. 8418" />
+          </div>
+          <div>
+            <label class="form-label">GST treatment</label>
+            <select v-model="form.gst_treatment" class="form-input">
+              <option value="Taxable">Taxable</option>
+              <option value="Nil-Rated">Nil-Rated</option>
+              <option value="Exempt">Exempt</option>
+              <option value="Non-GST">Non-GST</option>
+            </select>
+          </div>
+        </div>
         <label v-if="isEdit" class="form-label">Last Purchase Rate</label>
         <input v-if="isEdit" :value="formatCurrency(lastPurchaseRate, companyCurrency)" disabled class="form-input" />
       </div>

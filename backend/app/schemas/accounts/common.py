@@ -35,6 +35,8 @@ class InvoiceItemIn(BaseModel):
     cost_center_id: uuid.UUID | None = None
     # sales: income account; purchase: expense account (falls back to company default)
     account_id: uuid.UUID | None = None
+    # India GST: HSN/SAC override; if omitted it's snapshotted from the item master
+    hsn_sac_code: str | None = Field(default=None, max_length=8)
     # Module 03-05 cycle links (all optional; free-text items still work)
     item_id: uuid.UUID | None = None
     sales_order_item_id: uuid.UUID | None = None  # sales invoices only
@@ -60,5 +62,8 @@ class InvoiceCreateBase(BaseModel):
     return_against_id: uuid.UUID | None = None
     is_opening: bool = False  # migration-in opening invoice (posts vs Temporary Opening)
     tax_withholding_category_id: uuid.UUID | None = None  # India TDS (purchase) / TCS (sales)
+    # India GST: place of supply ("NN-State"); defaults from the party/company GSTIN when omitted
+    place_of_supply: str | None = Field(default=None, max_length=64)
+    is_reverse_charge: bool = False
 
 

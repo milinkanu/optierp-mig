@@ -149,13 +149,22 @@ a filing artifact → read-only generator/report.
 
 ## 6. Phased build plan
 
-### Phase 1 — Invoice GST completeness *(foundation; gating)*
-- **HSN/SAC** + `gst_treatment` on Item, snapshotted onto invoice lines.
-- **Place of Supply** on Sales/Purchase Invoice (default from party GSTIN state).
+### Phase 1 — Invoice GST completeness *(foundation; gating)* — ✅ DONE (2026-06-29)
+- **HSN/SAC** + `gst_treatment` on Item, snapshotted onto invoice lines. **Built:** `Item.hsn_sac_code`
+  (`String(8)`) + `Item.gst_treatment` (Taxable | Nil-Rated | Exempt | Non-GST, default Taxable);
+  `hsn_sac_code` snapshotted onto Sales/Purchase Invoice lines with a **line-level override winning over
+  the item master**.
+- **Place of Supply** on Sales/Purchase Invoice (default from party GSTIN state). **Built:**
+  `place_of_supply` + `is_reverse_charge` on both invoices; POS defaults to the **customer** state for
+  sales (fallback company), the **company** state for purchases, via `gst_state_label_of()` →
+  `"27-Maharashtra"`. Migration `0059_gst_invoice_fields` (down_revision `0058_disposal_sales_invoice`).
 - **GST-compliant tax-invoice print** (both GSTINs, HSN, POS, CGST/SGST/IGST split, RCM marker, amount in
-  words) — extend the existing PDF/print slice.
-- *Acceptance:* an intra-state invoice prints CGST+SGST with HSN per line + place of supply; an inter-state
-  one prints IGST; both show both GSTINs and amount in words.
+  words) — extended the existing PDF/print slice (sales + purchase templates: HSN column, Place of Supply,
+  reverse-charge marker; the CGST/SGST↔IGST split reuses the existing tax loop).
+- *Acceptance (verified):* an inter-state invoice (27→29) prints **IGST** with **HSN 84182100** per line,
+  **Place of Supply 29-Karnataka** (auto-derived), both GSTINs, and amount in words. Intra-state prints
+  CGST+SGST. Tests: 9 integration (`test_gst_invoice.py` — item GST fields, HSN snapshot + override,
+  POS intra/inter defaulting, reverse-charge flag, purchase POS from company) + Playwright UI pass.
 
 ### Phase 2 — GST returns *(the headline value)*
 - **GSTR-1** report: B2B, B2C (large/small), **HSN-wise summary**, document summary — from submitted Sales
@@ -214,4 +223,5 @@ read** (single source of truth) via a new `app/core/gst_states.py` (the 37 GST s
 > → Phase 5 (live GSP/IRP/NIC) → Phase 6 (reconciliation + composition/QRMP/SEZ/TCS long tail). Foundation
 > is broad and shared; tenant-specific cases ride on per-company settings.
 
-> **Status:** 🟡 **Plan approved, build on hold.** Resume Phase 0/1 on the owner's go-ahead.
+> **Status:** 🟢 **Phase 0 + Phase 1 built (2026-06-28/29).** Remaining phases (2 → 6) on hold; resume
+> Phase 2 (GSTR-1/3B) on the owner's go-ahead.

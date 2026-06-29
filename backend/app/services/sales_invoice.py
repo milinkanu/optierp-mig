@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.exceptions import NotFoundError, ValidationError
+from app.core.gst_states import gst_state_label_of
 from app.core.naming import get_next_name
 from app.core.security import CurrentUser
 from app.models.accounts import SalesInvoice, SalesInvoiceItem, SalesInvoiceTax
@@ -216,6 +217,13 @@ async def create_sales_invoice(
 
     sign = Decimal("-1") if payload.is_return else Decimal("1")
     name = await get_next_name(db, NAMING_SERIES["Sales Invoice"], company.id)
+    # India GST place of supply: the recipient's (customer's) state, else the company's
+    # own state for an intra-state B2C sale. Caller may override.
+    place_of_supply = (
+        payload.place_of_supply
+        or gst_state_label_of(customer.tax_id)
+        or gst_state_label_of(company.tax_id)
+    )
     invoice = SalesInvoice(
         id=uuid.uuid4(),
         company_id=company.id,
@@ -229,6 +237,8 @@ async def create_sales_invoice(
         remarks=payload.remarks,
         is_return=payload.is_return,
         is_opening=payload.is_opening,
+        place_of_supply=place_of_supply,
+        is_reverse_charge=payload.is_reverse_charge,
         return_against_id=payload.return_against_id,
         po_no=payload.po_no,
         po_date=payload.po_date,
@@ -288,6 +298,7 @@ async def create_sales_invoice(
                 idx=idx,
                 item_code=item_in.item_code,
                 item_name=item_in.item_name,
+                hsn_sac_code=item_in.hsn_sac_code or (item_master.hsn_sac_code if item_master else None),
                 description=item_in.description,
                 qty=engine_item.qty * sign,
                 uom=item_in.uom,
