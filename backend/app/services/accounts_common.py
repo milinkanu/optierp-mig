@@ -70,7 +70,7 @@ def get_payable_account(company: Company, supplier: Supplier) -> uuid.UUID:
     return account_id
 
 
-from sqlalchemy import select  # noqa: E402
+from sqlalchemy import func, select  # noqa: E402
 
 
 async def item_tax_rates(db: AsyncSession, payload_items: list) -> dict[uuid.UUID, dict]:
@@ -107,6 +107,142 @@ async def item_tax_rates(db: AsyncSession, payload_items: list) -> dict[uuid.UUI
     for tid, account_head_id, rate in rows:
         rates_by_tmpl.setdefault(tid, {})[account_head_id] = Decimal(rate)
     return {iid: rates_by_tmpl.get(tid, {}) for iid, tid in tmpl_by_item.items()}
+
+
+def _gstin_state(value: str | None) -> str | None:
+    """Two-digit state code of a 15-char GSTIN, else None."""
+    s = (value or "").strip()
+    return s[:2] if len(s) == 15 and s[:2].isdigit() else None
+
+
+async def _hsn_rates(db: AsyncSession, codes: set[str]) -> dict[str, Decimal]:
+    """Map each HSN code to its GST rate from the reference master. A code with
+    several rows (e.g. fresh 0% vs frozen 12%) picks the most common rate,
+    breaking ties toward the higher rate."""
+    from app.models.core import HsnCode
+
+    if not codes:
+        return {}
+    rows = (
+        await db.execute(
+            select(HsnCode.hsn_code, HsnCode.gst_rate, func.count())
+            .where(HsnCode.hsn_code.in_(codes))
+            .group_by(HsnCode.hsn_code, HsnCode.gst_rate)
+        )
+    ).all()
+    best: dict[str, tuple[int, Decimal]] = {}  # code -> (count, rate)
+    for code, rate, count in rows:
+        rate = Decimal(rate)
+        current = best.get(code)
+        if current is None or (count, rate) > current:
+            best[code] = (count, rate)
+    return {code: rate for code, (count, rate) in best.items()}
+
+
+async def auto_gst_from_items(
+    db: AsyncSession, *, company: Company, party_gstin: str | None,
+    place_of_supply: str | None, payload_items: list,
+) -> tuple[list, dict[uuid.UUID, dict]]:
+    """Derive GST tax rows + per-item rate overrides from the line items when no
+    invoice-level tax template resolved — the "the item's HSN carries the rate,
+    so GST just applies" path.
+
+    Each line's total GST rate comes from its Item Tax Template if set, else the
+    HSN master (by ``hsn_sac_code``); a non-Taxable ``gst_treatment`` is 0%. The
+    split is CGST+SGST (intra-state) or IGST (inter-state), decided from the
+    party's GSTIN state (or place of supply) vs the company's. Returns
+    ``([], {})`` when GST can't be derived (no Output GST accounts, or no taxable
+    line), leaving the caller's zero-tax behaviour unchanged.
+
+    Called ONLY when the invoice would otherwise carry no tax, so it never alters
+    invoices that already resolve a template.
+    """
+    from app.models.accounts import Account
+    from app.models.stock import Item
+    from app.schemas.accounts import TaxRowIn
+
+    item_ids = {i.item_id for i in payload_items if getattr(i, "item_id", None) is not None}
+    if not item_ids:
+        return [], {}
+
+    # line item GST context (HSN + treatment + whether it has its own template)
+    meta = {
+        r.id: r
+        for r in (
+            await db.execute(
+                select(
+                    Item.id, Item.hsn_sac_code, Item.gst_treatment, Item.item_tax_template_id
+                ).where(Item.id.in_(item_ids))
+            )
+        ).all()
+    }
+    hsn_rate = await _hsn_rates(
+        db, {m.hsn_sac_code for m in meta.values() if m.hsn_sac_code and m.gst_treatment == "Taxable"}
+    )
+
+    # intra vs inter: party state vs company state (GSTIN first, then place of supply)
+    company_state = _gstin_state(company.tax_id)
+    party_state = _gstin_state(party_gstin)
+    if party_state is None and place_of_supply and place_of_supply[:2].isdigit():
+        party_state = place_of_supply[:2]
+    inter = bool(company_state and party_state and company_state != party_state)
+
+    # Each non-template line's total GST rate: HSN rate if Taxable, else 0.
+    # Every such line gets an EXPLICIT override (incl. 0), so a Nil/Exempt line
+    # never falls back to a non-zero row rate. Template lines keep their own
+    # item_tax_rate (computed by the caller) and are left untouched here.
+    totals: dict[uuid.UUID, Decimal] = {}
+    has_template = False
+    for item in payload_items:
+        m = meta.get(getattr(item, "item_id", None))
+        if m is None:
+            continue
+        if m.item_tax_template_id is not None:
+            has_template = True
+            continue
+        rate = hsn_rate.get(m.hsn_sac_code or "") if m.gst_treatment == "Taxable" else None
+        totals[m.id] = rate if rate and rate > 0 else Decimal(0)
+
+    if not any(v > 0 for v in totals.values()) and not has_template:
+        return [], {}  # nothing taxable — leave the invoice tax-free
+
+    # resolve the Output GST accounts for this company (Tax accounts named *GST*)
+    async def _account(*needles: str) -> uuid.UUID | None:
+        stmt = select(Account.id).where(
+            Account.company_id == company.id, Account.account_type == "Tax"
+        )
+        for n in needles:
+            stmt = stmt.where(Account.account_name.ilike(f"%{n}%"))
+        return await db.scalar(stmt.order_by(Account.account_name).limit(1))
+
+    if inter:
+        igst = await _account("IGST")
+        if igst is None:
+            return [], {}
+        heads = [("IGST", igst, Decimal(1))]
+    else:
+        cgst, sgst = await _account("CGST"), await _account("SGST")
+        if cgst is None or sgst is None:
+            return [], {}
+        heads = [("CGST", cgst, Decimal("0.5")), ("SGST", sgst, Decimal("0.5"))]
+
+    # split each line's total across the heads; show a real row rate only when a
+    # single slab applies (else 0 — the per-line overrides still drive amounts).
+    item_rate_override = {
+        iid: {acc: total * share for _, acc, share in heads} for iid, total in totals.items()
+    }
+    positive = {v for v in totals.values() if v > 0}
+    common = positive.pop() if len(positive) == 1 and not has_template else None
+    tax_rows = [
+        TaxRowIn(
+            charge_type="On Net Total",
+            rate=(common * share if common is not None else Decimal(0)),
+            account_head_id=acc,
+            description=label,
+        )
+        for label, acc, share in heads
+    ]
+    return tax_rows, item_rate_override
 
 
 def base_payable_total(invoice: SalesInvoice | PurchaseInvoice) -> Decimal:
