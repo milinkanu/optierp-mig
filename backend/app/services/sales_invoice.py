@@ -144,6 +144,72 @@ async def _load_tax_rows(db: AsyncSession, payload: SalesInvoiceCreate, customer
     ]
 
 
+async def _resolve_invoice_taxes(db: AsyncSession, payload: SalesInvoiceCreate, company, customer):
+    """Shared tax resolution: template rows (or HSN-derived auto-GST) + the
+    per-item rate overrides the engine applies. Returns (tax_rows_in, item_rates)."""
+    tax_rows_in = [] if payload.is_opening else await _load_tax_rows(db, payload, customer)
+    item_rates = await item_tax_rates(db, payload.items)
+    if not tax_rows_in and not payload.is_opening:
+        auto_rows, auto_overrides = await auto_gst_from_items(
+            db, company=company, party_gstin=customer.tax_id,
+            place_of_supply=payload.place_of_supply, payload_items=payload.items,
+            item_rates=item_rates,
+        )
+        if auto_rows:
+            tax_rows_in = auto_rows
+            for iid, heads in auto_overrides.items():
+                item_rates.setdefault(iid, {}).update(heads)
+    return tax_rows_in, item_rates
+
+
+async def preview_sales_invoice(db: AsyncSession, payload: SalesInvoiceCreate, user: CurrentUser):
+    """Compute taxes + totals for a DRAFT (no persistence, no GL, no validation)
+    so the form previews the GST that ``create_sales_invoice`` will apply."""
+    from app.schemas.accounts import InvoiceTaxLinePreview, InvoiceTaxPreview
+
+    company = await get_company(db, user.company_id)
+    customer = await get_customer(db, payload.customer_id, company.id)
+    tax_rows_in, item_rates = await _resolve_invoice_taxes(db, payload, company, customer)
+
+    engine_items = [
+        ItemRow(
+            qty=item.qty,
+            rate=(item.price_list_rate if item.price_list_rate is not None else item.rate),
+            price_list_rate=(item.price_list_rate if item.price_list_rate is not None else item.rate),
+            discount_percentage=item.discount_percentage,
+            discount_amount=item.discount_amount,
+            item_tax_rate=item_rates.get(item.item_id, {}),
+        )
+        for item in payload.items
+    ]
+    engine_taxes = [
+        TaxRow(charge_type=t.charge_type, rate=t.rate, tax_amount=t.tax_amount, row_id=t.row_id,
+               included_in_print_rate=t.included_in_print_rate, account_head_id=t.account_head_id)
+        for t in tax_rows_in
+    ]
+    totals = calculate_taxes_and_totals(
+        engine_items, engine_taxes, conversion_rate=payload.conversion_rate,
+        apply_discount_on=payload.apply_discount_on,
+        additional_discount_percentage=payload.additional_discount_percentage,
+        discount_amount=payload.discount_amount,
+    )
+    taxes_out = [
+        InvoiceTaxLinePreview(description=(t.description or ""), rate=et.rate, tax_amount=et.tax_amount)
+        for t, et in zip(tax_rows_in, engine_taxes)
+    ]
+    return InvoiceTaxPreview(
+        net_total=totals.net_total,
+        total_taxes_and_charges=totals.total_taxes_and_charges,
+        grand_total=totals.grand_total,
+        place_of_supply=(
+            payload.place_of_supply
+            or gst_state_label_of(customer.tax_id)
+            or gst_state_label_of(company.tax_id)
+        ),
+        taxes=taxes_out,
+    )
+
+
 async def create_sales_invoice(
     db: AsyncSession, payload: SalesInvoiceCreate, user: CurrentUser
 ) -> SalesInvoice:
@@ -162,25 +228,9 @@ async def create_sales_invoice(
     )
     # Opening (migration-in) invoices carry no tax — they just establish the
     # outstanding receivable against the Temporary Opening account.
-    tax_rows_in = [] if payload.is_opening else await _load_tax_rows(db, payload, customer)
-
-    # per-item GST overrides (Item Tax Template) keyed by tax account head
-    item_rates = await item_tax_rates(db, payload.items)
-
-    # No invoice-level tax template resolved (e.g. a walk-in customer with no GST
-    # category): fall back to the line items' own GST — rate from the Item Tax
-    # Template or the HSN master — so "set the item's HSN and GST just applies"
-    # holds. Only fires on the otherwise-zero-tax path, so it can't change
-    # invoices that already resolve a template.
-    if not tax_rows_in and not payload.is_opening:
-        auto_rows, auto_overrides = await auto_gst_from_items(
-            db, company=company, party_gstin=customer.tax_id,
-            place_of_supply=payload.place_of_supply, payload_items=payload.items,
-        )
-        if auto_rows:
-            tax_rows_in = auto_rows
-            for iid, heads in auto_overrides.items():
-                item_rates.setdefault(iid, {}).update(heads)
+    # Tax rows (template or HSN-derived auto-GST) + per-item rate overrides —
+    # shared with preview_sales_invoice so the form preview matches this exactly.
+    tax_rows_in, item_rates = await _resolve_invoice_taxes(db, payload, company, customer)
 
     # run the calculation engine
     engine_items = [

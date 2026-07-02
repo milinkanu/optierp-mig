@@ -128,6 +128,34 @@ async def test_nil_rated_item_stays_tax_free(ctx):
     assert inv["taxes"] == []
 
 
+async def test_preview_returns_gst_without_persisting(ctx):
+    """POST /sales-invoices/preview computes the GST create() would apply, but
+    saves nothing."""
+    client, _company, base_headers = ctx
+    _co, headers = await _gst_company(client, base_headers)
+    await _seed_hsn([("84182100", 28, "Taxable")])
+    wh = await _warehouse(client, headers)
+    fridge = await _item(client, headers, "FRIDGE", wh, hsn_sac_code="84182100")
+    cust = (await client.post(f"{API}/customers", json={"customer_name": "Walk-in"}, headers=headers)).json()
+
+    r = await client.post(
+        f"{API}/sales-invoices/preview",
+        json={"customer_id": cust["id"], "posting_date": "2026-07-02",
+              "items": [{"item_id": fridge["id"], "item_name": "FRIDGE", "qty": 1, "rate": "15000"}]},
+        headers=headers,
+    )
+    assert r.status_code == 200, r.text
+    p = r.json()
+    assert float(p["net_total"]) == 15000
+    assert float(p["total_taxes_and_charges"]) == 4200
+    assert float(p["grand_total"]) == 19200
+    assert {t["description"]: float(t["tax_amount"]) for t in p["taxes"]} == {"CGST": 2100, "SGST": 2100}
+
+    # nothing was persisted
+    lst = (await client.get(f"{API}/sales-invoices", headers=headers)).json()
+    assert lst["total"] == 0
+
+
 async def test_no_gst_accounts_leaves_invoice_untaxed(ctx):
     """Without Output GST accounts the fix is a no-op (can't invent tax heads)."""
     client, _company, headers = ctx  # base company: India COA but no Output GST accounts

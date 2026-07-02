@@ -7,6 +7,25 @@ from decimal import Decimal
 from pydantic import BaseModel, Field
 
 
+class InvoiceTaxLinePreview(BaseModel):
+    """One computed tax row for the draft-invoice GST preview (display only)."""
+
+    description: str
+    rate: Decimal
+    tax_amount: Decimal
+
+
+class InvoiceTaxPreview(BaseModel):
+    """Server-computed taxes + totals for a draft invoice, so the form can show
+    the GST that create will apply — before anything is saved."""
+
+    net_total: Decimal
+    total_taxes_and_charges: Decimal
+    grand_total: Decimal
+    place_of_supply: str | None = None
+    taxes: list[InvoiceTaxLinePreview] = []
+
+
 class TaxRowIn(BaseModel):
     charge_type: str = "On Net Total"
     rate: Decimal = Decimal("0")

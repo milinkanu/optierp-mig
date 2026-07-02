@@ -142,6 +142,7 @@ async def _hsn_rates(db: AsyncSession, codes: set[str]) -> dict[str, Decimal]:
 async def auto_gst_from_items(
     db: AsyncSession, *, company: Company, party_gstin: str | None,
     place_of_supply: str | None, payload_items: list,
+    item_rates: dict[uuid.UUID, dict] | None = None,
 ) -> tuple[list, dict[uuid.UUID, dict]]:
     """Derive GST tax rows + per-item rate overrides from the line items when no
     invoice-level tax template resolved — the "the item's HSN carries the rate,
@@ -226,21 +227,29 @@ async def auto_gst_from_items(
             return [], {}
         heads = [("CGST", cgst, Decimal("0.5")), ("SGST", sgst, Decimal("0.5"))]
 
-    # split each line's total across the heads; show a real row rate only when a
-    # single slab applies (else 0 — the per-line overrides still drive amounts).
+    # split each HSN-derived line total across the heads (per-line overrides drive
+    # the amounts; every taxable line has one).
     item_rate_override = {
         iid: {acc: total * share for _, acc, share in heads} for iid, total in totals.items()
     }
-    positive = {v for v in totals.values() if v > 0}
-    common = positive.pop() if len(positive) == 1 and not has_template else None
+    # Row rate per head = the common per-head rate when every taxable line agrees
+    # (template lines contribute via ``item_rates``), else 0 for a mixed-slab bill.
+    existing = item_rates or {}
+
+    def _row_rate(acc: uuid.UUID) -> Decimal:
+        vals = set()
+        for item in payload_items:
+            iid = getattr(item, "item_id", None)
+            r = item_rate_override.get(iid, {}).get(acc)
+            if r is None:
+                r = existing.get(iid, {}).get(acc)
+            if r and r > 0:
+                vals.add(Decimal(r))
+        return next(iter(vals)) if len(vals) == 1 else Decimal(0)
+
     tax_rows = [
-        TaxRowIn(
-            charge_type="On Net Total",
-            rate=(common * share if common is not None else Decimal(0)),
-            account_head_id=acc,
-            description=label,
-        )
-        for label, acc, share in heads
+        TaxRowIn(charge_type="On Net Total", rate=_row_rate(acc), account_head_id=acc, description=label)
+        for label, acc, _ in heads
     ]
     return tax_rows, item_rate_override
 
