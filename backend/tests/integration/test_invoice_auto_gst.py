@@ -207,6 +207,29 @@ async def test_previews_for_orders_and_quotation(ctx):
     assert [t["description"] for t in po["taxes"]] == ["Input GST"]
 
 
+async def test_line_hsn_override_drives_gst(ctx):
+    """The per-line HSN override (set via the line HSN lookup) re-drives that
+    line's GST — the line's HSN wins over the item master's."""
+    client, _company, base_headers = ctx
+    _co, headers = await _gst_company(client, base_headers)
+    await _seed_hsn([("84182100", 28, "Taxable"), ("10011100", 5, "Taxable")])
+    wh = await _warehouse(client, headers)
+    fridge = await _item(client, headers, "FRIDGE", wh, hsn_sac_code="84182100")  # master → 28%
+    cust = (await client.post(f"{API}/customers", json={"customer_name": "Walk-in"}, headers=headers)).json()
+
+    r = await client.post(
+        f"{API}/sales-invoices",
+        json={"customer_id": cust["id"], "posting_date": "2026-07-02",
+              "items": [{"item_id": fridge["id"], "item_name": "F", "qty": 1, "rate": "1000",
+                         "hsn_sac_code": "10011100"}]},  # line override → 5%
+        headers=headers,
+    )
+    assert r.status_code == 201, r.text
+    inv = r.json()
+    assert float(inv["total_taxes_and_charges"]) == 50  # 5% of 1000, not 280
+    assert inv["items"][0]["hsn_sac_code"] == "10011100"
+
+
 async def test_no_gst_accounts_leaves_invoice_untaxed(ctx):
     """Without Output GST accounts the fix is a no-op (can't invent tax heads)."""
     client, _company, headers = ctx  # base company: India COA but no Output GST accounts

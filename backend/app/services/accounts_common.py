@@ -178,9 +178,18 @@ async def auto_gst_from_items(
             )
         ).all()
     }
-    hsn_rate = await _hsn_rates(
-        db, {m.hsn_sac_code for m in meta.values() if m.hsn_sac_code and m.gst_treatment == "Taxable"}
-    )
+    # The effective HSN for a line is the line's own hsn_sac_code override (set via
+    # the per-line HSN lookup) if present, else the item master's — so correcting
+    # the HSN on a line re-drives that line's GST.
+    def _eff_hsn(item, m) -> str:
+        return (getattr(item, "hsn_sac_code", None) or (m.hsn_sac_code if m else None)) or ""
+
+    taxable_hsns = {
+        _eff_hsn(item, m)
+        for item in payload_items
+        if (m := meta.get(getattr(item, "item_id", None))) is not None and m.gst_treatment == "Taxable"
+    }
+    hsn_rate = await _hsn_rates(db, {h for h in taxable_hsns if h})
 
     # intra vs inter: party state vs company state (GSTIN first, then place of supply)
     company_state = _gstin_state(company.tax_id)
@@ -202,7 +211,7 @@ async def auto_gst_from_items(
         if m.item_tax_template_id is not None:
             has_template = True
             continue
-        rate = hsn_rate.get(m.hsn_sac_code or "") if m.gst_treatment == "Taxable" else None
+        rate = hsn_rate.get(_eff_hsn(item, m)) if m.gst_treatment == "Taxable" else None
         totals[m.id] = rate if rate and rate > 0 else Decimal(0)
 
     if not any(v > 0 for v in totals.values()) and not has_template:

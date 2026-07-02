@@ -298,7 +298,7 @@ const gridColumns = computed<GridColumn[]>(() => [
   { key: "stock_qty", label: "Stock Qty", type: "computed", align: "right", compute: stockQtyLabel },
   { key: "rate", label: "Rate", type: "number", align: "right", required: true },
   { key: "discount_percentage", label: "Discount %", type: "number", align: "right" },
-  { key: "hsn_sac_code", label: "HSN/SAC", type: "text" },
+  { key: "hsn_sac_code", label: "HSN/SAC", type: "hsn" },
   {
     key: "account_id",
     label: props.kind === "sales" ? "Income Account" : "Expense Account",
