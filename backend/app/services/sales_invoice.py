@@ -163,50 +163,18 @@ async def _resolve_invoice_taxes(db: AsyncSession, payload: SalesInvoiceCreate, 
 
 
 async def preview_sales_invoice(db: AsyncSession, payload: SalesInvoiceCreate, user: CurrentUser):
-    """Compute taxes + totals for a DRAFT (no persistence, no GL, no validation)
-    so the form previews the GST that ``create_sales_invoice`` will apply."""
-    from app.schemas.accounts import InvoiceTaxLinePreview, InvoiceTaxPreview
+    """Compute taxes + totals for a DRAFT (no persistence) so the form previews the
+    GST that ``create_sales_invoice`` will apply."""
+    from app.services.accounts_common import compute_doc_tax_preview
 
     company = await get_company(db, user.company_id)
     customer = await get_customer(db, payload.customer_id, company.id)
-    tax_rows_in, item_rates = await _resolve_invoice_taxes(db, payload, company, customer)
-
-    engine_items = [
-        ItemRow(
-            qty=item.qty,
-            rate=(item.price_list_rate if item.price_list_rate is not None else item.rate),
-            price_list_rate=(item.price_list_rate if item.price_list_rate is not None else item.rate),
-            discount_percentage=item.discount_percentage,
-            discount_amount=item.discount_amount,
-            item_tax_rate=item_rates.get(item.item_id, {}),
-        )
-        for item in payload.items
-    ]
-    engine_taxes = [
-        TaxRow(charge_type=t.charge_type, rate=t.rate, tax_amount=t.tax_amount, row_id=t.row_id,
-               included_in_print_rate=t.included_in_print_rate, account_head_id=t.account_head_id)
-        for t in tax_rows_in
-    ]
-    totals = calculate_taxes_and_totals(
-        engine_items, engine_taxes, conversion_rate=payload.conversion_rate,
+    return await compute_doc_tax_preview(
+        db, company=company, party=customer, kind="sales", items=payload.items,
+        place_of_supply=payload.place_of_supply, conversion_rate=payload.conversion_rate,
         apply_discount_on=payload.apply_discount_on,
         additional_discount_percentage=payload.additional_discount_percentage,
         discount_amount=payload.discount_amount,
-    )
-    taxes_out = [
-        InvoiceTaxLinePreview(description=(t.description or ""), rate=et.rate, tax_amount=et.tax_amount)
-        for t, et in zip(tax_rows_in, engine_taxes)
-    ]
-    return InvoiceTaxPreview(
-        net_total=totals.net_total,
-        total_taxes_and_charges=totals.total_taxes_and_charges,
-        grand_total=totals.grand_total,
-        place_of_supply=(
-            payload.place_of_supply
-            or gst_state_label_of(customer.tax_id)
-            or gst_state_label_of(company.tax_id)
-        ),
-        taxes=taxes_out,
     )
 
 

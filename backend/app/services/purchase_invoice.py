@@ -22,7 +22,9 @@ from app.schemas.accounts import PurchaseInvoiceCreate, TaxRowIn
 from app.services import gl
 from app.services.accounts_common import (
     NAMING_SERIES,
+    auto_gst_from_items,
     base_payable_total,
+    compute_doc_tax_preview,
     get_company,
     get_payable_account,
     get_supplier,
@@ -149,6 +151,20 @@ async def _load_tax_rows(
     ]
 
 
+async def preview_purchase_invoice(db: AsyncSession, payload: PurchaseInvoiceCreate, user: CurrentUser):
+    """Compute taxes + totals for a DRAFT purchase invoice (no persistence) so the
+    form previews the GST that ``create_purchase_invoice`` will apply."""
+    company = await get_company(db, user.company_id)
+    supplier = await get_supplier(db, payload.supplier_id, company.id)
+    return await compute_doc_tax_preview(
+        db, company=company, party=supplier, kind="purchase", items=payload.items,
+        place_of_supply=payload.place_of_supply, conversion_rate=payload.conversion_rate,
+        apply_discount_on=payload.apply_discount_on,
+        additional_discount_percentage=payload.additional_discount_percentage,
+        discount_amount=payload.discount_amount,
+    )
+
+
 async def create_purchase_invoice(
     db: AsyncSession, payload: PurchaseInvoiceCreate, user: CurrentUser
 ) -> PurchaseInvoice:
@@ -169,6 +185,19 @@ async def create_purchase_invoice(
     # outstanding payable against the Temporary Opening account.
     tax_rows_in = [] if payload.is_opening else await _load_tax_rows(db, payload, supplier)
     item_rates = await item_tax_rates(db, payload.items)
+    # No tax template resolved (supplier with no GST category and no default): fall
+    # back to the line items' own GST (Input GST from the item's HSN / template),
+    # so purchase GST applies too. Only fires on the otherwise-zero-tax path.
+    if not tax_rows_in and not payload.is_opening:
+        auto_rows, auto_overrides = await auto_gst_from_items(
+            db, company=company, party_gstin=supplier.tax_id,
+            place_of_supply=payload.place_of_supply, payload_items=payload.items,
+            item_rates=item_rates, is_sales=False,
+        )
+        if auto_rows:
+            tax_rows_in = auto_rows
+            for iid, heads in auto_overrides.items():
+                item_rates.setdefault(iid, {}).update(heads)
     engine_items = [
         ItemRow(
             qty=item.qty,

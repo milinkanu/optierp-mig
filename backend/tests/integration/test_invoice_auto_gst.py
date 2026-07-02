@@ -38,7 +38,7 @@ async def _gst_company(client, headers):
     r = await client.post(f"{API}/auth/switch-company", json={"company_id": company["id"]}, headers=headers)
     gst_headers = {"Authorization": f"Bearer {r.json()['access_token']}"}
     duties = await coa_account(client, company, gst_headers, "Duties and Taxes")
-    for name in ("Output CGST", "Output SGST", "Output IGST"):
+    for name in ("Output CGST", "Output SGST", "Output IGST", "Input GST"):
         rr = await client.post(
             f"{API}/accounts",
             json={"account_name": name, "parent_account_id": duties["id"], "account_type": "Tax"},
@@ -154,6 +154,57 @@ async def test_preview_returns_gst_without_persisting(ctx):
     # nothing was persisted
     lst = (await client.get(f"{API}/sales-invoices", headers=headers)).json()
     assert lst["total"] == 0
+
+
+async def test_purchase_invoice_derives_input_gst_from_hsn(ctx):
+    """A supplier with no tax category → a single Input GST line from the item's HSN."""
+    client, _company, base_headers = ctx
+    _co, headers = await _gst_company(client, base_headers)
+    await _seed_hsn([("84182100", 28, "Taxable")])
+    wh = await _warehouse(client, headers)
+    fridge = await _item(client, headers, "FRIDGE", wh, hsn_sac_code="84182100")
+    sup = (await client.post(f"{API}/suppliers", json={"supplier_name": "Vendor"}, headers=headers)).json()
+
+    r = await client.post(
+        f"{API}/purchase-invoices",
+        json={"supplier_id": sup["id"], "posting_date": "2026-07-02", "bill_no": "B-1",
+              "items": [{"item_id": fridge["id"], "item_name": "FRIDGE", "qty": 1, "rate": "15000"}]},
+        headers=headers,
+    )
+    assert r.status_code == 201, r.text
+    inv = r.json()
+    assert float(inv["total_taxes_and_charges"]) == 4200
+    assert [t["description"] for t in inv["taxes"]] == ["Input GST"]
+
+
+async def test_previews_for_orders_and_quotation(ctx):
+    """Sales/purchase order + quotation previews return the same HSN-derived GST."""
+    client, _company, base_headers = ctx
+    _co, headers = await _gst_company(client, base_headers)
+    await _seed_hsn([("84182100", 28, "Taxable")])
+    wh = await _warehouse(client, headers)
+    fridge = await _item(client, headers, "FRIDGE", wh, hsn_sac_code="84182100")
+    cust = (await client.post(f"{API}/customers", json={"customer_name": "Walk-in"}, headers=headers)).json()
+    sup = (await client.post(f"{API}/suppliers", json={"supplier_name": "Vendor"}, headers=headers)).json()
+    line = {"item_id": fridge["id"], "qty": 1, "rate": "15000"}
+
+    so = (await client.post(f"{API}/sales-orders/preview",
+          json={"customer_id": cust["id"], "posting_date": "2026-07-02", "items": [line]},
+          headers=headers))
+    assert so.status_code == 200, so.text
+    assert float(so.json()["total_taxes_and_charges"]) == 4200
+    assert {t["description"] for t in so.json()["taxes"]} == {"CGST", "SGST"}
+
+    qt = (await client.post(f"{API}/quotations/preview",
+          json={"customer_id": cust["id"], "posting_date": "2026-07-02", "items": [line]},
+          headers=headers)).json()
+    assert float(qt["total_taxes_and_charges"]) == 4200
+
+    po = (await client.post(f"{API}/purchase-orders/preview",
+          json={"supplier_id": sup["id"], "posting_date": "2026-07-02", "items": [line]},
+          headers=headers)).json()
+    assert float(po["total_taxes_and_charges"]) == 4200
+    assert [t["description"] for t in po["taxes"]] == ["Input GST"]
 
 
 async def test_no_gst_accounts_leaves_invoice_untaxed(ctx):

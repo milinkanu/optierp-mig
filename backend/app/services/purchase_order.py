@@ -24,6 +24,8 @@ from app.schemas.accounts import TaxRowIn
 from app.schemas.buying import PurchaseOrderCreate
 from app.services import gl  # noqa: F401  (kept for parity; POs post no GL)
 from app.services.accounts_common import (
+    auto_gst_from_items,
+    compute_doc_tax_preview,
     get_company,
     get_supplier,
     item_tax_rates,
@@ -172,6 +174,18 @@ def set_purchase_order_status(po: PurchaseOrder) -> None:
         po.status = "To Receive and Bill"
 
 
+async def preview_purchase_order(db: AsyncSession, payload: PurchaseOrderCreate, user: CurrentUser):
+    """GST + totals preview for a draft Purchase Order (no persistence)."""
+    company = await get_company(db, user.company_id)
+    supplier = await get_supplier(db, payload.supplier_id, company.id)
+    return await compute_doc_tax_preview(
+        db, company=company, party=supplier, kind="purchase", items=payload.items,
+        conversion_rate=payload.conversion_rate, apply_discount_on=payload.apply_discount_on,
+        additional_discount_percentage=payload.additional_discount_percentage,
+        discount_amount=payload.discount_amount,
+    )
+
+
 async def create_purchase_order(
     db: AsyncSession, payload: PurchaseOrderCreate, user: CurrentUser
 ) -> PurchaseOrder:
@@ -201,6 +215,17 @@ async def create_purchase_order(
 
     tax_rows_in = await _load_tax_rows(db, payload, supplier)
     item_rates = await item_tax_rates(db, payload.items)  # per-item GST overrides
+    # No tax template resolved: derive Input GST from each line's HSN so the PO
+    # shows GST too. Only fires on the otherwise-zero-tax path.
+    if not tax_rows_in:
+        auto_rows, auto_overrides = await auto_gst_from_items(
+            db, company=company, party_gstin=supplier.tax_id, place_of_supply=None,
+            payload_items=payload.items, item_rates=item_rates, is_sales=False,
+        )
+        if auto_rows:
+            tax_rows_in = auto_rows
+            for iid, heads in auto_overrides.items():
+                item_rates.setdefault(iid, {}).update(heads)
     engine_items = [
         ItemRow(
             qty=row.qty,

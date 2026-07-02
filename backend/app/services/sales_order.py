@@ -22,6 +22,8 @@ from app.models.selling import Quotation, QuotationItem, SalesOrder, SalesOrderI
 from app.schemas.accounts import TaxRowIn
 from app.schemas.selling import SalesOrderCreate
 from app.services.accounts_common import (
+    auto_gst_from_items,
+    compute_doc_tax_preview,
     get_company,
     get_customer,
     item_tax_rates,
@@ -104,6 +106,19 @@ async def _load_tax_rows(db: AsyncSession, payload: SalesOrderCreate, customer) 
     ]
 
 
+async def preview_sales_order(db: AsyncSession, payload: SalesOrderCreate, user: CurrentUser):
+    """GST + totals preview for a draft Sales Order (no persistence). Uses the
+    entered line rates (pricing is resolved on save)."""
+    company = await get_company(db, user.company_id)
+    customer = await get_customer(db, payload.customer_id, company.id)
+    return await compute_doc_tax_preview(
+        db, company=company, party=customer, kind="sales", items=payload.items,
+        conversion_rate=payload.conversion_rate, apply_discount_on=payload.apply_discount_on,
+        additional_discount_percentage=payload.additional_discount_percentage,
+        discount_amount=payload.discount_amount,
+    )
+
+
 async def create_sales_order(
     db: AsyncSession, payload: SalesOrderCreate, user: CurrentUser
 ) -> SalesOrder:
@@ -168,12 +183,24 @@ async def create_sales_order(
         )
 
     tax_rows_in = await _load_tax_rows(db, payload, customer)
+    item_rates = await item_tax_rates(db, payload.items)  # per-item GST overrides
+    # No sales tax template resolved (customer with no GST category): derive GST
+    # from each line's HSN so the order shows GST too. Runs before shipping is
+    # appended, only on the otherwise-zero-tax path.
+    if not tax_rows_in:
+        auto_rows, auto_overrides = await auto_gst_from_items(
+            db, company=company, party_gstin=customer.tax_id, place_of_supply=None,
+            payload_items=payload.items, item_rates=item_rates, is_sales=True,
+        )
+        if auto_rows:
+            tax_rows_in = auto_rows
+            for iid, heads in auto_overrides.items():
+                item_rates.setdefault(iid, {}).update(heads)
     if payload.shipping_rule_id:
         subtotal = sum((row.qty * rate for row, rate in zip(payload.items, rates)), Decimal("0"))
         ship_row = await shipping_tax_row(db, company.id, payload.shipping_rule_id, subtotal)
         if ship_row is not None:
             tax_rows_in = [*tax_rows_in, ship_row]
-    item_rates = await item_tax_rates(db, payload.items)  # per-item GST overrides
     engine_items = [
         ItemRow(
             qty=row.qty,
