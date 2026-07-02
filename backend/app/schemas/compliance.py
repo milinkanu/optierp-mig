@@ -1,9 +1,29 @@
-"""India compliance schemas — GST Settings (per-company config the GST layer reads)."""
+"""India compliance schemas — GST Settings (per-company config the GST layer reads)
+and the HSN → GST-rate lookup result."""
+
+from decimal import Decimal
 
 from pydantic import BaseModel, field_validator
 
 REGISTRATION_TYPES = ("Regular", "Composition")
 FILING_CADENCES = ("Monthly", "QRMP")
+
+
+class HsnCodeMatch(BaseModel):
+    """One match from the HSN "search by product name / code" lookup.
+
+    ``gst_rate`` is the standard slab (0/5/12/18/28); the Item form maps it to the
+    matching *GST {rate}%* Item Tax Template so the rate applies on invoices, and
+    copies ``hsn_code`` + ``gst_treatment`` onto the item."""
+
+    model_config = {"from_attributes": True}
+
+    hsn_code: str
+    description: str
+    gst_rate: Decimal
+    gst_treatment: str
+    chapter: int | None = None
+    schedule: str | None = None
 
 
 class GstSettings(BaseModel):
