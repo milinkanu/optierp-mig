@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import StatusBadge from "@/components/shared/StatusBadge.vue";
 import PrintButton from "@/components/shared/PrintButton.vue";
@@ -136,6 +136,58 @@ const discount = ref<DiscountModel>({
   additional_discount_percentage: 0,
   discount_amount: 0,
 });
+
+// Live GST preview (sales): the server computes the taxes create() will apply —
+// from each line's Item Tax Template / HSN — so the totals show CGST/SGST/IGST
+// while drafting, before anything is saved. Display-only; NOT sent on save (the
+// backend recomputes). Skipped once the user manually fills the tax rows.
+const previewTaxes = ref<TaxRowIn[]>([]);
+let previewTimer: ReturnType<typeof setTimeout> | undefined;
+
+async function refreshTaxPreview(): Promise<void> {
+  const lines = items.value.filter((i) => i.item_name);
+  if (props.kind !== "sales" || !partyId.value || !lines.length || taxes.value.length) {
+    previewTaxes.value = [];
+    return;
+  }
+  try {
+    const { data } = await api.post<{
+      taxes: Array<{ description: string; rate: string; tax_amount: string }>;
+    }>("/sales-invoices/preview", {
+      customer_id: partyId.value,
+      posting_date: postingDate.value,
+      place_of_supply: placeOfSupply.value || null,
+      apply_discount_on: discount.value.apply_discount_on,
+      additional_discount_percentage: discount.value.additional_discount_percentage || 0,
+      discount_amount: discount.value.discount_amount || 0,
+      items: lines,
+    });
+    previewTaxes.value = data.taxes.map((t) => ({
+      charge_type: "Actual",
+      account_head_id: "",
+      description: t.description,
+      rate: Number(t.rate),
+      tax_amount: Number(t.tax_amount),
+    })) as unknown as TaxRowIn[];
+  } catch {
+    previewTaxes.value = [];
+  }
+}
+
+watch(
+  [items, partyId, placeOfSupply, discount, () => taxes.value.length],
+  () => {
+    clearTimeout(previewTimer);
+    previewTimer = setTimeout(() => void refreshTaxPreview(), 400);
+  },
+  { deep: true },
+);
+
+// The manually-entered tax rows win; otherwise show the server GST preview so
+// the totals block reflects the GST that will be charged.
+const effectiveTaxes = computed(() =>
+  taxes.value.length ? taxes.value : previewTaxes.value,
+);
 const currencyModel = ref<CurrencyModel>({ currency: "", conversion_rate: 1 });
 const isReturn = ref(false);
 const returnAgainstId = ref("");
@@ -162,7 +214,7 @@ async function fetchPaymentTermsTemplates(): Promise<void> {
 const liveGrandTotal = computed(() => {
   const t = computeTotals(
     items.value as unknown as Parameters<typeof computeTotals>[0],
-    taxes.value as unknown as Parameters<typeof computeTotals>[1],
+    effectiveTaxes.value as unknown as Parameters<typeof computeTotals>[1],
     discount.value as unknown as Parameters<typeof computeTotals>[2],
   );
   return t.roundedTotal || t.grandTotal;
@@ -956,6 +1008,19 @@ onMounted(async () => {
         </div>
         <TaxesCharges v-model="taxes" :account-options="store.accountOptions" />
 
+        <!-- Auto GST preview (sales): what the server will charge from each line's
+             HSN / Item Tax Template. Shown until the user fills the rows manually. -->
+        <div
+          v-if="!taxes.length && previewTaxes.length"
+          class="mt-2 max-w-sm rounded-md border border-emerald-100 bg-emerald-50 px-3 py-2 text-xs text-emerald-800"
+        >
+          <div class="mb-1 font-medium">GST (auto, from item HSN)</div>
+          <div v-for="(t, i) in previewTaxes" :key="i" class="flex justify-between">
+            <span>{{ t.description }}<span v-if="Number(t.rate) > 0"> @ {{ Number(t.rate) }}%</span></span>
+            <span class="tabular-nums">{{ formatCurrency(String(t.tax_amount ?? 0), currencyModel.currency || companyCurrency) }}</span>
+          </div>
+        </div>
+
         <!-- India TDS (purchase) / TCS (sales) -->
         <div v-if="tdsCategories.length" class="mt-3 max-w-sm">
           <label class="form-label">{{ kind === "sales" ? "TCS — Tax Collected at Source" : "TDS — Tax Withholding" }}</label>
@@ -978,7 +1043,7 @@ onMounted(async () => {
         <!-- totals -->
         <DocumentTotals
           :items="items"
-          :taxes="taxes"
+          :taxes="effectiveTaxes"
           :discount="discount"
           :currency="currencyModel.currency || companyCurrency"
           :withholding="withholdingPreview"
