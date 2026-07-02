@@ -22,6 +22,7 @@ from app.schemas.accounts import SalesInvoiceCreate
 from app.services import gl
 from app.services.accounts_common import (
     NAMING_SERIES,
+    auto_gst_from_items,
     base_payable_total,
     get_company,
     get_customer,
@@ -165,6 +166,21 @@ async def create_sales_invoice(
 
     # per-item GST overrides (Item Tax Template) keyed by tax account head
     item_rates = await item_tax_rates(db, payload.items)
+
+    # No invoice-level tax template resolved (e.g. a walk-in customer with no GST
+    # category): fall back to the line items' own GST — rate from the Item Tax
+    # Template or the HSN master — so "set the item's HSN and GST just applies"
+    # holds. Only fires on the otherwise-zero-tax path, so it can't change
+    # invoices that already resolve a template.
+    if not tax_rows_in and not payload.is_opening:
+        auto_rows, auto_overrides = await auto_gst_from_items(
+            db, company=company, party_gstin=customer.tax_id,
+            place_of_supply=payload.place_of_supply, payload_items=payload.items,
+        )
+        if auto_rows:
+            tax_rows_in = auto_rows
+            for iid, heads in auto_overrides.items():
+                item_rates.setdefault(iid, {}).update(heads)
 
     # run the calculation engine
     engine_items = [
