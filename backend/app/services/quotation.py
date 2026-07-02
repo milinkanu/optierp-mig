@@ -19,7 +19,15 @@ from app.models.base import DOCSTATUS_CANCELLED, DOCSTATUS_SUBMITTED
 from app.models.selling import Quotation, QuotationItem, QuotationTax
 from app.schemas.accounts import TaxRowIn
 from app.schemas.selling import QuotationCreate
-from app.services.accounts_common import get_company, get_customer, require_draft, require_submitted
+from app.services.accounts_common import (
+    auto_gst_from_items,
+    compute_doc_tax_preview,
+    get_company,
+    get_customer,
+    item_tax_rates,
+    require_draft,
+    require_submitted,
+)
 from app.services.audit import log_audit
 from app.services.pagination import paginate
 from app.services.blanket import blanket_rate
@@ -61,6 +69,18 @@ async def _load_tax_rows(db: AsyncSession, payload: QuotationCreate, customer) -
     ]
 
 
+async def preview_quotation(db: AsyncSession, payload: QuotationCreate, user: CurrentUser):
+    """GST + totals preview for a draft Quotation (no persistence)."""
+    company = await get_company(db, user.company_id)
+    customer = await get_customer(db, payload.customer_id, company.id)
+    return await compute_doc_tax_preview(
+        db, company=company, party=customer, kind="sales", items=payload.items,
+        conversion_rate=payload.conversion_rate, apply_discount_on=payload.apply_discount_on,
+        additional_discount_percentage=payload.additional_discount_percentage,
+        discount_amount=payload.discount_amount,
+    )
+
+
 async def create_quotation(
     db: AsyncSession, payload: QuotationCreate, user: CurrentUser
 ) -> Quotation:
@@ -93,6 +113,18 @@ async def create_quotation(
         )
 
     tax_rows_in = await _load_tax_rows(db, payload, customer)
+    item_rates = await item_tax_rates(db, payload.items)  # per-item GST overrides
+    # No sales tax template resolved: derive GST from each line's HSN so the
+    # quotation shows GST too. Runs before shipping; zero-tax path only.
+    if not tax_rows_in:
+        auto_rows, auto_overrides = await auto_gst_from_items(
+            db, company=company, party_gstin=customer.tax_id, place_of_supply=None,
+            payload_items=payload.items, item_rates=item_rates, is_sales=True,
+        )
+        if auto_rows:
+            tax_rows_in = auto_rows
+            for iid, heads in auto_overrides.items():
+                item_rates.setdefault(iid, {}).update(heads)
     if payload.shipping_rule_id:
         subtotal = sum((row.qty * rate for row, rate in zip(payload.items, rates)), ZERO)
         ship_row = await shipping_tax_row(db, company.id, payload.shipping_rule_id, subtotal)
@@ -105,11 +137,13 @@ async def create_quotation(
             price_list_rate=(row.price_list_rate if row.price_list_rate is not None else rate),
             discount_percentage=row.discount_percentage,
             discount_amount=row.discount_amount,
+            item_tax_rate=item_rates.get(row.item_id, {}),
         )
         for row, rate in zip(payload.items, rates)
     ]
     engine_taxes = [
-        TaxRow(charge_type=t.charge_type, rate=t.rate, tax_amount=t.tax_amount, row_id=t.row_id)
+        TaxRow(charge_type=t.charge_type, rate=t.rate, tax_amount=t.tax_amount, row_id=t.row_id,
+               account_head_id=t.account_head_id, included_in_print_rate=t.included_in_print_rate)
         for t in tax_rows_in
     ]
     totals = calculate_taxes_and_totals(

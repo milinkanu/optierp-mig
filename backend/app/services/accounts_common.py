@@ -142,21 +142,22 @@ async def _hsn_rates(db: AsyncSession, codes: set[str]) -> dict[str, Decimal]:
 async def auto_gst_from_items(
     db: AsyncSession, *, company: Company, party_gstin: str | None,
     place_of_supply: str | None, payload_items: list,
-    item_rates: dict[uuid.UUID, dict] | None = None,
+    item_rates: dict[uuid.UUID, dict] | None = None, is_sales: bool = True,
 ) -> tuple[list, dict[uuid.UUID, dict]]:
     """Derive GST tax rows + per-item rate overrides from the line items when no
-    invoice-level tax template resolved — the "the item's HSN carries the rate,
+    document-level tax template resolved — the "the item's HSN carries the rate,
     so GST just applies" path.
 
     Each line's total GST rate comes from its Item Tax Template if set, else the
-    HSN master (by ``hsn_sac_code``); a non-Taxable ``gst_treatment`` is 0%. The
-    split is CGST+SGST (intra-state) or IGST (inter-state), decided from the
-    party's GSTIN state (or place of supply) vs the company's. Returns
-    ``([], {})`` when GST can't be derived (no Output GST accounts, or no taxable
+    HSN master (by ``hsn_sac_code``); a non-Taxable ``gst_treatment`` is 0%. On
+    the **sales** side the tax splits into CGST+SGST (intra-state) or IGST
+    (inter-state) using the Output GST accounts; on the **purchase** side it is a
+    single Input GST line at the full rate (the input tax credit head). Returns
+    ``([], {})`` when GST can't be derived (missing GST accounts, or no taxable
     line), leaving the caller's zero-tax behaviour unchanged.
 
-    Called ONLY when the invoice would otherwise carry no tax, so it never alters
-    invoices that already resolve a template.
+    Called ONLY when the document would otherwise carry no tax, so it never alters
+    documents that already resolve a template.
     """
     from app.models.accounts import Account
     from app.models.stock import Item
@@ -207,7 +208,7 @@ async def auto_gst_from_items(
     if not any(v > 0 for v in totals.values()) and not has_template:
         return [], {}  # nothing taxable — leave the invoice tax-free
 
-    # resolve the Output GST accounts for this company (Tax accounts named *GST*)
+    # resolve the GST accounts for this company (Tax accounts named *GST*)
     async def _account(*needles: str) -> uuid.UUID | None:
         stmt = select(Account.id).where(
             Account.company_id == company.id, Account.account_type == "Tax"
@@ -216,13 +217,20 @@ async def auto_gst_from_items(
             stmt = stmt.where(Account.account_name.ilike(f"%{n}%"))
         return await db.scalar(stmt.order_by(Account.account_name).limit(1))
 
-    if inter:
-        igst = await _account("IGST")
+    if not is_sales:
+        # Purchase: a single Input GST (input tax credit) line at the full rate.
+        input_gst = await _account("Input GST")
+        if input_gst is None:
+            return [], {}
+        heads = [("Input GST", input_gst, Decimal(1))]
+    elif inter:
+        igst = await _account("Output", "IGST") or await _account("IGST")
         if igst is None:
             return [], {}
         heads = [("IGST", igst, Decimal(1))]
     else:
-        cgst, sgst = await _account("CGST"), await _account("SGST")
+        cgst = await _account("Output", "CGST") or await _account("CGST")
+        sgst = await _account("Output", "SGST") or await _account("SGST")
         if cgst is None or sgst is None:
             return [], {}
         heads = [("CGST", cgst, Decimal("0.5")), ("SGST", sgst, Decimal("0.5"))]
@@ -252,6 +260,85 @@ async def auto_gst_from_items(
         for label, acc, _ in heads
     ]
     return tax_rows, item_rate_override
+
+
+async def compute_doc_tax_preview(
+    db: AsyncSession, *, company: Company, party, kind: str, items: list,
+    place_of_supply: str | None = None, conversion_rate: Decimal = Decimal(1),
+    apply_discount_on: str = "Grand Total",
+    additional_discount_percentage: Decimal = Decimal(0), discount_amount: Decimal = Decimal(0),
+):
+    """Compute the GST + totals a transaction document (invoice / order / quotation)
+    would apply, WITHOUT persisting — for the draft form's live preview. Mirrors the
+    create path: resolve the party's tax template (by ``kind``) else derive GST from
+    each line's HSN, apply per-item Item-Tax-Template overrides, run the engine.
+    ``party`` is a Customer (sales) or Supplier (purchase); both carry ``tax_id`` +
+    ``tax_category_id``."""
+    from app.core.gst_states import gst_state_label_of
+    from app.schemas.accounts import InvoiceTaxLinePreview, InvoiceTaxPreview, TaxRowIn
+    from app.services.accounts_masters import resolve_tax_template
+    from app.services.taxes_and_totals import ItemRow, TaxRow, calculate_taxes_and_totals
+
+    is_sales = kind == "sales"
+    template = await resolve_tax_template(
+        db, company.id, kind, party.tax_category_id, party_gstin=party.tax_id
+    )
+    tax_rows_in = (
+        [
+            TaxRowIn(charge_type=d.charge_type, rate=d.rate, tax_amount=d.tax_amount, row_id=d.row_id,
+                     account_head_id=d.account_head_id, cost_center_id=d.cost_center_id,
+                     description=d.description, included_in_print_rate=d.included_in_print_rate)
+            for d in template.details
+        ]
+        if template is not None else []
+    )
+    item_rates = await item_tax_rates(db, items)
+    if not tax_rows_in:
+        auto_rows, auto_overrides = await auto_gst_from_items(
+            db, company=company, party_gstin=party.tax_id, place_of_supply=place_of_supply,
+            payload_items=items, item_rates=item_rates, is_sales=is_sales,
+        )
+        if auto_rows:
+            tax_rows_in = auto_rows
+            for iid, heads in auto_overrides.items():
+                item_rates.setdefault(iid, {}).update(heads)
+
+    def _rate(i):
+        plr = getattr(i, "price_list_rate", None)
+        return plr if plr is not None else i.rate
+
+    engine_items = [
+        ItemRow(
+            qty=i.qty, rate=_rate(i), price_list_rate=_rate(i),
+            discount_percentage=getattr(i, "discount_percentage", 0) or 0,
+            discount_amount=getattr(i, "discount_amount", 0) or 0,
+            item_tax_rate=item_rates.get(i.item_id, {}),
+        )
+        for i in items
+    ]
+    engine_taxes = [
+        TaxRow(charge_type=t.charge_type, rate=t.rate, tax_amount=t.tax_amount, row_id=t.row_id,
+               included_in_print_rate=t.included_in_print_rate, account_head_id=t.account_head_id)
+        for t in tax_rows_in
+    ]
+    totals = calculate_taxes_and_totals(
+        engine_items, engine_taxes, conversion_rate=conversion_rate,
+        apply_discount_on=apply_discount_on,
+        additional_discount_percentage=additional_discount_percentage,
+        discount_amount=discount_amount, is_purchase=not is_sales,
+    )
+    return InvoiceTaxPreview(
+        net_total=totals.net_total,
+        total_taxes_and_charges=totals.total_taxes_and_charges,
+        grand_total=totals.grand_total,
+        place_of_supply=(
+            place_of_supply or gst_state_label_of(party.tax_id) or gst_state_label_of(company.tax_id)
+        ),
+        taxes=[
+            InvoiceTaxLinePreview(description=t.description or "", rate=et.rate, tax_amount=et.tax_amount)
+            for t, et in zip(tax_rows_in, engine_taxes)
+        ],
+    )
 
 
 def base_payable_total(invoice: SalesInvoice | PurchaseInvoice) -> Decimal:

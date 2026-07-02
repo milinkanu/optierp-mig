@@ -146,15 +146,16 @@ let previewTimer: ReturnType<typeof setTimeout> | undefined;
 
 async function refreshTaxPreview(): Promise<void> {
   const lines = items.value.filter((i) => i.item_name);
-  if (props.kind !== "sales" || !partyId.value || !lines.length || taxes.value.length) {
+  if (!partyId.value || !lines.length || taxes.value.length) {
     previewTaxes.value = [];
     return;
   }
+  const partyKey = props.kind === "sales" ? "customer_id" : "supplier_id";
   try {
     const { data } = await api.post<{
       taxes: Array<{ description: string; rate: string; tax_amount: string }>;
-    }>("/sales-invoices/preview", {
-      customer_id: partyId.value,
+    }>(`${endpoint.value}/preview`, {
+      [partyKey]: partyId.value,
       posting_date: postingDate.value,
       place_of_supply: placeOfSupply.value || null,
       apply_discount_on: discount.value.apply_discount_on,
